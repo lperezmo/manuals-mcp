@@ -4,7 +4,8 @@
 --    password, with "auto confirm" on. Signing up gives the account a household.
 -- 2. Put that email below and run this file in the SQL editor.
 --
--- Running it twice does nothing the second time.
+-- Running it twice does nothing the second time. The household is marked as a
+-- demo, so it goes back to the demo data every night.
 
 do $$
 declare
@@ -23,6 +24,8 @@ begin
   end if;
 
   perform public.fill_demo_household(hid);
+  -- Reset to the demo data every night (see reset_demo_households).
+  update public.households set is_demo = true where id = hid;
   raise notice 'Demo household ready for %.', judge_email;
 end;
 $$;

@@ -57,11 +57,19 @@ describe("website chat", () => {
     const { verify, mint } = await testAuth();
     const token = await mint();
     const supabaseAuth: (string | null)[] = [];
+    const logged: any[] = [];
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input instanceof Request ? input.url : input);
       supabaseAuth.push(new Headers(init?.headers).get("authorization"));
       if (url.includes("/rpc/ensure_household"))
         return Response.json("11111111-1111-1111-1111-111111111111");
+      if (url.includes("/rest/v1/model_runs")) {
+        if (init?.method === "POST") {
+          logged.push(JSON.parse(String(init.body)));
+          return new Response(null, { status: 201 });
+        }
+        return new Response(null, { status: 200, headers: { "content-range": "*/3" } });
+      }
       if (url.includes("/rest/v1/items")) {
         return Response.json([
           { id: "22222222-2222-2222-2222-222222222222", nickname: "Washer", kind: "appliance" },
@@ -92,7 +100,10 @@ describe("website chat", () => {
           ],
         });
       }
-      return Response.json({ choices: [{ message: { content: "You have a washer." } }] });
+      return Response.json({
+        choices: [{ message: { content: "You have a washer." } }],
+        usage: { prompt_tokens: 900, completion_tokens: 40 },
+      });
     }) as unknown as typeof fetch;
 
     const res = await chatHandler(env, verify, model)(ask("What do we have?", token));
@@ -103,5 +114,43 @@ describe("website chat", () => {
     const toolMessage = sent[1].messages.find((m: { role: string }) => m.role === "tool");
     expect(toolMessage.content).toContain("Washer");
     expect(supabaseAuth.every((a) => a === `Bearer ${token}`)).toBe(true);
+    expect(logged).toEqual([
+      expect.objectContaining({
+        kind: "chat",
+        ok: true,
+        model: "muse-spark",
+        tokens_in: 900,
+        tokens_out: 40,
+        tools_used: ["list_items"],
+      }),
+    ]);
+  });
+
+  test("stops at the household's daily chat limit", async () => {
+    const { verify, mint } = await testAuth();
+    const token = await mint();
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("/rest/v1/model_runs"))
+        return new Response(null, { status: 200, headers: { "content-range": "*/5" } });
+      return new Response("unexpected", { status: 500 });
+    }) as typeof fetch;
+    let asked = false;
+    const model = (async () => {
+      asked = true;
+      return Response.json({});
+    }) as unknown as typeof fetch;
+
+    const limited = readEnv({
+      SUPABASE_URL: "https://example-ref.supabase.co",
+      SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+      READER_BASE_URL: "https://muse.example.com/v1",
+      READER_MODEL: "muse-spark",
+      CHAT_DAILY_LIMIT: "5",
+    });
+    const res = await chatHandler(limited, verify, model)(ask("Hi", token));
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toContain("5 questions");
+    expect(asked).toBe(false);
   });
 });

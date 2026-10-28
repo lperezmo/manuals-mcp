@@ -47,13 +47,39 @@ export interface ReaderUsage {
   tokens_out: number | null;
 }
 
+/** What was sent and what came back, for the model_runs log. */
+export interface ReaderTrace {
+  pages_sent: number[];
+  chars_sent: number;
+  raw_output: string | null;
+  usage: ReaderUsage | null;
+}
+
+/** A failed read that still knows what was sent and what came back. */
+export class ReaderError extends Error {
+  constructor(
+    message: string,
+    readonly trace: ReaderTrace,
+  ) {
+    super(message);
+  }
+}
+
 export async function distill(
   env: Env,
   args: { itemLabel: string; pages: PageText[] },
   fetchImpl: typeof fetch = fetch,
-): Promise<{ knowledge: Knowledge; usage: ReaderUsage }> {
+): Promise<{ knowledge: Knowledge; usage: ReaderUsage; trace: ReaderTrace }> {
   const reader = env.reader;
   if (!reader) throw new Error("No server reader is configured.");
+  const chosen = selectPages(args.pages, reader.maxChars);
+  const text = formatPages(chosen);
+  const trace: ReaderTrace = {
+    pages_sent: chosen.map((p) => p.page_number),
+    chars_sent: text.length,
+    raw_output: null,
+    usage: null,
+  };
   const res = await fetchImpl(`${reader.baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
@@ -67,25 +93,35 @@ export async function distill(
         { role: "system", content: DISTILL_INSTRUCTIONS },
         {
           role: "user",
-          content: `Manual for: ${args.itemLabel}\n\n${formatPages(selectPages(args.pages, reader.maxChars))}`,
+          content: `Manual for: ${args.itemLabel}\n\n${text}`,
         },
       ],
     }),
     signal: AbortSignal.timeout(50_000),
   });
-  if (!res.ok) throw new Error(`Reader answered ${res.status}`);
+  if (!res.ok) {
+    trace.raw_output = (await res.text().catch(() => "")).slice(0, 2_000) || null;
+    throw new ReaderError(`Reader answered ${res.status}`, trace);
+  }
   const body = (await res.json()) as {
     choices?: { message?: { content?: string } }[];
     usage?: { prompt_tokens?: number; completion_tokens?: number };
   };
-  const text = body.choices?.[0]?.message?.content ?? "";
-  const json = text.replace(/^```(?:json)?\s*|\s*```$/g, "");
-  return {
-    knowledge: knowledgeSchema.parse(JSON.parse(json)),
-    usage: {
-      model: reader.model,
-      tokens_in: body.usage?.prompt_tokens ?? null,
-      tokens_out: body.usage?.completion_tokens ?? null,
-    },
+  const answer = body.choices?.[0]?.message?.content ?? "";
+  const usage: ReaderUsage = {
+    model: reader.model,
+    tokens_in: body.usage?.prompt_tokens ?? null,
+    tokens_out: body.usage?.completion_tokens ?? null,
   };
+  trace.raw_output = answer;
+  trace.usage = usage;
+  try {
+    const json = answer.replace(/^```(?:json)?\s*|\s*```$/g, "");
+    return { knowledge: knowledgeSchema.parse(JSON.parse(json)), usage, trace };
+  } catch (err) {
+    throw new ReaderError(
+      `Reader's answer didn't fit: ${(err as Error).message.slice(0, 300)}`,
+      trace,
+    );
+  }
 }

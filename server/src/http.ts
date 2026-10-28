@@ -7,11 +7,12 @@ import {
   withMcpAuth,
 } from "mcp-handler";
 import { bearer, supabaseVerifier } from "./auth.js";
-import { callTool, messageSchema, runChat } from "./chat.js";
+import { type ChatUsage, callTool, messageSchema, runChat } from "./chat.js";
 import { householdId, userDb } from "./db.js";
 import { authIssuer, type Env } from "./env.js";
 import { processStoredManual } from "./finder/ingest.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
+import { logRun, runsToday } from "./runs.js";
 import { MAX_IMAGE_BYTES, readLabel } from "./snap.js";
 
 // HTTP entry points, shared by the Vercel functions in api/ and the local
@@ -111,9 +112,47 @@ export function chatHandler(
     const parsed = messageSchema.safeParse(body);
     if (!parsed.success)
       return Response.json({ error: "Send a few short messages." }, { status: 400 });
+    const db = userDb(env, auth.token);
     try {
-      return Response.json(await runChat(env, auth, parsed.data.messages, fetchImpl));
+      if ((await runsToday(db, "chat")) >= env.chatDailyLimit) {
+        return Response.json(
+          {
+            error: `That's all the chat for today (${env.chatDailyLimit} questions). It resets within a day; the buttons still work.`,
+          },
+          { status: 429 },
+        );
+      }
     } catch (err) {
+      return Response.json({ error: (err as Error).message }, { status: 502 });
+    }
+    const usage: ChatUsage = {
+      model: env.chatModel ?? env.reader?.model ?? "",
+      tokens_in: 0,
+      tokens_out: 0,
+    };
+    const started = Date.now();
+    try {
+      const result = await runChat(env, auth, parsed.data.messages, fetchImpl, usage);
+      await logRun(db, {
+        kind: "chat",
+        ok: true,
+        model: usage.model,
+        ms: Date.now() - started,
+        tokens_in: usage.tokens_in,
+        tokens_out: usage.tokens_out,
+        tools_used: result.tools_used,
+      });
+      return Response.json(result);
+    } catch (err) {
+      await logRun(db, {
+        kind: "chat",
+        ok: false,
+        model: usage.model,
+        error: (err as Error).message,
+        ms: Date.now() - started,
+        tokens_in: usage.tokens_in,
+        tokens_out: usage.tokens_out,
+      });
       return Response.json({ error: (err as Error).message }, { status: 502 });
     }
   };

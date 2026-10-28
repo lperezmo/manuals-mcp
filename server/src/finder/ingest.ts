@@ -1,9 +1,10 @@
 import type { Db, ItemRow, ManualRow } from "../db.js";
 import type { Env } from "../env.js";
+import { logRun } from "../runs.js";
 import { itemLabel } from "../tools/context.js";
 import { saveKnowledge } from "./knowledge.js";
 import { type PageText, pdfPages } from "./pdf-text.js";
-import { distill } from "./reader.js";
+import { distill, ReaderError } from "./reader.js";
 
 // Turns a manual PDF into raw pages (searchable) and, when a server reader
 // is configured, distilled tasks and facts. Without a reader the manual is
@@ -171,8 +172,22 @@ async function processPdf(args: {
     return outcome;
   }
 
+  const started = Date.now();
   try {
-    const { knowledge, usage } = await distill(env, { itemLabel: itemLabel(item), pages });
+    const { knowledge, usage, trace } = await distill(env, { itemLabel: itemLabel(item), pages });
+    await logRun(db, {
+      kind: "read",
+      ok: true,
+      model: usage.model,
+      ms: Date.now() - started,
+      tokens_in: usage.tokens_in,
+      tokens_out: usage.tokens_out,
+      item_id: item.id,
+      manual_id: manualId,
+      pages_sent: trace.pages_sent,
+      chars_sent: trace.chars_sent,
+      raw_output: trace.raw_output,
+    });
     await db
       .from("manuals")
       .update({
@@ -192,6 +207,21 @@ async function processPdf(args: {
     });
     outcome.status = "distilled";
   } catch (err) {
+    const trace = err instanceof ReaderError ? err.trace : undefined;
+    await logRun(db, {
+      kind: "read",
+      ok: false,
+      model: trace?.usage?.model ?? env.reader.model,
+      error: (err as Error).message,
+      ms: Date.now() - started,
+      tokens_in: trace?.usage?.tokens_in,
+      tokens_out: trace?.usage?.tokens_out,
+      item_id: item.id,
+      manual_id: manualId,
+      pages_sent: trace?.pages_sent,
+      chars_sent: trace?.chars_sent,
+      raw_output: trace?.raw_output,
+    });
     outcome.note = `The server reader couldn't distill it (${(err as Error).message}); the text is still searchable.`;
     await db.from("manuals").update({ status_detail: outcome.note }).eq("id", manualId);
   }

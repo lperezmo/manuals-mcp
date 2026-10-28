@@ -103,5 +103,64 @@ begin
 end;
 $$;
 
+-- Model runs: members log and read their own; nobody can delete them.
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","role":"authenticated"}', false);
+insert into public.model_runs (kind, ok, model) values ('chat', true, 'test');
+do $$
+declare
+  n integer;
+begin
+  select count(*) into n from public.model_runs;
+  assert n = 1, 'user A should see their run';
+  delete from public.model_runs;
+  select count(*) into n from public.model_runs;
+  assert n = 1, 'runs should not be deletable';
+end;
+$$;
+
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","role":"authenticated"}', false);
+do $$
+declare
+  n integer;
+begin
+  select count(*) into n from public.model_runs;
+  assert n = 0, 'user B should not see A''s runs';
+  begin
+    perform public.reset_demo_households();
+    raise exception 'users should not be able to reset demo households';
+  exception when insufficient_privilege then
+    null;
+  end;
+end;
+$$;
+
 reset role;
+
+-- Demo reset: user A's household goes back to the demo data.
+do $$
+declare
+  hid uuid;
+  before_items integer;
+  n integer;
+begin
+  select household_id into hid from public.household_members
+  where user_id = '00000000-0000-0000-0000-00000000000a';
+  update public.households set is_demo = true where id = hid;
+  select count(*) into before_items from public.items where household_id = hid;
+
+  insert into public.items (household_id, nickname) values (hid, 'Judge added this');
+  delete from public.tasks where household_id = hid;
+  perform public.reset_demo_households();
+
+  select count(*) into n from public.items where household_id = hid;
+  assert n = before_items, 'reset should restore the demo items';
+  select count(*) into n from public.items where household_id = hid and nickname = 'Judge added this';
+  assert n = 0, 'reset should clear what judges added';
+  select count(*) into n from public.tasks where household_id = hid;
+  assert n > 0, 'reset should restore the tasks';
+  select count(*) into n from public.model_runs where household_id = hid;
+  assert n = 1, 'reset should keep the model runs';
+end;
+$$;
+
 \echo 'rls_test: all checks passed'

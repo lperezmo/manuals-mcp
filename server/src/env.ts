@@ -19,6 +19,8 @@ export interface Env {
   };
   /** Model for the website's chat; defaults to the reader's model. */
   chatModel?: string;
+  /** Most chat turns one household can have per day, to keep costs flat. */
+  chatDailyLimit: number;
 }
 
 function positive(value: string | undefined, fallback: number): number {
@@ -53,6 +55,7 @@ export function readEnv(source: Record<string, string | undefined> = process.env
           }
         : undefined,
     chatModel: source.CHAT_MODEL || undefined,
+    chatDailyLimit: positive(source.CHAT_DAILY_LIMIT, 100),
   };
 }
 

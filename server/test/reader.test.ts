@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readEnv } from "../src/env.js";
 import { knowledgeSchema } from "../src/finder/knowledge.js";
-import { distill, selectPages } from "../src/finder/reader.js";
+import { distill, ReaderError, selectPages } from "../src/finder/reader.js";
 
 describe("server reader", () => {
   test("keeps upkeep pages when a manual is over budget", () => {
@@ -56,6 +56,29 @@ describe("server reader", () => {
     expect(sent.model).toBe("some-model");
     expect(k.tasks[0]?.source_page).toBe(42);
     expect(usage).toEqual({ model: "some-model", tokens_in: null, tokens_out: null });
+  });
+
+  test("a garbled answer keeps what was sent and what came back", async () => {
+    const env = readEnv({
+      SUPABASE_URL: "https://x.supabase.co",
+      SUPABASE_PUBLISHABLE_KEY: "k",
+      READER_BASE_URL: "https://reader.example.com/v1",
+      READER_MODEL: "some-model",
+    });
+    const fake = (async () =>
+      Response.json({
+        choices: [{ message: { content: "Sure! Here are the tasks: {oops" } }],
+        usage: { prompt_tokens: 50, completion_tokens: 9 },
+      })) as unknown as typeof fetch;
+    const err = await distill(
+      env,
+      { itemLabel: "Washer", pages: [{ page_number: 7, content: "Clean the filter." }] },
+      fake,
+    ).catch((e) => e);
+    expect(err).toBeInstanceOf(ReaderError);
+    expect(err.trace.pages_sent).toEqual([7]);
+    expect(err.trace.raw_output).toBe("Sure! Here are the tasks: {oops");
+    expect(err.trace.usage.tokens_out).toBe(9);
   });
 
   test("car seat limits default to pounds and inches", () => {

@@ -70,6 +70,12 @@ interface ToolCall {
   function: { name: string; arguments: string };
 }
 
+export interface ChatUsage {
+  model: string;
+  tokens_in: number;
+  tokens_out: number;
+}
+
 export interface ChatReply {
   reply: string;
   tools_used: string[];
@@ -80,6 +86,8 @@ export async function runChat(
   auth: AuthInfo,
   history: z.infer<typeof messageSchema>["messages"],
   fetchImpl: typeof fetch = fetch,
+  /** Filled in as the model answers, so the caller can log it even after a failure. */
+  usage?: ChatUsage,
 ): Promise<ChatReply> {
   const reader = env.reader;
   if (!reader) throw new Error("The chat model isn't configured (READER_* settings).");
@@ -118,7 +126,12 @@ export async function runChat(
     if (!res.ok) throw new Error(`The chat model answered ${res.status}.`);
     const body = (await res.json()) as {
       choices?: { message?: { content?: string | null; tool_calls?: ToolCall[] } }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
+    if (usage) {
+      usage.tokens_in += body.usage?.prompt_tokens ?? 0;
+      usage.tokens_out += body.usage?.completion_tokens ?? 0;
+    }
     const message = body.choices?.[0]?.message;
     const calls = message?.tool_calls ?? [];
     if (!calls.length) {
