@@ -7,11 +7,12 @@ import {
   withMcpAuth,
 } from "mcp-handler";
 import { bearer, supabaseVerifier } from "./auth.js";
-import { messageSchema, runChat } from "./chat.js";
+import { callTool, messageSchema, runChat } from "./chat.js";
 import { householdId, userDb } from "./db.js";
 import { authIssuer, type Env } from "./env.js";
 import { processStoredManual } from "./finder/ingest.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
+import { MAX_IMAGE_BYTES, readLabel } from "./snap.js";
 
 // HTTP entry points, shared by the Vercel functions in api/ and the local
 // dev server. All of them are Web-standard (Request) => Response.
@@ -112,6 +113,63 @@ export function chatHandler(
       return Response.json({ error: "Send a few short messages." }, { status: 400 });
     try {
       return Response.json(await runChat(env, auth, parsed.data.messages, fetchImpl));
+    } catch (err) {
+      return Response.json({ error: (err as Error).message }, { status: 502 });
+    }
+  };
+}
+
+/** One tool call from a website button, as the signed-in user. */
+export function toolHandler(env: Env, verify: Verify = supabaseVerifier(env)) {
+  return async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    const auth = await verify(bearer(req));
+    if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
+    let body: { name?: unknown; args?: unknown };
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return Response.json({ error: "Send JSON with name and args." }, { status: 400 });
+    }
+    if (typeof body.name !== "string") {
+      return Response.json({ error: "name is required." }, { status: 400 });
+    }
+    try {
+      const outcome = await callTool(env, auth, body.name, body.args);
+      return Response.json(outcome, { status: outcome.ok ? 200 : 422 });
+    } catch (err) {
+      return Response.json({ ok: false, summary: (err as Error).message }, { status: 500 });
+    }
+  };
+}
+
+const DATA_URL = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/;
+
+/** Reads a label photo (JSON with a data URL) into brand, model and serial. */
+export function snapHandler(
+  env: Env,
+  verify: Verify = supabaseVerifier(env),
+  fetchImpl: typeof fetch = fetch,
+) {
+  return async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    const auth = await verify(bearer(req));
+    if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
+    let image: unknown;
+    try {
+      image = ((await req.json()) as { image?: unknown }).image;
+    } catch {
+      return Response.json({ error: "Send JSON with an image data URL." }, { status: 400 });
+    }
+    const match = typeof image === "string" ? image.match(DATA_URL) : null;
+    if (!match?.[1] || !match[2]) {
+      return Response.json({ error: "Send a JPEG, PNG or WebP photo." }, { status: 400 });
+    }
+    if (match[2].length * 0.75 > MAX_IMAGE_BYTES) {
+      return Response.json({ error: "That photo is too big; try a smaller one." }, { status: 413 });
+    }
+    try {
+      return Response.json(await readLabel(env, { mime: match[1], base64: match[2] }, fetchImpl));
     } catch (err) {
       return Response.json({ error: (err as Error).message }, { status: 502 });
     }

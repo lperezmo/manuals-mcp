@@ -7,6 +7,8 @@ import {
   mcpHandler,
   publicConfigHandler,
   resourceMetadataHandler,
+  snapHandler,
+  toolHandler,
 } from "./src/http.js";
 
 const config = env();
@@ -15,6 +17,8 @@ const metadata = resourceMetadataHandler(config);
 const publicConfig = publicConfigHandler(config);
 const ingest = ingestHandler(config);
 const chat = chatHandler(config);
+const tool = toolHandler(config);
+const snap = snapHandler(config);
 const port = Number(process.env.PORT ?? 3000);
 
 Bun.serve({
@@ -26,6 +30,8 @@ Bun.serve({
     if (pathname === "/api/config") return publicConfig();
     if (pathname === "/api/ingest") return ingest(req);
     if (pathname === "/api/chat") return chat(req);
+    if (pathname === "/api/tool") return tool(req);
+    if (pathname === "/api/snap") return snap(req);
     const file = Bun.file(
       `./public${pathname === "/" ? "/index.html" : pathname}${pathname.includes(".") || pathname === "/" ? "" : ".html"}`,
     );

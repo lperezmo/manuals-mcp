@@ -161,3 +161,37 @@ async function runTool(tool: ChatTool | undefined, call: ToolCall, ctx: unknown)
     .slice(0, MAX_TOOL_RESULT_CHARS);
   return result.isError ? `Error: ${text}` : text;
 }
+
+export interface ToolOutcome {
+  ok: boolean;
+  summary: string;
+  data?: unknown;
+}
+
+/** Runs one tool for the website's buttons, as the signed-in user. */
+export async function callTool(
+  env: Env,
+  auth: AuthInfo,
+  name: string,
+  args: unknown,
+): Promise<ToolOutcome> {
+  const tool = chatTools(env).find((t) => t.name === name);
+  if (!tool) return { ok: false, summary: `No tool called ${name}.` };
+  const parsed = tool.schema.safeParse(args ?? {});
+  if (!parsed.success) return { ok: false, summary: `Invalid arguments: ${parsed.error.message}` };
+  const result = await tool.handler(parsed.data, { http: { authInfo: auth } });
+  const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+  // Tool replies are one sentence, a blank line, then JSON (see reply()).
+  const split = text.indexOf("\n\n");
+  let data: unknown;
+  if (split > 0) {
+    try {
+      data = JSON.parse(text.slice(split + 2));
+    } catch {}
+  }
+  return {
+    ok: !result.isError,
+    summary: data === undefined ? text : text.slice(0, split),
+    data,
+  };
+}

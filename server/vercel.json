@@ -11,6 +11,12 @@
     },
     "api/chat.ts": {
       "maxDuration": 60
+    },
+    "api/tool.ts": {
+      "maxDuration": 60
+    },
+    "api/snap.ts": {
+      "maxDuration": 60
     }
   },
   "rewrites": [
