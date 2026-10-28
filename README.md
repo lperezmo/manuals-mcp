@@ -45,6 +45,8 @@ You need [Bun](https://bun.sh), a Supabase project and a Vercel account. Free ti
 3. Authentication, OAuth Server: turn it on, set the authorization path to `/oauth/consent`, and
    allow dynamic client registration.
 4. Apply the schema: `supabase link --project-ref <ref>` then `supabase db push`.
+5. Optional demo account: add a user under Authentication, then run
+   [`supabase/judge.sql`](supabase/judge.sql) with their email. It fills a fictional household.
 
 **Vercel**
 1. Import the repo with Root Directory `server` (framework: Other).

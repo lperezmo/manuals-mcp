@@ -36,19 +36,29 @@ begin
 end;
 $$;
 
--- Pages are searchable.
-insert into public.manuals (item_id, source, status)
-  select id, 'chat_text', 'text_ready' from public.items where nickname = 'Washer';
-insert into public.manual_pages (manual_id, page_number, content, extracted_by)
-  select id, 42, 'Run the Tub Clean cycle every 30 washes to remove residue and odors.', 'client_ai'
-  from public.manuals;
+-- The demo household: pages are searchable, review items and history exist,
+-- and loading it twice adds nothing.
+select public.load_demo_household();
 
 do $$
 declare
   n integer;
+  p integer;
 begin
-  select count(*) into n from public.search_manual_pages('tub clean odor');
-  assert n = 1, format('search should find 1 page, found %s', n);
+  select count(*), min(page_number) into n, p from public.search_manual_pages('tub clean');
+  assert n = 1 and p = 41, format('search found %s page(s), first %s', n, p);
+  select count(*) into n from public.manual_facts where kind = 'error_code' and label ilike 'e4';
+  assert n = 1, 'error code E4 missing';
+  select (select count(*) from public.tasks where status = 'needs_review')
+       + (select count(*) from public.seat_modes where status = 'needs_review')
+       + (select count(*) from public.manual_facts where status = 'needs_review') into n;
+  assert n = 2, format('expected 2 items to review, saw %s', n);
+  select count(*) into n from public.revisions;
+  assert n = 1, 'revision history missing';
+  select count(*) into n from public.tasks where active and next_due_on < current_date;
+  assert n = 1, format('expected 1 overdue task, saw %s', n);
+  select count(*) into n from public.items;
+  assert n = 3, format('loading twice should not duplicate, saw %s items', n);
 end;
 $$;
 
@@ -75,6 +85,13 @@ begin
   begin
     insert into public.items (household_id, nickname) values (a_household, 'Sneaky');
     raise exception 'user B wrote into A''s household';
+  exception when insufficient_privilege then
+    null;
+  end;
+
+  begin
+    perform public.fill_demo_household(a_household);
+    raise exception 'user B filled A''s household';
   exception when insufficient_privilege then
     null;
   end;
