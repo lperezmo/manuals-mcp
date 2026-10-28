@@ -7,7 +7,7 @@ import type { PageText } from "./pdf-text.js";
 // When unset, manuals are still saved and searchable, just not distilled.
 // Bring-your-own-key later means choosing these per household.
 
-const BUDGET_CHARS = 120_000;
+const BUDGET_CHARS = 40_000;
 const KEYWORDS =
   /clean|maint|filter|descal|every|month|week|daily|replace|inspect|error|code|warning|weight|height|\blb\b|\bkg\b|rear.?facing|forward.?facing|booster|harness|expir/gi;
 
@@ -41,11 +41,17 @@ export function formatPages(pages: PageText[]): string {
   return pages.map((p) => `--- page ${p.page_number} ---\n${p.content}`).join("\n\n");
 }
 
+export interface ReaderUsage {
+  model: string;
+  tokens_in: number | null;
+  tokens_out: number | null;
+}
+
 export async function distill(
   env: Env,
   args: { itemLabel: string; pages: PageText[] },
   fetchImpl: typeof fetch = fetch,
-): Promise<Knowledge> {
+): Promise<{ knowledge: Knowledge; usage: ReaderUsage }> {
   const reader = env.reader;
   if (!reader) throw new Error("No server reader is configured.");
   const res = await fetchImpl(`${reader.baseUrl}/chat/completions`, {
@@ -61,15 +67,25 @@ export async function distill(
         { role: "system", content: DISTILL_INSTRUCTIONS },
         {
           role: "user",
-          content: `Manual for: ${args.itemLabel}\n\n${formatPages(selectPages(args.pages))}`,
+          content: `Manual for: ${args.itemLabel}\n\n${formatPages(selectPages(args.pages, reader.maxChars))}`,
         },
       ],
     }),
     signal: AbortSignal.timeout(50_000),
   });
   if (!res.ok) throw new Error(`Reader answered ${res.status}`);
-  const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  const body = (await res.json()) as {
+    choices?: { message?: { content?: string } }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
   const text = body.choices?.[0]?.message?.content ?? "";
   const json = text.replace(/^```(?:json)?\s*|\s*```$/g, "");
-  return knowledgeSchema.parse(JSON.parse(json));
+  return {
+    knowledge: knowledgeSchema.parse(JSON.parse(json)),
+    usage: {
+      model: reader.model,
+      tokens_in: body.usage?.prompt_tokens ?? null,
+      tokens_out: body.usage?.completion_tokens ?? null,
+    },
+  };
 }

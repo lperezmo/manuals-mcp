@@ -190,6 +190,11 @@ create table public.manuals (
   status_detail text,
   -- Who turned the pages into a schedule: this server's model, the user's AI, or the user.
   read_by text check (read_by in ('server', 'client_ai', 'user')),
+  -- Each read by the server's model, for the daily cap and a running cost tally.
+  reader_at timestamptz,
+  reader_model text,
+  reader_tokens_in integer,
+  reader_tokens_out integer,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (household_id, id),

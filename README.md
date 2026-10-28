@@ -72,6 +72,10 @@ psql -f supabase/tests/stub_supabase.sql -f supabase/migrations/20261022150000_i
 
 ## Notes
 
+- Costs stay flat: each manual is read once, with at most `READER_MAX_CHARS` of text, and each
+  household gets `READER_DAILY_LIMIT` reads a day. Token use is saved on each manual:
+  `select reader_model, sum(reader_tokens_in), sum(reader_tokens_out) from manuals group by 1;`
+
 - Every database call runs as the signed-in user, so row-level security decides what anyone sees.
   The server never holds a service key.
 - Car seat dates are estimates from the WHO Child Growth Standards (2006). The manual and a

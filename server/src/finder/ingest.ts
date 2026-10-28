@@ -160,8 +160,28 @@ async function processPdf(args: {
     return outcome;
   }
 
+  const since = new Date(Date.now() - 86_400_000).toISOString();
+  const { count } = await db
+    .from("manuals")
+    .select("id", { count: "exact", head: true })
+    .gte("reader_at", since);
+  if ((count ?? 0) >= env.reader.dailyLimit) {
+    outcome.note = `Saved and searchable. The daily limit of ${env.reader.dailyLimit} manual reads is used up, so it wasn't read yet; try again tomorrow.`;
+    await db.from("manuals").update({ status_detail: outcome.note }).eq("id", manualId);
+    return outcome;
+  }
+
   try {
-    const knowledge = await distill(env, { itemLabel: itemLabel(item), pages });
+    const { knowledge, usage } = await distill(env, { itemLabel: itemLabel(item), pages });
+    await db
+      .from("manuals")
+      .update({
+        reader_at: new Date().toISOString(),
+        reader_model: usage.model,
+        reader_tokens_in: usage.tokens_in,
+        reader_tokens_out: usage.tokens_out,
+      })
+      .eq("id", manualId);
     outcome.distilled = await saveKnowledge({
       db,
       householdId,

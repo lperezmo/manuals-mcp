@@ -12,7 +12,16 @@ export interface Env {
     baseUrl: string;
     model: string;
     apiKey?: string;
+    /** Most manual text sent per read; the pages most about upkeep win. */
+    maxChars: number;
+    /** Most manuals one household can have read per day, to keep costs flat. */
+    dailyLimit: number;
   };
+}
+
+function positive(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
 function trimSlash(value: string): string {
@@ -33,7 +42,13 @@ export function readEnv(source: Record<string, string | undefined> = process.env
     publicUrl: source.PUBLIC_URL ? trimSlash(source.PUBLIC_URL) : undefined,
     reader:
       readerBase && readerModel
-        ? { baseUrl: trimSlash(readerBase), model: readerModel, apiKey: source.READER_API_KEY }
+        ? {
+            baseUrl: trimSlash(readerBase),
+            model: readerModel,
+            apiKey: source.READER_API_KEY,
+            maxChars: positive(source.READER_MAX_CHARS, 40_000),
+            dailyLimit: positive(source.READER_DAILY_LIMIT, 10),
+          }
         : undefined,
   };
 }

@@ -48,13 +48,14 @@ describe("server reader", () => {
         ],
       });
     }) as unknown as typeof fetch;
-    const k = await distill(
+    const { knowledge: k, usage } = await distill(
       env,
       { itemLabel: "Washer", pages: [{ page_number: 42, content: "..." }] },
       fake,
     );
     expect(sent.model).toBe("some-model");
     expect(k.tasks[0]?.source_page).toBe(42);
+    expect(usage).toEqual({ model: "some-model", tokens_in: null, tokens_out: null });
   });
 
   test("car seat limits default to pounds and inches", () => {
