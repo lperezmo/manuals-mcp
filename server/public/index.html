@@ -166,16 +166,6 @@
           .join(" ");
       }
 
-      function headline(late, toCheck) {
-        const n = ["No", "One", "Two", "Three", "Four", "Five"];
-        const word = (k) => n[k] ?? String(k);
-        const a = late ? `${word(late)} thing${late > 1 ? "s are" : " is"} late` : "Nothing is late";
-        const b = toCheck
-          ? `${word(toCheck).toLowerCase()} fact${toCheck > 1 ? "s" : ""} need${toCheck > 1 ? "" : "s"} your eyes`
-          : "everything you know is checked";
-        return `${a}, and ${b}.`;
-      }
-
       function weekStrip(due) {
         const now = today();
         const days = Array.from({ length: 7 }, (_, i) => addDays(now, i));
@@ -300,7 +290,6 @@
           });
           return;
         }
-        const late = due.filter((t) => t.next_due_on < today()).length;
         const date = new Date().toLocaleDateString(undefined, {
           weekday: "long",
           month: "short",
@@ -308,8 +297,8 @@
         });
         main.innerHTML = `
           <section class="stack">
+            <h1 class="sr-only">Home</h1>
             <p class="muted" style="font-weight:600">${esc(date)}</p>
-            <h1>${esc(headline(late, review.length))}</h1>
             <form class="field" id="ask" style="margin-top:6px">
               <label class="sr-only" for="ask-input">Ask or tell</label>
               <input id="ask-input" autocomplete="off" placeholder="Ask or tell: “the washer is at 230 washes”">
