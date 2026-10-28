@@ -2,6 +2,7 @@
 //   cp .env.example .env && bun run dev
 import { env } from "./src/env.js";
 import {
+  chatHandler,
   ingestHandler,
   mcpHandler,
   publicConfigHandler,
@@ -13,6 +14,7 @@ const mcp = mcpHandler(config);
 const metadata = resourceMetadataHandler(config);
 const publicConfig = publicConfigHandler(config);
 const ingest = ingestHandler(config);
+const chat = chatHandler(config);
 const port = Number(process.env.PORT ?? 3000);
 
 Bun.serve({
@@ -23,6 +25,7 @@ Bun.serve({
     if (pathname.startsWith("/.well-known/oauth-protected-resource")) return metadata(req);
     if (pathname === "/api/config") return publicConfig();
     if (pathname === "/api/ingest") return ingest(req);
+    if (pathname === "/api/chat") return chat(req);
     const file = Bun.file(
       `./public${pathname === "/" ? "/index.html" : pathname}${pathname.includes(".") || pathname === "/" ? "" : ".html"}`,
     );

@@ -7,6 +7,7 @@ import {
   withMcpAuth,
 } from "mcp-handler";
 import { bearer, supabaseVerifier } from "./auth.js";
+import { messageSchema, runChat } from "./chat.js";
 import { householdId, userDb } from "./db.js";
 import { authIssuer, type Env } from "./env.js";
 import { processStoredManual } from "./finder/ingest.js";
@@ -86,6 +87,33 @@ export function ingestHandler(env: Env, verify: Verify = supabaseVerifier(env)) 
       return Response.json(outcome);
     } catch (err) {
       return Response.json({ error: (err as Error).message }, { status: 422 });
+    }
+  };
+}
+
+/** The website's chat with Muse: same tools as /mcp, as the signed-in user. */
+export function chatHandler(
+  env: Env,
+  verify: Verify = supabaseVerifier(env),
+  fetchImpl: typeof fetch = fetch,
+) {
+  return async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    const auth = await verify(bearer(req));
+    if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return Response.json({ error: "Send JSON with messages." }, { status: 400 });
+    }
+    const parsed = messageSchema.safeParse(body);
+    if (!parsed.success)
+      return Response.json({ error: "Send a few short messages." }, { status: 400 });
+    try {
+      return Response.json(await runChat(env, auth, parsed.data.messages, fetchImpl));
+    } catch (err) {
+      return Response.json({ error: (err as Error).message }, { status: 502 });
     }
   };
 }

@@ -8,6 +8,9 @@
     },
     "api/mcp.ts": {
       "maxDuration": 60
+    },
+    "api/chat.ts": {
+      "maxDuration": 60
     }
   },
   "rewrites": [

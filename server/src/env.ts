@@ -17,6 +17,8 @@ export interface Env {
     /** Most manuals one household can have read per day, to keep costs flat. */
     dailyLimit: number;
   };
+  /** Model for the website's chat; defaults to the reader's model. */
+  chatModel?: string;
 }
 
 function positive(value: string | undefined, fallback: number): number {
@@ -50,6 +52,7 @@ export function readEnv(source: Record<string, string | undefined> = process.env
             dailyLimit: positive(source.READER_DAILY_LIMIT, 10),
           }
         : undefined,
+    chatModel: source.CHAT_MODEL || undefined,
   };
 }
 
