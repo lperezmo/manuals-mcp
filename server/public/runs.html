@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Model log · Manuals</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap"
+    />
+    <link rel="stylesheet" href="/theme.css" />
+    <script src="/theme.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+  </head>
+  <body>
+    <header class="top" id="top"></header>
+    <main class="wrap" id="main">
+      <p class="muted">One moment…</p>
+    </main>
+
+    <script type="module">
+      import { $, ago, boot, db, esc } from "/app.js";
+
+      const main = $("#main");
+      const num = (n) => (n == null ? "?" : n.toLocaleString());
+
+      function pages(list) {
+        if (!list?.length) return "";
+        return list.length > 8
+          ? `pages ${list.slice(0, 8).join(", ")} and ${list.length - 8} more`
+          : `pages ${list.join(", ")}`;
+      }
+
+      function row(r, names) {
+        const what =
+          r.kind === "read"
+            ? `Read the ${esc(names.get(r.item_id) ?? "manual")} manual`
+            : `Chat${r.tools_used?.length ? `: ${esc(r.tools_used.join(", "))}` : ""}`;
+        const facts = [
+          r.model,
+          r.ms != null ? `${(r.ms / 1000).toFixed(1)} s` : null,
+          `${num(r.tokens_in)} in / ${num(r.tokens_out)} out`,
+          r.chars_sent != null ? `${num(r.chars_sent)} chars sent` : null,
+          pages(r.pages_sent),
+        ].filter(Boolean);
+        const details = [
+          r.error ? `<div class="small"><strong>Error:</strong> ${esc(r.error)}</div>` : "",
+          r.raw_output
+            ? `<details><summary class="small">What Muse answered</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:420px;overflow:auto;font-size:12px">${esc(r.raw_output)}</pre></details>`
+            : "",
+        ].join("");
+        return `<div class="fact">
+          <div style="min-width:0">
+            <div><strong>${what}</strong></div>
+            <div class="small muted">${esc(facts.join(" · "))}</div>
+            ${details}
+          </div>
+          <div class="small" style="text-align:right">
+            <div style="font-weight:700;color:${r.ok ? "var(--teal)" : "var(--coral)"}">${r.ok ? "OK" : "Failed"}</div>
+            <div class="muted">${ago(r.created_at)}</div>
+          </div>
+        </div>`;
+      }
+
+      async function start() {
+        if (!(await boot("/runs"))) return;
+        const client = await db();
+        const [runs, items] = await Promise.all([
+          client
+            .from("model_runs")
+            .select(
+              "id, kind, item_id, model, ok, error, ms, tokens_in, tokens_out, pages_sent, chars_sent, tools_used, raw_output, created_at",
+            )
+            .order("created_at", { ascending: false })
+            .limit(100),
+          client.from("items").select("id, nickname"),
+        ]);
+        if (runs.error) throw new Error(runs.error.message);
+        const names = new Map((items.data ?? []).map((i) => [i.id, i.nickname]));
+        const since = Date.now() - 86_400_000;
+        const today = runs.data.filter((r) => Date.parse(r.created_at) > since);
+        const chats = today.filter((r) => r.kind === "chat").length;
+        const reads = today.filter((r) => r.kind === "read").length;
+        const tokens = today.reduce((n, r) => n + (r.tokens_in ?? 0) + (r.tokens_out ?? 0), 0);
+        main.innerHTML = `
+          <section class="stack">
+            <h1>Model log</h1>
+            <p class="muted">Every manual Muse read and every chat question, newest first. Last 24 hours: ${chats} chat ${chats === 1 ? "question" : "questions"}, ${reads} manual ${reads === 1 ? "read" : "reads"}, ${num(tokens)} tokens.</p>
+          </section>
+          <section class="card">${
+            runs.data.map((r) => row(r, names)).join("") ||
+            '<p class="muted">Nothing yet. Ask the chat something or add a manual.</p>'
+          }</section>`;
+      }
+      start().catch((err) => {
+        main.innerHTML = `<p class="card">Something went wrong: ${esc(err.message)}</p>`;
+      });
+    </script>
+  </body>
+</html>

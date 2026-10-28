@@ -54,7 +54,8 @@
                 </div>`;
               })
               .join("") || '<p class="muted">No changes yet. Everything is as Muse read it.</p>'
-          }</section>`;
+          }</section>
+          <p class="small muted">Curious what the model did? <a href="/runs">See the model log</a>.</p>`;
       }
       start().catch((err) => {
         main.innerHTML = `<p class="card">Something went wrong: ${esc(err.message)}</p>`;
