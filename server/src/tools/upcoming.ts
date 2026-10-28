@@ -1,8 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { Env } from "../env.js";
-import { addDays } from "../lib/growth.js";
-import { describeInterval, relativeDay, today } from "../lib/schedule.js";
+import { addDays, describeInterval, relativeDay, today } from "../lib/schedule.js";
 import { guarded, reply, session } from "./context.js";
 
 type Named = { id: string; nickname: string } | { id: string; nickname: string }[] | null;

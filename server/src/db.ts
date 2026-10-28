@@ -79,7 +79,6 @@ export interface ChildRow {
   id: string;
   nickname: string;
   birth_date: string | null;
-  growth_sex: "female" | "male" | null;
 }
 
 export interface MeasurementRow {

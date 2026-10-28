@@ -2,7 +2,6 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { ChildRow, Db } from "../db.js";
 import type { Env } from "../env.js";
-import { ageInMonths, lmsAt, percentile, zScore } from "../lib/growth.js";
 import { today } from "../lib/schedule.js";
 import { round, toCm, toKg } from "../lib/units.js";
 import { findItem, guarded, isUuid, itemLabel, reply, session } from "./context.js";
@@ -62,8 +61,7 @@ export function register(server: McpServer, env: Env) {
       title: "Save a measurement or reading",
       description: [
         "Saves a reading for a child or a thing.",
-        "For a child: height and/or weight, used for WHO percentiles and car seat timing. Pass the child's id or nickname; for a child not saved yet, add birth_date.",
-        "growth_sex (female or male) only picks which WHO growth chart is used and can be left out. Accepts pounds and inches.",
+        "For a child: height and/or weight, which car_seat_status compares with the seat's limits. Pass the child's id or nickname; for a child not saved yet, add birth_date. Accepts pounds and inches.",
         "For a thing: its cycle count (washes, loads, brews) or hours used, from its display or counter. Two cycle readings a week or more apart set how often it's used, so 'every 30 washes' tasks get real dates.",
       ].join(" "),
       inputSchema: z.object({
@@ -77,7 +75,6 @@ export function register(server: McpServer, env: Env) {
         weight_unit: z.enum(["kg", "lb"]).default("kg"),
         measured_on: z.iso.date().optional().describe("YYYY-MM-DD, if not today."),
         birth_date: z.iso.date().optional().describe("Only needed to add a new child."),
-        growth_sex: z.enum(["female", "male"]).optional(),
       }),
       annotations: {
         readOnlyHint: false,
@@ -106,9 +103,7 @@ export function register(server: McpServer, env: Env) {
         if (input.height == null && input.weight == null)
           throw new Error("Give a height, a weight, or both.");
         const childRef = input.child;
-        const { data: kids, error } = await db
-          .from("children")
-          .select("id, nickname, birth_date, growth_sex");
+        const { data: kids, error } = await db.from("children").select("id, nickname, birth_date");
         if (error) throw new Error(error.message);
         const children = (kids ?? []) as ChildRow[];
         let child =
@@ -128,28 +123,14 @@ export function register(server: McpServer, env: Env) {
               household_id: householdId,
               nickname: childRef,
               birth_date: input.birth_date,
-              growth_sex: input.growth_sex ?? null,
             })
-            .select("id, nickname, birth_date, growth_sex")
+            .select("id, nickname, birth_date")
             .single();
           if (created.error) throw new Error(`Couldn't add the child: ${created.error.message}`);
           child = created.data as ChildRow;
-        } else if (
-          (input.birth_date && !child.birth_date) ||
-          (input.growth_sex && !child.growth_sex)
-        ) {
-          await db
-            .from("children")
-            .update({
-              birth_date: child.birth_date ?? input.birth_date,
-              growth_sex: child.growth_sex ?? input.growth_sex,
-            })
-            .eq("id", child.id);
-          child = {
-            ...child,
-            birth_date: child.birth_date ?? input.birth_date ?? null,
-            growth_sex: child.growth_sex ?? input.growth_sex ?? null,
-          };
+        } else if (input.birth_date && !child.birth_date) {
+          await db.from("children").update({ birth_date: input.birth_date }).eq("id", child.id);
+          child = { ...child, birth_date: input.birth_date };
         }
 
         const on = input.measured_on ?? today();
@@ -167,27 +148,15 @@ export function register(server: McpServer, env: Env) {
         });
         if (insertError) throw new Error(`Couldn't save it: ${insertError.message}`);
 
-        const percentiles: Record<string, number> = {};
-        if (child.birth_date && child.growth_sex) {
-          const age = ageInMonths(child.birth_date, on);
-          if (age >= 0 && age <= 60) {
-            if (weight_kg)
-              percentiles.weight = percentile(
-                zScore(weight_kg, lmsAt("weight_kg", child.growth_sex, age)),
-              );
-            if (height_cm)
-              percentiles.height = percentile(
-                zScore(height_cm, lmsAt("height_cm", child.growth_sex, age)),
-              );
-          }
-        }
-        return reply(`Saved for ${child.nickname}. Check car seat timing with car_seat_status.`, {
-          child_id: child.id,
-          measured_on: on,
-          height_cm,
-          weight_kg,
-          who_percentiles: percentiles,
-        });
+        return reply(
+          `Saved for ${child.nickname}. Compare with the car seat using car_seat_status.`,
+          {
+            child_id: child.id,
+            measured_on: on,
+            height_cm,
+            weight_kg,
+          },
+        );
       }),
   );
 }

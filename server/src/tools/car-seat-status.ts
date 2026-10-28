@@ -10,13 +10,13 @@ export function register(server: McpServer, env: Env) {
   server.registerTool(
     "car_seat_status",
     {
-      title: "Car seat fit and next change",
+      title: "Car seat fit check",
       description: [
-        "Compares a child's latest height and weight with a car seat's limits from its manual, mode by mode,",
-        "and estimates when they'll reach the current mode's limit using WHO growth curves.",
-        'Use it for "when do we switch the car seat?" or "is she still OK rear-facing?".',
-        "Always tell the user the date is an estimate, cite the manual page for the limits, and mention that a certified child passenger safety technician can check the fit.",
-        "New measurements go in with record_measurement first. Offer to put a re-measure date on the user's calendar with your own calendar tools.",
+        "Compares a child's latest height and weight with a car seat's limits from its manual, mode by mode:",
+        "which mode fits now, how much room is left before its limits, and when to measure again (sooner when a limit is close).",
+        "Use it for 'is she still OK rear-facing?' or 'when do we switch the car seat?'. It doesn't predict growth; for a date, measure again by remeasure_by.",
+        "Cite the manual page for the limits and mention that a certified child passenger safety technician can check the fit.",
+        "New measurements go in with record_measurement first. Offer to put the re-measure date on the user's calendar with your own calendar tools.",
       ].join(" "),
       inputSchema: z.object({
         seat: z
@@ -62,9 +62,7 @@ export function register(server: McpServer, env: Env) {
           );
         }
 
-        const { data: kids } = await db
-          .from("children")
-          .select("id, nickname, birth_date, growth_sex");
+        const { data: kids } = await db.from("children").select("id, nickname, birth_date");
         const children = (kids ?? []) as ChildRow[];
         const child =
           children.find(
@@ -102,15 +100,15 @@ export function register(server: McpServer, env: Env) {
           })),
           {
             birthDate: child.birth_date,
-            sex: child.growth_sex,
             weightKg: latest("weight_kg"),
             heightCm: latest("height_cm"),
           },
           today(),
         );
 
+        const room = result.modes.find((m) => m.fit === "fits")?.room_left ?? [];
         const summary = result.current_mode
-          ? `${child.nickname} fits ${itemLabel(item)} ${result.current_mode}${result.next_switch_on ? `, estimated to reach that mode's limit around ${result.next_switch_on}` : ""}. Suggest re-measuring by ${result.remeasure_by}.`
+          ? `${child.nickname} fits ${itemLabel(item)} ${result.current_mode}${room.length ? `, with ${room.join(" and ")} left` : ""}. Measure again by ${result.remeasure_by}.`
           : `${child.nickname}'s latest numbers don't fit any saved mode of ${itemLabel(item)}; check the manual and the measurements.`;
         return reply(summary, {
           seat: itemLabel(item),

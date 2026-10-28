@@ -24,16 +24,16 @@ flowchart LR
 
 ## Tools
 
-| Tool                 | What it's for                                                                 |
-| -------------------- | ----------------------------------------------------------------------------- |
-| `add_item`           | Add a thing and its manual PDF. Muse reads it into tasks and facts.           |
-| `list_items`         | What you own, what's next, and what needs review.                             |
-| `ask_manual`         | Answers with page cites: search, exact error codes and specs, the schedule.   |
-| `upcoming`           | Tasks due soon, plus facts a person should check.                             |
-| `revise_fact`        | Correct or confirm a fact, task or car seat limit, with a reason.             |
-| `log_done`           | "I just cleaned the filter" moves the next due date.                          |
-| `record_measurement` | A child's height and weight, or a thing's cycle count or hours.               |
-| `car_seat_status`    | Which mode fits now and an estimated date for the next change, with the page. |
+| Tool                 | What it's for                                                                |
+| -------------------- | ---------------------------------------------------------------------------- |
+| `add_item`           | Add a thing and its manual PDF. Muse reads it into tasks and facts.          |
+| `list_items`         | What you own, what's next, and what needs review.                            |
+| `ask_manual`         | Answers with page cites: search, exact error codes and specs, the schedule.  |
+| `upcoming`           | Tasks due soon, plus facts a person should check.                            |
+| `revise_fact`        | Correct or confirm a fact, task or car seat limit, with a reason.            |
+| `log_done`           | "I just cleaned the filter" moves the next due date.                         |
+| `record_measurement` | A child's height and weight, or a thing's cycle count or hours.              |
+| `car_seat_status`    | Which mode fits now, room left before its limits, and when to measure again. |
 
 ## Run it
 
@@ -80,7 +80,7 @@ psql -f supabase/tests/stub_supabase.sql -f supabase/migrations/20261022150000_i
 
 - Every database call runs as the signed-in user, so row-level security decides what anyone sees.
   The server never holds a service key.
-- Car seat dates are estimates from the WHO Child Growth Standards (2006). The manual and a
-  certified child passenger safety technician have the final word.
-- Growth tables come from the BSD-licensed `pygrowup` package. Fonts are Atkinson Hyperlegible and
-  Bricolage Grotesque under the SIL Open Font License (see [`docs/licenses/`](docs/licenses/)).
+- Car seat checks compare the child's latest measurements with the seat's own limits. They don't
+  predict growth; the manual and a certified child passenger safety technician have the final word.
+- Fonts are Atkinson Hyperlegible and Bricolage Grotesque under the SIL Open Font License (see
+  [`docs/licenses/`](docs/licenses/)).

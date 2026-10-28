@@ -111,7 +111,7 @@ end;
 $$;
 
 -- ---------------------------------------------------------------------------
--- Children and measurements (for car seat timing)
+-- Children and measurements (compared with car seat limits)
 -- ---------------------------------------------------------------------------
 
 create table public.children (
@@ -119,9 +119,8 @@ create table public.children (
   household_id uuid not null default public.current_household_id()
     references public.households (id) on delete cascade,
   nickname text not null check (length(nickname) between 1 and 60),
+  -- For seats with a minimum age.
   birth_date date,
-  -- Only used to pick the WHO growth table. Null means "average both".
-  growth_sex text check (growth_sex in ('female', 'male')),
   created_at timestamptz not null default now(),
   unique (household_id, id)
 );
@@ -569,8 +568,8 @@ begin
     (hid, dishwasher, 'Descale', 'Empty hot cycle with dishwasher cleaner.', 'months', 3, current_date - 85, dish_manual, 26);
 
   -- Car seat -----------------------------------------------------------------
-  insert into public.children (household_id, nickname, birth_date, growth_sex)
-  values (hid, 'Mia', current_date - 600, 'female')
+  insert into public.children (household_id, nickname, birth_date)
+  values (hid, 'Mia', current_date - 600)
   returning id into kid;
 
   insert into public.items (household_id, kind, category, nickname, brand, model, child_id, notes)

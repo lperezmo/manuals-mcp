@@ -39,3 +39,12 @@ export function relativeDay(day: string, from: string = today()): string {
   if (d === -1) return "yesterday";
   return d > 0 ? `in ${d} days` : `${-d} days ago`;
 }
+
+export function addDays(day: string, days: number): string {
+  return new Date(Date.parse(day) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** Whole months between a birth date and a day. */
+export function ageInMonths(birthDate: string, on: string): number {
+  return Math.floor(daysBetween(birthDate, on) / 30.4375);
+}

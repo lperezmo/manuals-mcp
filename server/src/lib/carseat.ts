@@ -1,12 +1,11 @@
 import type { SeatModeRow } from "../db.js";
-import { addDays, type GrowthSex, type Projection, projectToLimit } from "./growth.js";
-import { daysBetween } from "./schedule.js";
-import { showCm, showKg } from "./units.js";
+import { addDays, ageInMonths, daysBetween } from "./schedule.js";
+import { round, showCm, showKg } from "./units.js";
 
-// Compares a child to a seat's limits, mode by mode, and estimates when the
-// child outgrows the mode they fit now. Seats are used in the earliest mode
-// that still fits (rear-facing as long as the seat allows), so the "next
-// switch" is when that mode's first limit is reached.
+// Compares a child's latest measurements to a seat's limits from its manual,
+// mode by mode. Seats are used in the earliest mode that still fits
+// (rear-facing as long as the seat allows). It never predicts growth: it says
+// how much room is left and when to measure again, sooner when a limit is close.
 
 export const MODE_ORDER: SeatModeRow["mode"][] = [
   "rear_facing",
@@ -22,6 +21,9 @@ export const MODE_NAMES: Record<SeatModeRow["mode"], string> = {
   booster_backless: "backless booster",
 };
 
+/** Share of a limit used before we suggest measuring again within a month. */
+const CLOSE = 0.9;
+
 export interface Reading {
   value: number;
   on: string;
@@ -29,28 +31,28 @@ export interface Reading {
 
 export interface ChildFacts {
   birthDate: string | null;
-  sex: GrowthSex | null;
   weightKg: Reading | null;
   heightCm: Reading | null;
 }
 
-export type Fit = "fits" | "too_small" | "outgrown" | "unknown";
+export type Fit = "fits" | "too_small" | "too_young" | "outgrown" | "unknown";
 
 export interface ModeCheck {
   mode: SeatModeRow["mode"];
   name: string;
   fit: Fit;
   limits: string[];
+  /** For the mode the child fits: what's left before each upper limit. */
+  room_left: string[];
   manual_page: number | null;
   fit_note: string | null;
-  outgrows_on: string | null;
-  outgrown_by: "weight" | "height" | null;
 }
 
 export interface SeatCheck {
   modes: ModeCheck[];
   current_mode: string | null;
-  next_switch_on: string | null;
+  /** The upper limit closest to being reached, as a share used (0 to 1). */
+  closest_limit: { by: "weight" | "height"; used: number } | null;
   remeasure_by: string;
   stale_measurements: boolean;
   caveats: string[];
@@ -58,50 +60,45 @@ export interface SeatCheck {
 
 export function checkSeat(modes: SeatModeRow[], child: ChildFacts, today: string): SeatCheck {
   const sorted = [...modes].sort((a, b) => MODE_ORDER.indexOf(a.mode) - MODE_ORDER.indexOf(b.mode));
-  const checks = sorted.map((m) => checkMode(m, child));
-  const current = checks.find((c) => c.fit === "fits") ?? null;
-  const next = current?.outgrows_on ?? null;
+  const age = child.birthDate ? ageInMonths(child.birthDate, today) : null;
+  const checks = sorted.map((m) => checkMode(m, child, age));
+  const currentIndex = checks.findIndex((c) => c.fit === "fits");
+  const current = currentIndex >= 0 ? (sorted[currentIndex] as SeatModeRow) : null;
+
+  const used: { by: "weight" | "height"; used: number }[] = [];
+  if (current?.max_weight_kg && child.weightKg) {
+    used.push({ by: "weight", used: child.weightKg.value / current.max_weight_kg });
+  }
+  if (current?.max_height_cm && child.heightCm) {
+    used.push({ by: "height", used: child.heightCm.value / current.max_height_cm });
+  }
+  const closest = used.sort((a, b) => b.used - a.used)[0] ?? null;
 
   const newest = [child.weightKg?.on, child.heightCm?.on].filter(Boolean).sort().pop();
   const stale = !newest || daysBetween(newest, today) > 60;
-
-  let remeasure = addDays(today, 90);
-  if (next) {
-    const early = addDays(next, -30);
-    if (early < remeasure) remeasure = early;
-  }
-  if (remeasure < addDays(today, 7)) remeasure = addDays(today, 7);
+  const remeasure = addDays(today, closest && closest.used >= CLOSE ? 30 : 90);
 
   const caveats = [
-    "Dates are estimates from WHO growth curves, assuming the child keeps growing along the same percentile.",
     "Limits come from the seat's manual; check the cited pages and any fit rules that aren't numbers.",
     "A certified child passenger safety technician can check the fit in person.",
   ];
-  if (stale)
+  if (stale) {
     caveats.unshift(
-      "The latest measurement is over two months old (or missing); re-measure before relying on this.",
-    );
-  if (!child.birthDate)
-    caveats.unshift(
-      "No birth date saved, so no growth projection; only the current fit is checked.",
-    );
-  if (child.birthDate && !child.sex) {
-    caveats.push(
-      "No growth table chosen for this child, so the earlier of the two WHO tables is used.",
+      "The latest measurement is over two months old (or missing); measure again before relying on this.",
     );
   }
 
   return {
     modes: checks,
-    current_mode: current?.name ?? null,
-    next_switch_on: next,
+    current_mode: current ? MODE_NAMES[current.mode] : null,
+    closest_limit: closest ? { by: closest.by, used: round(closest.used, 2) } : null,
     remeasure_by: remeasure,
     stale_measurements: stale,
     caveats,
   };
 }
 
-function checkMode(m: SeatModeRow, child: ChildFacts): ModeCheck {
+function checkMode(m: SeatModeRow, child: ChildFacts, age: number | null): ModeCheck {
   const limits: string[] = [];
   if (m.min_weight_kg != null || m.max_weight_kg != null) {
     limits.push(`weight ${range(m.min_weight_kg, m.max_weight_kg, showKg)}`);
@@ -121,46 +118,16 @@ function checkMode(m: SeatModeRow, child: ChildFacts): ModeCheck {
     const under =
       (w != null && m.min_weight_kg != null && w < m.min_weight_kg) ||
       (h != null && m.min_height_cm != null && h < m.min_height_cm);
-    fit = over ? "outgrown" : under ? "too_small" : "fits";
+    const young = age != null && m.min_age_months != null && age < m.min_age_months;
+    fit = over ? "outgrown" : under ? "too_small" : young ? "too_young" : "fits";
   }
 
-  let outgrows_on: string | null = null;
-  let outgrown_by: ModeCheck["outgrown_by"] = null;
-  if (fit === "fits" && child.birthDate) {
-    const projections: { by: "weight" | "height"; p: Projection }[] = [];
-    if (child.weightKg && m.max_weight_kg != null) {
-      projections.push({
-        by: "weight",
-        p: projectToLimit({
-          metric: "weight_kg",
-          sex: child.sex,
-          birthDate: child.birthDate,
-          measuredOn: child.weightKg.on,
-          value: child.weightKg.value,
-          limit: m.max_weight_kg,
-        }),
-      });
-    }
-    if (child.heightCm && m.max_height_cm != null) {
-      projections.push({
-        by: "height",
-        p: projectToLimit({
-          metric: "height_cm",
-          sex: child.sex,
-          birthDate: child.birthDate,
-          measuredOn: child.heightCm.on,
-          value: child.heightCm.value,
-          limit: m.max_height_cm,
-        }),
-      });
-    }
-    const dated = projections
-      .filter((x) => x.p.reachesOn)
-      .sort((a, b) => (a.p.reachesOn ?? "").localeCompare(b.p.reachesOn ?? ""));
-    if (dated[0]) {
-      outgrows_on = dated[0].p.reachesOn;
-      outgrown_by = dated[0].by;
-    }
+  const room_left: string[] = [];
+  if (fit === "fits") {
+    if (w != null && m.max_weight_kg != null)
+      room_left.push(`${showKg(m.max_weight_kg - w)} of weight`);
+    if (h != null && m.max_height_cm != null)
+      room_left.push(`${showCm(m.max_height_cm - h)} of height`);
   }
 
   return {
@@ -168,10 +135,9 @@ function checkMode(m: SeatModeRow, child: ChildFacts): ModeCheck {
     name: MODE_NAMES[m.mode],
     fit,
     limits,
+    room_left,
     manual_page: m.source_page,
     fit_note: m.fit_note,
-    outgrows_on,
-    outgrown_by,
   };
 }
 
