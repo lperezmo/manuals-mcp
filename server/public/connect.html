@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Connect your AI · Manuals</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap"
+    />
+    <link rel="stylesheet" href="/theme.css" />
+    <script src="/theme.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+  </head>
+  <body>
+    <header class="top" id="top"></header>
+    <main class="wrap">
+      <section class="stack" style="max-width:720px">
+        <h1>Your house, in the AI you already use.</h1>
+        <p class="muted">
+          The same eight tools behind this site work in Claude, ChatGPT and any app that takes a
+          remote MCP server. Add the link below as a custom connector, then sign in with the same
+          email.
+        </p>
+      </section>
+
+      <section class="card" style="max-width:720px">
+        <h2>Connector link</h2>
+        <div class="field">
+          <label class="sr-only" for="url">Connector link</label>
+          <input id="url" class="code" readonly />
+          <button id="copy" type="button">Copy link</button>
+        </div>
+        <div class="chips">
+          <span class="chip teal">Claude: Settings, Connectors, Add custom connector</span>
+          <span class="chip gold">ChatGPT: Settings, Apps, developer mode, Create</span>
+        </div>
+      </section>
+
+      <section class="card flat" style="max-width:720px">
+        <h2>Try asking</h2>
+        <div class="chips">
+          <span class="chip">What's due this week?</span>
+          <span class="chip">The washer says E4. What now?</span>
+          <span class="chip">I just cleaned the dishwasher filter</span>
+          <span class="chip">The drain filter step doesn't sound right, check page 38</span>
+          <span class="chip">Is she still OK rear-facing?</span>
+        </div>
+        <p class="small muted">
+          Car seat checks compare your child's latest measurements with the seat's own limits. A
+          certified technician can check the fit in person.
+        </p>
+      </section>
+    </main>
+    <script type="module">
+      import { $, boot } from "/app.js";
+
+      boot("/connect", { open: true });
+      $("#url").value = `${location.origin}/mcp`;
+      $("#copy").addEventListener("click", async (e) => {
+        try {
+          await navigator.clipboard.writeText($("#url").value);
+          e.target.textContent = "Copied";
+        } catch {
+          $("#url").select();
+        }
+      });
+    </script>
+  </body>
+</html>

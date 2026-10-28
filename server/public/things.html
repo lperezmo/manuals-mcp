@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Your things · Manuals</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap"
+    />
+    <link rel="stylesheet" href="/theme.css" />
+    <script src="/theme.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+  </head>
+  <body>
+    <header class="top" id="top"></header>
+    <main class="wrap" id="main">
+      <p class="muted">One moment…</p>
+    </main>
+
+    <script type="module">
+      import { $, ago, api, boot, db, esc, howOften, openChat, relDay, toast, today, tool } from "/app.js";
+
+      const main = $("#main");
+      const params = new URLSearchParams(location.search);
+      const KINDS = { error_code: "Error codes", part: "Parts", spec: "Specs", safety: "Safety", other: "Other" };
+      const SOURCES = { reader: "Read by Muse", assistant: "Checked by an assistant", user: "Set by you" };
+      const STATUS = { needs_review: ["To check", "gold"], revised: ["Revised", "teal"], confirmed: ["Checked", "teal"] };
+
+      // --- List ---------------------------------------------------------------
+
+      async function list() {
+        const { data, error } = await (await db())
+          .from("items")
+          .select("id, nickname, brand, model, category, manuals(page_count), manual_facts(status), tasks(active)")
+          .order("created_at");
+        if (error) throw new Error(error.message);
+        main.innerHTML = `
+          <div class="section-head" style="margin:0">
+            <h1>Your things</h1>
+            <a class="button" href="/things?add=1">Add a thing</a>
+          </div>
+          <div class="grid">${
+            data
+              .map((i) => {
+                const check = (i.manual_facts ?? []).filter((f) => f.status === "needs_review").length;
+                return `<a class="card" href="/things?id=${i.id}" style="color:inherit;text-decoration:none">
+                  <h3>${esc(i.nickname)}</h3>
+                  <div class="small muted">${esc([i.brand, i.model].filter(Boolean).join(" ")) || "No model saved"}</div>
+                  <div class="small">${i.manuals?.[0]?.page_count ? `${i.manuals[0].page_count}-page manual` : "No manual yet"} · ${(i.manual_facts ?? []).length} facts · ${(i.tasks ?? []).filter((t) => t.active).length} tasks${check ? ` · <strong>${check} to check</strong>` : ""}</div>
+                </a>`;
+              })
+              .join("") || '<p class="muted">Nothing yet. Add your first thing.</p>'
+          }</div>`;
+      }
+
+      // --- One thing -----------------------------------------------------------
+
+      async function detail(id) {
+        const supa = await db();
+        const { data: item, error } = await supa
+          .from("items")
+          .select(
+            "id, nickname, brand, model, serial, category, kind, uses_per_week, manuals(id, title, page_count, source_url, status, status_detail), manual_facts(id, kind, label, value, source_page, source, status), tasks(id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source, status, active), seat_modes(id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, source, status), item_readings(kind, value, measured_on)",
+          )
+          .eq("id", id)
+          .maybeSingle();
+        if (error) throw new Error(error.message);
+        if (!item) {
+          main.innerHTML = '<p class="card">That thing isn\'t in your household.</p>';
+          return;
+        }
+        const ids = [
+          ...item.manual_facts.map((f) => f.id),
+          ...item.tasks.map((t) => t.id),
+          ...item.seat_modes.map((s) => s.id),
+        ];
+        const { data: history } = ids.length
+          ? await supa
+              .from("revisions")
+              .select("target_id, before, after, source, reason, created_at")
+              .in("target_id", ids)
+              .order("created_at", { ascending: false })
+          : { data: [] };
+
+        const manual = item.manuals?.[0];
+        const readings = [...item.item_readings].sort((a, b) => b.measured_on.localeCompare(a.measured_on));
+        const cycles = readings.find((r) => r.kind === "cycles");
+        const byKind = Object.keys(KINDS)
+          .map((k) => [k, item.manual_facts.filter((f) => f.kind === k)])
+          .filter(([, fs]) => fs.length);
+        const badge = (x) =>
+          STATUS[x.status] ? `<span class="chip ${STATUS[x.status][1]} strong">${STATUS[x.status][0]}</span>` : "";
+        const source = (x) =>
+          `<span class="row small muted" style="gap:6px"><span class="dot src-${x.source}"></span>${SOURCES[x.source]}${x.source_page ? ` · p. ${x.source_page}` : ""}</span>`;
+
+        main.innerHTML = `
+          <section class="stack">
+            <a href="/things" style="font-weight:700;text-decoration:none">← Your things</a>
+            <h1>${esc(item.nickname)}</h1>
+            <p class="muted">${esc([item.brand, item.model, item.serial && `serial ${item.serial}`].filter(Boolean).join(" · "))}</p>
+            <div class="row">
+              <button type="button" id="ask">Ask about the ${esc(item.nickname.toLowerCase())}</button>
+              ${manual?.source_url ? `<a class="button quiet" href="${esc(manual.source_url)}" rel="noopener noreferrer" target="_blank">Open the manual</a>` : ""}
+            </div>
+          </section>
+
+          ${
+            manual
+              ? `<p class="small muted">${esc(manual.title || "Manual")}${manual.page_count ? `, ${manual.page_count} pages` : ""}${manual.status_detail ? `. ${esc(manual.status_detail)}` : ""}</p>`
+              : `<section class="card">
+                  <h2>Add its manual</h2>
+                  <p class="muted">Paste a link to the PDF on the maker's site, or upload the PDF. Muse reads it into tasks and facts, each with its page.</p>
+                  ${manualForm()}
+                </section>`
+          }
+
+          ${
+            item.tasks.length
+              ? `<section aria-labelledby="sched-h">
+                  <div class="section-head"><h2 id="sched-h">Upkeep</h2>${cycles ? `<span class="small muted">${Number(cycles.value)} uses so far${item.uses_per_week ? `, about ${Number(item.uses_per_week)} a week` : ""}</span>` : ""}</div>
+                  <div class="card">${item.tasks
+                    .map(
+                      (t) => `<div class="fact">
+                        <div><strong>${esc(t.title)}</strong> <span class="muted">${esc(howOften(t.interval_unit, t.interval_value))}</span>
+                          ${t.details ? `<div>${esc(t.details)}</div>` : ""}
+                          <div class="row" style="margin-top:4px">${source(t)}${badge(t)}${t.next_due_on ? `<span class="small ${t.next_due_on < today() ? "" : "muted"}" ${t.next_due_on < today() ? 'style="color:var(--coral);font-weight:700"' : ""}>Next ${esc(relDay(t.next_due_on))}</span>` : ""}</div>
+                        </div>
+                        <div class="row" style="align-items:start">${t.active ? `<button type="button" class="quiet small" data-done="${t.id}">Done</button>` : ""}<button type="button" class="quiet small" data-fix="task:${t.id}">Fix</button></div>
+                      </div>`,
+                    )
+                    .join("")}</div>
+                </section>`
+              : ""
+          }
+
+          ${
+            item.seat_modes.length
+              ? `<section aria-labelledby="seat-h"><div class="section-head"><h2 id="seat-h">Car seat limits</h2></div>
+                  <div class="card">${item.seat_modes
+                    .map(
+                      (s) => `<div class="fact"><div><strong>${esc(s.mode.replace(/_/g, "-"))}</strong>
+                        <div>${[s.max_weight_kg && `${s.min_weight_kg ?? 0} to ${s.max_weight_kg} kg`, s.max_height_cm && `${s.min_height_cm ?? 0} to ${s.max_height_cm} cm`, s.min_age_months && `at least ${s.min_age_months} months`].filter(Boolean).map(esc).join(" · ")}</div>
+                        ${s.fit_note ? `<div class="muted">${esc(s.fit_note)}</div>` : ""}
+                        <div class="row" style="margin-top:4px">${source(s)}${badge(s)}</div></div>
+                        <div><button type="button" class="quiet small" data-fix="seat_limit:${s.id}">Fix</button></div></div>`,
+                    )
+                    .join("")}
+                    <p class="small muted">A certified child passenger safety technician can check the fit in person.</p>
+                  </div></section>`
+              : ""
+          }
+
+          ${byKind
+            .map(
+              ([k, fs]) => `<section aria-label="${KINDS[k]}">
+                <div class="section-head"><h2>${KINDS[k]}</h2></div>
+                <div class="card">${fs
+                  .map(
+                    (f) => `<div class="fact"><div><strong>${esc(f.label)}</strong><div>${esc(f.value)}</div><div class="row" style="margin-top:4px">${source(f)}${badge(f)}</div></div>
+                      <div><button type="button" class="quiet small" data-fix="fact:${f.id}">Fix</button></div></div>`,
+                  )
+                  .join("")}</div></section>`,
+            )
+            .join("")}
+
+          ${
+            item.kind === "appliance"
+              ? `<section class="card flat"><h2 style="font-size:22px">Log a reading</h2>
+                  <p class="muted small">The cycle count from its display keeps "every 30 washes" tasks on real dates.</p>
+                  <form class="field" id="reading"><label class="sr-only" for="cycles">Cycle count</label>
+                  <input id="cycles" type="number" min="0" step="1" required placeholder="${cycles ? `Last: ${Number(cycles.value)}` : "Cycle count"}"><button type="submit">Save</button></form></section>`
+              : ""
+          }
+
+          ${
+            history?.length
+              ? `<section class="card flat"><h2 style="font-size:22px">History</h2>${history
+                  .map(
+                    (h) => `<div class="fact"><div>${esc(h.after.label || h.after.title || h.after.mode)}: <s class="muted">${esc(h.before.value ?? h.before.details ?? h.before.fit_note ?? "")}</s> → <strong>${esc(h.after.value ?? h.after.details ?? h.after.fit_note ?? "")}</strong><div class="small muted">“${esc(h.reason)}”</div></div><span class="small muted">${ago(h.created_at)} · ${h.source === "user" ? "You" : "Assistant"}</span></div>`,
+                  )
+                  .join("")}</section>`
+              : ""
+          }`;
+
+        $("#ask").addEventListener("click", () => openChat(undefined, () => detail(id)));
+        wireManualForm(item, () => detail(id));
+        for (const b of main.querySelectorAll("[data-done]")) {
+          b.addEventListener("click", async () => {
+            const { error: e } = await supa.rpc("log_task_done", { p_task: b.dataset.done });
+            if (e) return toast(e.message);
+            toast("Done. The next one is scheduled.");
+            detail(id);
+          });
+        }
+        for (const b of main.querySelectorAll("[data-fix]")) {
+          b.addEventListener("click", () => {
+            const [type, target] = b.dataset.fix.split(":");
+            const field = { fact: "value", task: "details", seat_limit: "fit_note" }[type];
+            const value = prompt("What should it say? Your version wins, and the old one is kept.");
+            if (!value?.trim()) return;
+            tool("revise_fact", { id: target, type, source: "user", changes: { [field]: value.trim() }, reason: "Set by you." })
+              .then(() => {
+                toast("Saved.");
+                detail(id);
+              })
+              .catch((err) => toast(err.message));
+          });
+        }
+        $("#reading")?.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          try {
+            const out = await tool("record_measurement", { item: id, cycles: Number($("#cycles").value) });
+            toast(out.summary);
+            detail(id);
+          } catch (err) {
+            toast(err.message);
+          }
+        });
+      }
+
+      // --- Adding --------------------------------------------------------------
+
+      function manualForm() {
+        return `<form class="field" data-link><label class="sr-only" for="pdf-url">Link to the manual PDF</label>
+            <input id="pdf-url" type="url" placeholder="https://maker.example/manual.pdf"><button type="submit">Read it</button></form>
+          <div class="row"><label class="button quiet" for="pdf-file" style="cursor:pointer">Upload a PDF</label>
+            <input id="pdf-file" type="file" accept="application/pdf" class="sr-only"><span class="small muted" data-progress role="status"></span></div>`;
+      }
+
+      function wireManualForm(item, after) {
+        const link = main.querySelector("[data-link]");
+        if (!link) return;
+        const progress = $("[data-progress]");
+        link.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          progress.textContent = "Muse is reading the manual. This takes up to a minute.";
+          try {
+            const out = await tool("add_item", { attach_to: item.id, pdf_url: $("#pdf-url").value.trim() });
+            toast(out.summary);
+            after();
+          } catch (err) {
+            progress.textContent = err.message;
+          }
+        });
+        $("#pdf-file").addEventListener("change", async (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          progress.textContent = "Uploading…";
+          try {
+            await uploadManual(item, file, (t) => {
+              progress.textContent = t;
+            });
+            after();
+          } catch (err) {
+            progress.textContent = err.message;
+          }
+        });
+      }
+
+      async function uploadManual(item, file, say) {
+        const supa = await db();
+        const { data: hid } = await supa.rpc("ensure_household");
+        const { data: manual, error } = await supa
+          .from("manuals")
+          .insert({ household_id: hid, item_id: item.id, title: file.name, source: "pdf_upload" })
+          .select("id")
+          .single();
+        if (error) throw new Error(error.message);
+        const path = `${hid}/${manual.id}.pdf`;
+        const up = await supa.storage.from("manuals").upload(path, file, { contentType: "application/pdf", upsert: true });
+        if (up.error) throw new Error(up.error.message);
+        await supa.from("manuals").update({ storage_path: path }).eq("id", manual.id);
+        say("Muse is reading the manual. This takes up to a minute.");
+        const out = await api("/api/ingest", { manual_id: manual.id });
+        toast(out.distilled ? `Read it: ${out.distilled.tasks} tasks, ${out.distilled.facts} facts.` : out.note || "Saved.");
+      }
+
+      /** Shrinks a photo to at most 1280 px so it stays small to send. */
+      function shrink(file) {
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => {
+            const scale = Math.min(1, 1280 / Math.max(img.width, img.height));
+            const c = document.createElement("canvas");
+            c.width = Math.round(img.width * scale);
+            c.height = Math.round(img.height * scale);
+            c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+            URL.revokeObjectURL(img.src);
+            resolve(c.toDataURL("image/jpeg", 0.82));
+          };
+          img.onerror = () => reject(new Error("Couldn't open that photo."));
+          img.src = URL.createObjectURL(file);
+        });
+      }
+
+      function add() {
+        main.innerHTML = `
+          <section class="stack">
+            <a href="/things" style="font-weight:700;text-decoration:none">← Your things</a>
+            <h1>One photo of the label. That's it.</h1>
+            <p class="muted">Muse reads the brand and model off the label. Then add the manual's link or PDF and it's read into tasks and facts.</p>
+          </section>
+          <div class="grid" style="align-items:start">
+            <section class="card">
+              <div class="row"><span class="chip teal strong">1</span><h2 style="font-size:20px">The label</h2></div>
+              <p class="small muted">Inside the door, on the back, or under the base.</p>
+              <label class="button outline" for="photo" style="cursor:pointer">Take or choose a photo</label>
+              <input id="photo" type="file" accept="image/*" capture="environment" class="sr-only">
+              <img id="preview" alt="Your label photo" class="hidden" style="width:100%;border-radius:16px">
+              <p class="small muted" id="snap-msg" role="status"></p>
+            </section>
+            <form class="card" id="add-form">
+              <div class="row"><span class="chip teal strong">2</span><h2 style="font-size:20px">What it is</h2></div>
+              <label class="small" for="f-nick"><strong>What do you call it?</strong></label>
+              <input id="f-nick" required placeholder="Washer">
+              <label class="small" for="f-brand"><strong>Brand</strong></label><input id="f-brand">
+              <label class="small" for="f-model"><strong>Model</strong></label><input id="f-model">
+              <label class="small" for="f-serial"><strong>Serial</strong></label><input id="f-serial">
+              <label class="small" for="f-kind"><strong>Kind</strong></label>
+              <select id="f-kind"><option value="appliance">Appliance</option><option value="baby_gear">Baby gear</option><option value="vehicle">Vehicle</option><option value="other">Other</option></select>
+              <label class="small" for="f-pdf"><strong>Link to the manual PDF</strong> <span class="muted">(optional)</span></label>
+              <input id="f-pdf" type="url" placeholder="https://maker.example/manual.pdf">
+              <button type="submit">Add it</button>
+              <p class="small muted" id="add-msg" role="status"></p>
+            </form>
+          </div>`;
+        let category = null;
+        $("#photo").addEventListener("change", async (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          const msg = $("#snap-msg");
+          msg.textContent = "Reading the label…";
+          try {
+            const image = await shrink(file);
+            $("#preview").src = image;
+            $("#preview").classList.remove("hidden");
+            const label = await api("/api/snap", { image });
+            if (!label.found) {
+              msg.textContent = "Couldn't find a label in that photo. Try closer, or type it in.";
+              return;
+            }
+            $("#f-nick").value = label.nickname || $("#f-nick").value;
+            $("#f-brand").value = label.brand || "";
+            $("#f-model").value = label.model || "";
+            $("#f-serial").value = label.serial || "";
+            if (label.kind) $("#f-kind").value = label.kind;
+            category = label.category || null;
+            msg.textContent = label.unsure ? "Read it, but part was hard to read. Check the fields." : "Read it. Check the fields, then add it.";
+          } catch (err) {
+            msg.textContent = err.message;
+          }
+        });
+        $("#add-form").addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const msg = $("#add-msg");
+          const pdf = $("#f-pdf").value.trim();
+          msg.textContent = pdf ? "Adding it. Muse is reading the manual, up to a minute." : "Adding it…";
+          const args = {
+            nickname: $("#f-nick").value.trim(),
+            kind: $("#f-kind").value,
+            ...(category ? { category } : {}),
+          };
+          for (const [key, el] of [["brand", "#f-brand"], ["model", "#f-model"], ["serial", "#f-serial"]]) {
+            if ($(el).value.trim()) args[key] = $(el).value.trim();
+          }
+          if (pdf) args.pdf_url = pdf;
+          try {
+            const out = await tool("add_item", args);
+            toast(out.summary.split(".")[0]);
+            location.assign(`/things?id=${out.data.item.id}`);
+          } catch (err) {
+            msg.textContent = err.message;
+          }
+        });
+        if (params.get("add") === "photo") $("label[for=photo]").focus();
+      }
+
+      async function start() {
+        if (!(await boot("/things"))) return;
+        if (params.get("id")) return detail(params.get("id"));
+        if (params.get("add")) return add();
+        return list();
+      }
+      start().catch((err) => {
+        main.innerHTML = `<p class="card">Something went wrong: ${esc(err.message)}</p>`;
+      });
+    </script>
+  </body>
+</html>

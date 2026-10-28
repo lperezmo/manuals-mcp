@@ -4,75 +4,432 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Manuals</title>
-    <meta name="description" content="Your home's manuals and upkeep, ready for your AI." />
+    <meta name="description" content="Every manual in the house, one question away." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap"
     />
     <link rel="stylesheet" href="/theme.css" />
     <script src="/theme.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
   </head>
   <body>
-    <main class="wrap">
-      <div class="top">
-        <div class="brand">
-          <span class="brand-mark">
-            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H18v15H6.5A1.5 1.5 0 0 0 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H18v-3"/></svg>
-          </span>
-          Manuals
-        </div>
-        <div class="theme-toggle"></div>
-      </div>
-
-      <section class="card" style="background: var(--lav); border-color: transparent">
-        <h1>Your home's manuals, ready for your AI.</h1>
-        <p class="muted">
-          Washer, dishwasher, car seat, stroller. Keep the manuals and the upkeep schedule in one
-          place, then just ask.
-        </p>
-      </section>
-
-      <section class="card">
-        <h2>Connect your AI</h2>
-        <p class="muted">Add this link as a custom connector, then sign in with your email.</p>
-        <div class="field">
-          <input id="url" class="code" readonly aria-label="Connector link" />
-          <button id="copy" type="button">Copy link</button>
-        </div>
-        <div class="chips">
-          <span class="chip sky">Claude: Settings, Connectors, Add custom connector</span>
-          <span class="chip mint">ChatGPT: Settings, Apps, Create (developer mode)</span>
-          <span class="chip peach">Muse: Connections, Add MCP server</span>
-        </div>
-      </section>
-
-      <section class="card">
-        <h2>Try asking</h2>
-        <div class="chips">
-          <span class="chip butter">What's due this week?</span>
-          <span class="chip rose">The washer says UE. What does that mean?</span>
-          <span class="chip mint">I just cleaned the dishwasher filter</span>
-          <span class="chip sky">Is she still OK rear-facing?</span>
-        </div>
-      </section>
-
-      <p class="muted" style="font-size: 15px">
-        Car seat checks compare your child's latest measurements with the seat's own limits. Check your
-        seat's manual, and a certified technician can check the fit in person.
-      </p>
+    <header class="top" id="top"></header>
+    <main class="wrap" id="main">
+      <p class="muted">One moment…</p>
     </main>
-    <script>
-      const url = document.getElementById("url");
-      url.value = `${location.origin}/mcp`;
-      document.getElementById("copy").addEventListener("click", async (e) => {
-        try {
-          await navigator.clipboard.writeText(url.value);
-          e.target.textContent = "Copied";
-        } catch {
-          url.select();
+
+    <script type="module">
+      import {
+        $,
+        addDays,
+        ago,
+        boot,
+        db,
+        esc,
+        howOften,
+        openChat,
+        relDay,
+        signIn,
+        toast,
+        today,
+        tool,
+      } from "/app.js";
+
+      const main = $("#main");
+      const ITEM = "items(id, nickname, brand, model)";
+      const one = (x) => (Array.isArray(x) ? x[0] : x);
+
+      async function load() {
+        const supa = await db();
+        const now = today();
+        const until = addDays(now, 6);
+        const [items, due, facts, tasks, seats, revisions, kids] = await Promise.all([
+          supa
+            .from("items")
+            .select(
+              "id, nickname, brand, model, category, child_id, uses_per_week, manuals(page_count), manual_facts(source, status), tasks(active, next_due_on), item_readings(kind, value, measured_on), seat_modes(mode, max_weight_kg, max_height_cm, source_page)",
+            )
+            .order("created_at"),
+          supa
+            .from("tasks")
+            .select(`id, title, interval_unit, interval_value, next_due_on, source_page, ${ITEM}`)
+            .eq("active", true)
+            .lte("next_due_on", until)
+            .order("next_due_on"),
+          supa
+            .from("manual_facts")
+            .select(`id, label, value, source_page, manual_id, ${ITEM}`)
+            .eq("status", "needs_review"),
+          supa
+            .from("tasks")
+            .select(
+              `id, title, details, interval_unit, interval_value, source_page, source_manual_id, ${ITEM}`,
+            )
+            .eq("status", "needs_review"),
+          supa
+            .from("seat_modes")
+            .select(
+              `id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, manual_id, ${ITEM}`,
+            )
+            .eq("status", "needs_review"),
+          supa
+            .from("revisions")
+            .select("target_table, before, after, source, reason, created_at")
+            .order("created_at", { ascending: false })
+            .limit(4),
+          supa
+            .from("children")
+            .select("id, nickname, measurements(measured_on, height_cm, weight_kg)"),
+        ]);
+        for (const r of [items, due, facts, tasks, seats, revisions, kids]) {
+          if (r.error) throw new Error(r.error.message);
         }
+
+        const review = [
+          ...facts.data.map((f) => ({
+            id: f.id,
+            type: "fact",
+            item: one(f.items),
+            title: f.label,
+            read: f.value,
+            page: f.source_page,
+            manual: f.manual_id,
+          })),
+          ...tasks.data.map((t) => ({
+            id: t.id,
+            type: "task",
+            item: one(t.items),
+            title: `${t.title}, ${howOften(t.interval_unit, t.interval_value)}`,
+            read: t.details || t.title,
+            page: t.source_page,
+            manual: t.source_manual_id,
+          })),
+          ...seats.data.map((s) => ({
+            id: s.id,
+            type: "seat_limit",
+            item: one(s.items),
+            title: `${s.mode[0].toUpperCase()}${s.mode.slice(1).replace(/_/g, "-")} limits`,
+            read: seatLimits(s),
+            page: s.source_page,
+            manual: s.manual_id,
+          })),
+        ];
+        await Promise.all(
+          review.map(async (r) => {
+            if (!r.manual || !r.page) return;
+            const { data } = await supa
+              .from("manual_pages")
+              .select("content")
+              .eq("manual_id", r.manual)
+              .eq("page_number", r.page)
+              .maybeSingle();
+            r.pageText = data?.content ?? null;
+          }),
+        );
+
+        render({
+          items: items.data,
+          due: due.data,
+          review,
+          revisions: revisions.data,
+          kids: kids.data,
+        });
+      }
+
+      function seatLimits(s) {
+        const parts = [];
+        if (s.min_weight_kg || s.max_weight_kg)
+          parts.push(`${s.min_weight_kg ?? 0} to ${s.max_weight_kg} kg`);
+        if (s.min_height_cm || s.max_height_cm)
+          parts.push(`${s.min_height_cm ?? 0} to ${s.max_height_cm} cm`);
+        if (s.min_age_months) parts.push(`at least ${s.min_age_months} months old`);
+        return parts.join(", ") || s.fit_note || "No limits saved";
+      }
+
+      /** Marks the sentence(s) of the page that share the most words and numbers with what was read. */
+      function highlight(text, read) {
+        const tokens = (s) =>
+          s
+            .toLowerCase()
+            .split(/[^a-z0-9.]+/)
+            .map((w) => w.replace(/\.$/, ""))
+            .filter((w) => w.length > 4 || /^\d/.test(w));
+        const words = new Set(tokens(read));
+        const sentences = text.split(/(?<=[.!?])\s+/);
+        const scores = sentences.map((s) => new Set(tokens(s).filter((w) => words.has(w))).size);
+        const best = Math.max(0, ...scores);
+        return sentences
+          .map((s, i) => (best > 0 && scores[i] === best ? `<mark>${esc(s)}</mark>` : esc(s)))
+          .join(" ");
+      }
+
+      function headline(late, toCheck) {
+        const n = ["No", "One", "Two", "Three", "Four", "Five"];
+        const word = (k) => n[k] ?? String(k);
+        const a = late ? `${word(late)} thing${late > 1 ? "s are" : " is"} late` : "Nothing is late";
+        const b = toCheck
+          ? `${word(toCheck).toLowerCase()} fact${toCheck > 1 ? "s" : ""} need${toCheck > 1 ? "" : "s"} your eyes`
+          : "everything you know is checked";
+        return `${a}, and ${b}.`;
+      }
+
+      function weekStrip(due) {
+        const now = today();
+        const days = Array.from({ length: 7 }, (_, i) => addDays(now, i));
+        return days
+          .map((day, i) => {
+            const date = new Date(`${day}T12:00:00`);
+            const tasks = due.filter((t) =>
+              i === 0 ? t.next_due_on <= day : t.next_due_on === day,
+            );
+            const pills = tasks
+              .map((t) => {
+                const late = t.next_due_on < now;
+                return `<div class="pill ${late ? "late" : ""}">
+                  <strong>${late ? esc(relDay(t.next_due_on)) : esc(howOften(t.interval_unit, t.interval_value))}</strong>
+                  ${esc(t.title)}
+                  <div class="small muted">${esc(one(t.items)?.nickname)}${t.source_page ? ` · p. ${t.source_page}` : ""}</div>
+                  <button type="button" class="quiet small" style="margin-top:6px;width:100%" data-done="${t.id}">Done</button>
+                </div>`;
+              })
+              .join("");
+            return `<div class="day ${i === 0 ? "today" : ""}">
+              <div style="font-weight:700">${date.toLocaleDateString(undefined, { weekday: "short" })} <span class="muted">${date.getDate()}</span></div>
+              ${pills}
+            </div>`;
+          })
+          .join("");
+      }
+
+      function reviewCard(r) {
+        const item = r.item;
+        const page = r.pageText
+          ? `<div class="panel"><div class="label">Page ${r.page} says</div><p style="margin-top:6px">${highlight(r.pageText, r.read)}</p></div>`
+          : `<div class="panel"><div class="label">Page ${r.page ?? "?"}</div><p class="muted" style="margin-top:6px">The page text isn't saved, so check the paper manual.</p></div>`;
+        return `<article class="card" data-review="${r.id}">
+          <div class="row" style="align-items:baseline">
+            <h3>${esc(r.title)}</h3>
+            <span class="small muted">${esc(item?.nickname)} · ${esc([item?.brand, item?.model].filter(Boolean).join(" "))}</span>
+          </div>
+          <div class="grid">
+            <div class="panel gold"><div class="label">Muse read</div><p style="margin-top:6px;font-size:17px">${esc(r.read)}</p><p class="small muted" style="margin-top:6px">Muse flagged this one as unsure.</p></div>
+            ${page}
+          </div>
+          <div class="row">
+            <button type="button" data-ask>Ask Muse to check it</button>
+            <button type="button" class="quiet" data-right>It's right</button>
+            <button type="button" class="quiet" data-own>Write my own</button>
+          </div>
+          <form class="field hidden" data-own-form>
+            <label class="sr-only" for="own-${r.id}">Your version</label>
+            <input id="own-${r.id}" required placeholder="What it should say">
+            <button type="submit">Save</button>
+          </form>
+        </article>`;
+      }
+
+      function thingCard(item, kids) {
+        const facts = item.manual_facts ?? [];
+        const count = (s) => facts.filter((f) => f.source === s).length;
+        const width = (n) => (facts.length ? (n / facts.length) * 100 : 0);
+        const toCheck = facts.filter((f) => f.status === "needs_review").length;
+        const tasks = (item.tasks ?? []).filter((t) => t.active);
+        const late = tasks.filter((t) => t.next_due_on && t.next_due_on < today()).length;
+        const pages = item.manuals?.[0]?.page_count;
+        const cycles = (item.item_readings ?? [])
+          .filter((r) => r.kind === "cycles")
+          .sort((a, b) => b.measured_on.localeCompare(a.measured_on))[0];
+        let extra = "";
+        if (cycles) {
+          extra = `${Number(cycles.value)} uses so far${item.uses_per_week ? `, about ${Number(item.uses_per_week)} a week` : ""}`;
+        }
+        const seat = (item.seat_modes ?? []).find((m) => m.mode === "rear_facing") ?? item.seat_modes?.[0];
+        const kid = kids.find((k) => k.id === item.child_id);
+        if (seat && kid) {
+          const m = [...(kid.measurements ?? [])].sort((a, b) =>
+            b.measured_on.localeCompare(a.measured_on),
+          )[0];
+          if (m) {
+            extra = `${seat.mode.replace(/_/g, "-")}: ${Number(m.weight_kg)} of ${Number(seat.max_weight_kg)} kg · ${Number(m.height_cm)} of ${Number(seat.max_height_cm)} cm (p. ${seat.source_page})<br><span class="muted">${esc(kid.nickname)}, measured ${ago(m.measured_on).toLowerCase()}</span>`;
+          }
+        }
+        return `<a class="card" href="/things?id=${item.id}" style="color:inherit;text-decoration:none">
+          <div><h3>${esc(item.nickname)}</h3><div class="small muted">${esc([item.brand, item.model].filter(Boolean).join(" "))}${pages ? ` · ${pages}-page manual` : " · no manual yet"}</div></div>
+          <div class="source-bar" role="img" aria-label="${facts.length} facts: ${count("reader")} read by Muse, ${count("assistant")} checked by an assistant, ${count("user")} set by you">
+            <span class="src-reader" style="width:${width(count("reader"))}%"></span><span class="src-assistant" style="width:${width(count("assistant"))}%"></span><span class="src-user" style="width:${width(count("user"))}%"></span>
+          </div>
+          <div class="small">${facts.length} facts · ${tasks.length} tasks${toCheck ? ` · <strong>${toCheck} to check</strong>` : ""}${late ? ` · <strong style="color:var(--coral)">${late} late</strong>` : ""}</div>
+          ${extra ? `<div class="small">${extra}</div>` : ""}
+        </a>`;
+      }
+
+      function change(r) {
+        const keys = Object.keys(r.after).filter(
+          (k) => !["source", "status"].includes(k) && JSON.stringify(r.before[k]) !== JSON.stringify(r.after[k]),
+        );
+        const what = r.after.label || r.after.title || (r.after.mode ?? "").replace(/_/g, "-") || "A fact";
+        const diff = keys
+          .slice(0, 1)
+          .map(
+            (k) =>
+              ` <s class="muted">${esc(r.before[k])}</s> → <strong>${esc(String(r.after[k]).replace(/\.$/, ""))}</strong>`,
+          )
+          .join("");
+        const who = r.source === "user" ? ["You", "var(--coral)"] : ["Assistant", "var(--teal)"];
+        return `<div class="row" style="align-items:baseline;gap:6px 14px">
+          <span class="small muted" style="min-width:90px">${ago(r.created_at)}</span>
+          <span style="flex:1 1 360px;min-width:0">${esc(what)}${diff || " confirmed"}. “${esc(r.reason)}”</span>
+          <span class="small" style="font-weight:700;color:${who[1]}">${who[0]}</span>
+        </div>`;
+      }
+
+      function render({ items, due, review, revisions, kids }) {
+        if (!items.length) {
+          main.innerHTML = `<section class="card" style="max-width:640px">
+            <h1>An empty house, for now.</h1>
+            <p class="muted">Add your first thing with a photo of its label or a link to its manual, or load the example home to look around.</p>
+            <div class="row"><a class="button" href="/things?add=1">Add a thing</a><button type="button" class="quiet" id="demo">Load the example home</button></div>
+          </section>`;
+          $("#demo").addEventListener("click", async () => {
+            const { error } = await (await db()).rpc("load_demo_household");
+            if (error) return toast(error.message);
+            load();
+          });
+          return;
+        }
+        const late = due.filter((t) => t.next_due_on < today()).length;
+        const date = new Date().toLocaleDateString(undefined, {
+          weekday: "long",
+          month: "short",
+          day: "numeric",
+        });
+        main.innerHTML = `
+          <section class="stack">
+            <p class="muted" style="font-weight:600">${esc(date)}</p>
+            <h1>${esc(headline(late, review.length))}</h1>
+            <form class="field" id="ask" style="margin-top:6px">
+              <label class="sr-only" for="ask-input">Ask or tell</label>
+              <input id="ask-input" autocomplete="off" placeholder="Ask or tell: “the washer is at 230 washes”">
+              <button type="submit">Go</button>
+              <a class="button outline" href="/things?add=photo">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg>
+                Snap a label</a>
+            </form>
+          </section>
+
+          <section aria-labelledby="week-h">
+            <div class="section-head"><h2 id="week-h">This week</h2><span class="small muted">From your manuals and how much you use things</span></div>
+            <div class="scroll-x"><div class="week">${weekStrip(due)}</div></div>
+          </section>
+
+          ${
+            review.length
+              ? `<section aria-labelledby="review-h" class="stack">
+                  <div class="section-head" style="margin:0"><h2 id="review-h">Needs your eyes <span class="chip gold strong" style="font-family:inherit;font-size:14px;vertical-align:middle">${review.length}</span></h2></div>
+                  ${review.map(reviewCard).join("")}
+                </section>`
+              : ""
+          }
+
+          <section aria-labelledby="things-h">
+            <div class="section-head">
+              <h2 id="things-h">Your things</h2>
+              <div class="row small muted" style="gap:14px">
+                <span class="row" style="gap:6px"><span class="dot src-reader"></span>Read by Muse</span>
+                <span class="row" style="gap:6px"><span class="dot src-assistant"></span>Checked by an assistant</span>
+                <span class="row" style="gap:6px"><span class="dot src-user"></span>Set by you</span>
+              </div>
+            </div>
+            <div class="grid">${items.map((i) => thingCard(i, kids)).join("")}</div>
+          </section>
+
+          ${
+            revisions.length
+              ? `<section class="card flat" aria-labelledby="changes-h">
+                  <div class="section-head" style="margin:0"><h2 id="changes-h" style="font-size:22px">Recent changes</h2><a href="/history">All of them</a></div>
+                  ${revisions.map(change).join("")}
+                </section>`
+              : ""
+          }`;
+
+        $("#ask").addEventListener("submit", (e) => {
+          e.preventDefault();
+          const text = $("#ask-input").value.trim();
+          $("#ask-input").value = "";
+          openChat(text || undefined, load);
+        });
+        for (const b of main.querySelectorAll("[data-done]")) {
+          b.addEventListener("click", async () => {
+            b.disabled = true;
+            const { error } = await (await db()).rpc("log_task_done", { p_task: b.dataset.done });
+            if (error) {
+              b.disabled = false;
+              return toast(error.message);
+            }
+            toast("Done. The next one is scheduled.");
+            load();
+          });
+        }
+        for (const r of review) {
+          const card = main.querySelector(`[data-review="${r.id}"]`);
+          $("[data-ask]", card).addEventListener("click", () =>
+            openChat(
+              `Check "${r.title}" for the ${r.item?.nickname?.toLowerCase()} against page ${r.page} of its manual, and fix it if it's wrong.`,
+              load,
+            ),
+          );
+          $("[data-right]", card).addEventListener("click", async () => {
+            try {
+              await tool("revise_fact", {
+                id: r.id,
+                type: r.type,
+                source: "user",
+                reason: `Checked against page ${r.page} by you.`,
+              });
+              toast("Marked as checked.");
+              load();
+            } catch (err) {
+              toast(err.message);
+            }
+          });
+          $("[data-own]", card).addEventListener("click", () => {
+            $("[data-own-form]", card).classList.remove("hidden");
+            $("input", $("[data-own-form]", card)).focus();
+          });
+          $("[data-own-form]", card).addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const value = $("input", e.target).value.trim();
+            const field = { fact: "value", task: "details", seat_limit: "fit_note" }[r.type];
+            try {
+              await tool("revise_fact", {
+                id: r.id,
+                type: r.type,
+                source: "user",
+                changes: { [field]: value },
+                reason: "Set by you.",
+              });
+              toast("Saved. The earlier version is kept in the history.");
+              load();
+            } catch (err) {
+              toast(err.message);
+            }
+          });
+        }
+      }
+
+      async function start() {
+        const session = await boot("/");
+        if (!session) {
+          signIn(main, () => location.reload());
+          return;
+        }
+        await load();
+      }
+      start().catch((err) => {
+        main.innerHTML = `<p class="card">Something went wrong: ${esc(err.message)}</p>`;
       });
     </script>
   </body>

@@ -27,8 +27,10 @@
   };
   const LABELS = { light: "Light", system: "Match system", dark: "Dark" };
 
-  document.addEventListener("DOMContentLoaded", () => {
-    for (const holder of document.querySelectorAll(".theme-toggle")) {
+  // Builds any toggle on the page that has no buttons yet; pages that draw
+  // their header later fire "manuals:theme-toggle" to get theirs.
+  const build = () => {
+    for (const holder of document.querySelectorAll(".theme-toggle:empty")) {
       holder.setAttribute("role", "group");
       holder.setAttribute("aria-label", "Theme");
       for (const mode of ["light", "system", "dark"]) {
@@ -48,5 +50,7 @@
       }
     }
     apply(read());
-  });
+  };
+  document.addEventListener("DOMContentLoaded", build);
+  window.addEventListener("manuals:theme-toggle", build);
 })();
