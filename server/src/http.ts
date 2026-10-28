@@ -1,0 +1,91 @@
+import type { AuthInfo } from "@modelcontextprotocol/server";
+import {
+  createMcpHandler,
+  generateProtectedResourceMetadata,
+  getPublicOrigin,
+  metadataCorsOptionsRequestHandler,
+  withMcpAuth,
+} from "mcp-handler";
+import { bearer, supabaseVerifier } from "./auth.js";
+import { householdId, userDb } from "./db.js";
+import { authIssuer, type Env } from "./env.js";
+import { processStoredManual } from "./finder/ingest.js";
+import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
+
+// HTTP entry points, shared by the Vercel functions in api/ and the local
+// dev server. All of them are Web-standard (Request) => Response.
+
+export type Verify = (token: string | undefined) => Promise<AuthInfo | undefined>;
+
+/** The MCP endpoint's public path; /mcp is rewritten to api/mcp on Vercel. */
+export const MCP_PATH = "/mcp";
+export const RESOURCE_METADATA_PATH = `/.well-known/oauth-protected-resource${MCP_PATH}`;
+
+export function mcpHandler(env: Env, verify: Verify = supabaseVerifier(env)) {
+  const handler = createMcpHandler((server) => registerTools(server, env), {
+    serverInfo: SERVER_INFO,
+    instructions: INSTRUCTIONS,
+  });
+  return withMcpAuth(handler, (_req, token) => verify(token), {
+    required: true,
+    resourceMetadataPath: RESOURCE_METADATA_PATH,
+    resourceUrl: env.publicUrl,
+  });
+}
+
+/** RFC 9728 metadata: tells AI apps to sign in with Supabase Auth. */
+export function resourceMetadataHandler(env: Env) {
+  const preflight = metadataCorsOptionsRequestHandler();
+  return (req: Request) => {
+    if (req.method === "OPTIONS") return preflight();
+    const metadata = generateProtectedResourceMetadata({
+      authServerUrls: [authIssuer(env)],
+      resourceUrl: `${env.publicUrl ?? getPublicOrigin(req)}${MCP_PATH}`,
+      additionalMetadata: { resource_name: "Manuals" },
+    });
+    return Response.json(metadata, {
+      headers: { "access-control-allow-origin": "*", "cache-control": "max-age=3600" },
+    });
+  };
+}
+
+/** Public values the consent page needs to talk to Supabase Auth. */
+export function publicConfigHandler(env: Env) {
+  return () =>
+    Response.json(
+      { supabaseUrl: env.supabaseUrl, supabasePublishableKey: env.supabasePublishableKey },
+      { headers: { "cache-control": "public, max-age=300" } },
+    );
+}
+
+/**
+ * The app uploads a PDF to storage, then calls this to extract its text and,
+ * when a server reader is configured, distill its schedule.
+ */
+export function ingestHandler(env: Env, verify: Verify = supabaseVerifier(env)) {
+  return async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    const auth = await verify(bearer(req));
+    if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
+    let manualId: unknown;
+    try {
+      manualId = ((await req.json()) as { manual_id?: unknown }).manual_id;
+    } catch {
+      return Response.json({ error: "Send JSON with manual_id." }, { status: 400 });
+    }
+    if (typeof manualId !== "string")
+      return Response.json({ error: "manual_id is required." }, { status: 400 });
+    try {
+      const db = userDb(env, auth.token);
+      const outcome = await processStoredManual({
+        env,
+        db,
+        householdId: await householdId(db),
+        manualId,
+      });
+      return Response.json(outcome);
+    } catch (err) {
+      return Response.json({ error: (err as Error).message }, { status: 422 });
+    }
+  };
+}

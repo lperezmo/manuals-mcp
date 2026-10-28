@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Manuals</title>
+    <meta name="description" content="Your home's manuals and upkeep, ready for your AI." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&display=swap"
+    />
+    <link rel="stylesheet" href="/theme.css" />
+    <script src="/theme.js"></script>
+  </head>
+  <body>
+    <main class="wrap">
+      <div class="top">
+        <div class="brand">
+          <span class="brand-mark">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H18v15H6.5A1.5 1.5 0 0 0 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H18v-3"/></svg>
+          </span>
+          Manuals
+        </div>
+        <div class="theme-toggle"></div>
+      </div>
+
+      <section class="card" style="background: var(--lav); border-color: transparent">
+        <h1>Your home's manuals, ready for your AI.</h1>
+        <p class="muted">
+          Washer, dishwasher, car seat, stroller. Keep the manuals and the upkeep schedule in one
+          place, then just ask.
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Connect your AI</h2>
+        <p class="muted">Add this link as a custom connector, then sign in with your email.</p>
+        <div class="field">
+          <input id="url" class="code" readonly aria-label="Connector link" />
+          <button id="copy" type="button">Copy link</button>
+        </div>
+        <div class="chips">
+          <span class="chip sky">Claude: Settings, Connectors, Add custom connector</span>
+          <span class="chip mint">ChatGPT: Settings, Apps, Create (developer mode)</span>
+          <span class="chip peach">Muse: Connections, Add MCP server</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Try asking</h2>
+        <div class="chips">
+          <span class="chip butter">What's due this week?</span>
+          <span class="chip rose">The washer says UE. What does that mean?</span>
+          <span class="chip mint">I just cleaned the dishwasher filter</span>
+          <span class="chip sky">When does she outgrow rear-facing?</span>
+        </div>
+      </section>
+
+      <p class="muted" style="font-size: 15px">
+        Growth estimates use the WHO Child Growth Standards and are estimates only. Check your seat's
+        manual, and a certified technician can check the fit in person.
+      </p>
+    </main>
+    <script>
+      const url = document.getElementById("url");
+      url.value = `${location.origin}/mcp`;
+      document.getElementById("copy").addEventListener("click", async (e) => {
+        try {
+          await navigator.clipboard.writeText(url.value);
+          e.target.textContent = "Copied";
+        } catch {
+          url.select();
+        }
+      });
+    </script>
+  </body>
+</html>

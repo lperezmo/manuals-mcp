@@ -1,0 +1,16 @@
+node_modules/
+
+# Local only: plans and CI stay out of the public repo for now
+docs/*
+!docs/licenses/
+.github/
+plans/
+*.plan.html
+
+.env
+.env.*
+!.env.example
+.vercel/
+coverage/
+*.log
+.DS_Store

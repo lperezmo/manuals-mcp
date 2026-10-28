@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Connect Manuals</title>
+    <meta name="referrer" content="no-referrer" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&display=swap"
+    />
+    <link rel="stylesheet" href="/theme.css" />
+    <script src="/theme.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+  </head>
+  <body>
+    <!--
+      Supabase Auth (the OAuth 2.1 server) sends people here with
+      ?authorization_id=... when an AI app asks to connect. They sign in with
+      an emailed code, see which app is asking, and approve or deny.
+    -->
+    <main class="wrap">
+      <div class="top">
+        <div class="brand">
+          <span class="brand-mark">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H18v15H6.5A1.5 1.5 0 0 0 5 19.5z"/><path d="M5 19.5A1.5 1.5 0 0 0 6.5 21H18v-3"/></svg>
+          </span>
+          Manuals
+        </div>
+        <div class="theme-toggle"></div>
+      </div>
+
+      <section id="loading" class="card"><p class="muted">One moment…</p></section>
+
+      <section id="signin" class="card hidden">
+        <h1>Sign in to connect</h1>
+        <p class="muted">We'll email you a 6-digit code. No password.</p>
+        <form id="email-form" class="field">
+          <input id="email" type="email" autocomplete="email" required placeholder="you@example.com" aria-label="Email" />
+          <button type="submit">Send code</button>
+        </form>
+        <form id="code-form" class="field hidden">
+          <input id="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,10}" required placeholder="Code from the email" aria-label="Code" />
+          <button type="submit">Sign in</button>
+        </form>
+      </section>
+
+      <section id="consent" class="card hidden">
+        <h1><span id="client-name">An app</span> wants to use your manuals</h1>
+        <p class="muted">
+          It will be able to read and update your things, manuals, upkeep schedule, facts and
+          kids' measurements, as <strong id="who"></strong>.
+        </p>
+        <div class="chips">
+          <span class="chip mint">Read manuals</span>
+          <span class="chip sky">Upkeep schedule</span>
+          <span class="chip peach">Reminders</span>
+          <span class="chip rose">Growth and car seats</span>
+        </div>
+        <p class="muted code" id="redirect"></p>
+        <div class="row">
+          <button id="approve" type="button">Allow</button>
+          <button id="deny" type="button" class="quiet">Not now</button>
+        </div>
+      </section>
+
+      <section id="message" class="card hidden"><p id="message-text"></p></section>
+    </main>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const show = (id) => {
+        for (const s of ["loading", "signin", "consent", "message"]) $(s).classList.toggle("hidden", s !== id);
+      };
+      const fail = (text) => {
+        $("message-text").textContent = text;
+        show("message");
+      };
+
+      const authorizationId = new URLSearchParams(location.search).get("authorization_id");
+      let client;
+
+      async function start() {
+        if (!authorizationId) return fail("This page opens when an AI app asks to connect to Manuals.");
+        const config = await fetch("/api/config").then((r) => r.json());
+        client = supabase.createClient(config.supabaseUrl, config.supabasePublishableKey);
+        const { data } = await client.auth.getSession();
+        if (data.session) return loadDetails();
+        show("signin");
+      }
+
+      async function loadDetails() {
+        const { data, error } = await client.auth.oauth.getAuthorizationDetails(authorizationId);
+        if (error) return fail(`This request can't be completed: ${error.message}`);
+        if (data.redirect_url) return location.assign(data.redirect_url);
+        $("client-name").textContent = data.client?.name || "An app";
+        $("who").textContent = data.user?.email || "you";
+        $("redirect").textContent = `It will send you back to ${data.redirect_uri}`;
+        show("consent");
+      }
+
+      $("email-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const button = e.submitter;
+        button.disabled = true;
+        const { error } = await client.auth.signInWithOtp({
+          email: $("email").value.trim(),
+          options: { shouldCreateUser: true },
+        });
+        button.disabled = false;
+        if (error) return fail(`Couldn't send the code: ${error.message}`);
+        $("email-form").classList.add("hidden");
+        $("code-form").classList.remove("hidden");
+        $("code").focus();
+      });
+
+      $("code-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const button = e.submitter;
+        button.disabled = true;
+        const { error } = await client.auth.verifyOtp({
+          email: $("email").value.trim(),
+          token: $("code").value.trim(),
+          type: "email",
+        });
+        button.disabled = false;
+        if (error) {
+          $("code").value = "";
+          $("code").placeholder = "That code didn't work. Try again.";
+          return;
+        }
+        loadDetails();
+      });
+
+      async function decide(approve) {
+        $("approve").disabled = $("deny").disabled = true;
+        const fn = approve ? "approveAuthorization" : "denyAuthorization";
+        const { data, error } = await client.auth.oauth[fn](authorizationId, { skipBrowserRedirect: true });
+        if (error) return fail(`Something went wrong: ${error.message}`);
+        location.assign(data.redirect_url);
+      }
+      $("approve").addEventListener("click", () => decide(true));
+      $("deny").addEventListener("click", () => decide(false));
+
+      start().catch((err) => fail(`Something went wrong: ${err.message}`));
+    </script>
+  </body>
+</html>

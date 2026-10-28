@@ -1,0 +1,32 @@
+# Local development settings for `supabase start`. The hosted project is
+# configured in the dashboard; see README "Set up Supabase".
+project_id = "manuals-mcp"
+
+[api]
+schemas = ["public"]
+
+[db]
+major_version = 17
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[auth]
+site_url = "http://localhost:3000"
+additional_redirect_urls = ["http://localhost:3000/oauth/consent"]
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+# The app and the consent page sign in with a 6-digit code, so the magic link
+# email template needs {{ .Token }} in it.
+otp_length = 6
+
+[auth.oauth_server]
+enabled = true
+authorization_url_path = "/oauth/consent"
+allow_dynamic_registration = true
+
+[storage]
+enabled = true
