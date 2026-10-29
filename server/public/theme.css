@@ -1,14 +1,18 @@
-/* Morning Paper: warm paper, a serif headline, teal and coral. Light and dark. */
+/* Morning Paper: soft paper, a serif headline, lavender and coral. Light and dark. */
 :root {
-  --bg: #fbf7f0;
+  --bg: #faf8fc;
   --card: #ffffff;
-  --soft: #f3ece0;
-  --ink: #23302e;
-  --ink2: #56625f;
-  --line: #e8dfd0;
+  --soft: #f2eef8;
+  --ink: #28243a;
+  --ink2: #5f5a72;
+  --line: #e6e0ef;
+  /* The accent: buttons, links, the current page. */
+  --accent: #6a4bc4;
+  --accent-soft: #ebe5fb;
+  --on-accent: #ffffff;
+  /* Teal stays as one of the colors a thing's icon can take. */
   --teal: #1f6f6a;
   --teal-soft: #d6ece8;
-  --on-teal: #ffffff;
   --coral: #b0442a;
   --coral-soft: #fbe1d8;
   --gold: #7f5c12;
@@ -18,20 +22,22 @@
   --sage-soft: #e3ead8;
   --slate: #3b4868;
   --slate-soft: #e2e6ef;
-  --shadow: 0 1px 2px rgba(60, 45, 20, 0.06), 0 10px 30px rgba(60, 45, 20, 0.06);
+  --shadow: 0 1px 2px rgba(40, 30, 70, 0.06), 0 10px 30px rgba(40, 30, 70, 0.06);
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #131a1a;
-    --card: #1b2424;
-    --soft: #233030;
-    --ink: #eef1ec;
-    --ink2: #a9b5b1;
-    --line: #2f3d3c;
+    --bg: #15131c;
+    --card: #1e1b28;
+    --soft: #2a2638;
+    --ink: #efedf6;
+    --ink2: #b2acc4;
+    --line: #363149;
+    --accent: #b9a5ff;
+    --accent-soft: #2e2550;
+    --on-accent: #1a1430;
     --teal: #7fd6cc;
     --teal-soft: #1e3b38;
-    --on-teal: #102423;
     --coral: #f4a68f;
     --coral-soft: #43281f;
     --gold: #ebcb7c;
@@ -46,15 +52,17 @@
   }
 }
 :root[data-theme="dark"] {
-  --bg: #131a1a;
-  --card: #1b2424;
-  --soft: #233030;
-  --ink: #eef1ec;
-  --ink2: #a9b5b1;
-  --line: #2f3d3c;
+  --bg: #15131c;
+  --card: #1e1b28;
+  --soft: #2a2638;
+  --ink: #efedf6;
+  --ink2: #b2acc4;
+  --line: #363149;
+  --accent: #b9a5ff;
+  --accent-soft: #2e2550;
+  --on-accent: #1a1430;
   --teal: #7fd6cc;
   --teal-soft: #1e3b38;
-  --on-teal: #102423;
   --coral: #f4a68f;
   --coral-soft: #43281f;
   --gold: #ebcb7c;
@@ -109,7 +117,7 @@ p {
   margin: 0;
 }
 a {
-  color: var(--teal);
+  color: var(--accent);
 }
 a:hover {
   color: var(--ink);
@@ -264,7 +272,7 @@ mark {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--teal);
+  color: var(--accent);
 }
 .panel.gold .label {
   color: var(--gold);
@@ -286,8 +294,8 @@ mark {
 .chip.teal,
 .chip.mint,
 .chip.sky {
-  background: var(--teal-soft);
-  color: var(--teal);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .chip.coral,
 .chip.peach,
@@ -332,7 +340,7 @@ textarea {
   resize: vertical;
 }
 :focus-visible {
-  outline: 3px solid var(--teal);
+  outline: 3px solid var(--accent);
   outline-offset: 2px;
 }
 button,
@@ -344,8 +352,8 @@ button,
   border-radius: 14px;
   padding: 0 20px;
   cursor: pointer;
-  background: var(--teal);
-  color: var(--on-teal);
+  background: var(--accent);
+  color: var(--on-accent);
   text-decoration: none;
   display: inline-flex;
   align-items: center;
@@ -362,8 +370,8 @@ button.quiet,
 button.outline,
 .button.outline {
   background: transparent;
-  color: var(--teal);
-  border: 1.5px solid var(--teal);
+  color: var(--accent);
+  border: 1.5px solid var(--accent);
 }
 button.small {
   min-height: 44px;
@@ -445,9 +453,9 @@ button:disabled {
   color: var(--ink2);
 }
 .agenda-done:hover {
-  border-color: var(--teal);
-  background: var(--teal);
-  color: var(--on-teal);
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 /* Icon badges for things */
@@ -460,6 +468,10 @@ button:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.icon-badge.teal {
   background: var(--teal-soft);
   color: var(--teal);
 }
@@ -492,9 +504,9 @@ button:disabled {
   font-weight: 700;
 }
 .filters button[aria-pressed="true"] {
-  background: var(--teal);
-  border-color: var(--teal);
-  color: var(--on-teal);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
 }
 .pinned-grid {
   display: grid;
@@ -579,7 +591,7 @@ button:disabled {
   min-height: 150px;
   border: 2px dashed var(--line);
   border-radius: 22px;
-  color: var(--teal);
+  color: var(--accent);
   font-weight: 700;
   text-decoration: none;
 }
@@ -611,9 +623,9 @@ button:disabled {
   color: var(--ink2);
 }
 .choices button[aria-pressed="true"] {
-  border-color: var(--teal);
-  background: var(--teal-soft);
-  color: var(--teal);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .choices .swatch {
   border-radius: 999px;
@@ -656,7 +668,7 @@ button:disabled {
   background: var(--gold);
 }
 .src-assistant {
-  background: var(--teal);
+  background: var(--accent);
 }
 .src-user {
   background: var(--coral);
@@ -709,7 +721,7 @@ button:disabled {
 }
 .msg.user {
   align-self: flex-end;
-  background: var(--teal-soft);
+  background: var(--accent-soft);
 }
 .msg.muse {
   background: var(--soft);
@@ -755,7 +767,7 @@ button:disabled {
 }
 .theme-toggle button[aria-pressed="true"] {
   background: var(--card);
-  color: var(--teal);
+  color: var(--accent);
   box-shadow: var(--shadow);
 }
 .theme-toggle svg {
@@ -784,13 +796,13 @@ button:disabled {
   display: inline-grid;
   place-items: center;
   flex-shrink: 0;
-  background: var(--teal);
-  color: var(--on-teal);
+  background: var(--accent);
+  color: var(--on-accent);
   font-weight: 700;
   font-size: 18px;
 }
 .avatar[aria-expanded="true"] {
-  box-shadow: 0 0 0 3px var(--teal-soft);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .menu {
   position: absolute;
@@ -862,7 +874,7 @@ button:disabled {
 }
 .seg button[aria-pressed="true"] {
   background: var(--card);
-  color: var(--teal);
+  color: var(--accent);
   box-shadow: var(--shadow);
 }
 .menu-link {
@@ -965,8 +977,8 @@ button:disabled {
   height: 16px;
   margin: -8px 0 0 -8px;
   border-radius: 999px;
-  background: var(--teal);
-  border: 3px solid var(--teal-soft);
+  background: var(--accent);
+  border: 3px solid var(--accent-soft);
 }
 .tl-mark.late {
   background: var(--coral);
@@ -974,11 +986,11 @@ button:disabled {
 }
 .tl-mark.repeat {
   background: var(--card);
-  border: 2px solid var(--teal);
+  border: 2px solid var(--accent);
 }
 .tl-mark.guess {
   background: var(--card);
-  border: 2px dashed var(--teal);
+  border: 2px dashed var(--accent);
 }
 .tl-label {
   position: absolute;
@@ -1037,8 +1049,8 @@ button:disabled {
     display: block;
   }
   .nav a[aria-current="page"] {
-    color: var(--teal);
-    background: var(--teal-soft);
+    color: var(--accent);
+    background: var(--accent-soft);
   }
   body:has(.nav) {
     padding-bottom: calc(76px + env(safe-area-inset-bottom));
@@ -1247,8 +1259,8 @@ button:disabled {
   padding: 3px 10px;
 }
 .run-status.ok {
-  background: var(--teal-soft);
-  color: var(--teal);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .run-status.failed {
   background: var(--coral-soft);
@@ -1362,7 +1374,7 @@ a.link {
   padding: 0;
   border: 0;
   background: none;
-  color: var(--teal);
+  color: var(--accent);
   font-weight: 700;
   text-decoration: underline;
   text-underline-offset: 3px;
@@ -1372,4 +1384,145 @@ a.link {
   max-height: 240px;
   object-fit: cover;
   border-radius: 16px;
+}
+
+/* Home: one big action, then shortcuts */
+.hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px 24px;
+  padding: 26px 28px;
+  border-radius: 28px;
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.hero-icon {
+  width: 80px;
+  height: 80px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--on-accent) 16%, transparent);
+}
+.hero-icon svg {
+  width: 42px;
+  height: 42px;
+}
+.hero-text {
+  flex: 1 1 260px;
+  display: grid;
+  gap: 4px;
+}
+.hero-text h2 {
+  font-size: 30px;
+}
+.hero-text p {
+  opacity: 0.85;
+}
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+.hero .hero-primary {
+  background: var(--on-accent);
+  color: var(--accent);
+  cursor: pointer;
+}
+.hero .hero-secondary {
+  background: transparent;
+  color: var(--on-accent);
+  border: 2px solid color-mix(in srgb, var(--on-accent) 55%, transparent);
+  cursor: pointer;
+}
+.hero-link {
+  color: var(--on-accent);
+  opacity: 0.85;
+  font-weight: 600;
+}
+.shortcuts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.shortcut {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 20px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  text-decoration: none;
+}
+.shortcut:hover {
+  outline: 2px solid var(--accent-soft);
+}
+.shortcut-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+}
+.shortcut .chev {
+  color: var(--ink2);
+  flex-shrink: 0;
+}
+@media (max-width: 720px) {
+  .hero {
+    padding: 18px;
+    border-radius: 22px;
+    gap: 12px;
+  }
+  .hero-icon {
+    width: 52px;
+    height: 52px;
+    border-radius: 16px;
+  }
+  .hero-icon svg {
+    width: 28px;
+    height: 28px;
+  }
+  .hero-text {
+    flex-basis: calc(100% - 70px);
+  }
+  .hero-text h2 {
+    font-size: 22px;
+  }
+  .hero-text p {
+    font-size: 13.5px;
+  }
+  .hero-actions {
+    width: 100%;
+  }
+  .hero-actions .button {
+    flex: 1 1 0;
+    justify-content: center;
+    text-align: center;
+  }
+  .hero-link {
+    width: 100%;
+    text-align: center;
+    font-size: 13.5px;
+  }
+  /* The shortcuts become one short list. */
+  .shortcuts {
+    grid-template-columns: 1fr;
+    gap: 0;
+    border-radius: 18px;
+    overflow: hidden;
+    background: var(--card);
+    box-shadow: var(--shadow);
+  }
+  .shortcut {
+    border-radius: 0;
+    box-shadow: none;
+    padding: 10px 14px;
+  }
+  .shortcut + .shortcut {
+    border-top: 1px solid var(--line);
+  }
 }

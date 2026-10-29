@@ -604,3 +604,49 @@ export function reportIssue({ runId, debug, about } = {}) {
   dialog.showModal();
   $("#report-text", dialog).focus();
 }
+
+/** A photo as a JPEG data URL, at most 1280 px on its long side. */
+export function shrink(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 1280 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale);
+      c.height = Math.round(img.height * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      resolve(c.toDataURL("image/jpeg", 0.82));
+    };
+    img.onerror = () => reject(new Error("Couldn't open that photo."));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+// A label photo taken on the home page, handed to the add wizard.
+const PENDING = "manuals-pending-photo";
+
+export async function handOffPhoto(file) {
+  const image = await shrink(file);
+  try {
+    sessionStorage.setItem(PENDING, image);
+  } catch {}
+  location.assign("/things?add=photo");
+}
+
+export function takePendingPhoto() {
+  try {
+    const image = sessionStorage.getItem(PENDING);
+    sessionStorage.removeItem(PENDING);
+    return image;
+  } catch {
+    return null;
+  }
+}
+
+/** Opens the account menu, for links that say "Settings". */
+export function openSettings() {
+  const button = $("#account");
+  if (button && $("#account-menu")?.hidden) button.click();
+  button?.scrollIntoView({ block: "nearest" });
+}

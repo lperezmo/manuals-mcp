@@ -30,9 +30,11 @@
         daysBetween,
         db,
         esc,
+        handOffPhoto,
         howOften,
         itemIcon,
         openChat,
+        openSettings,
         relDay,
         signIn,
         toast,
@@ -347,7 +349,7 @@
               ` <s class="muted">${esc(r.before[k])}</s> → <strong>${esc(String(r.after[k]).replace(/\.$/, ""))}</strong>`,
           )
           .join("");
-        const who = r.source === "user" ? ["You", "var(--coral)"] : ["Assistant", "var(--teal)"];
+        const who = r.source === "user" ? ["You", "var(--coral)"] : ["Assistant", "var(--accent)"];
         return `<div class="row" style="align-items:baseline;gap:6px 14px">
           <span class="small muted" style="min-width:90px">${ago(r.created_at)}</span>
           <span style="flex:1 1 360px;min-width:0">${esc(what)}${diff || " confirmed"}. “${esc(r.reason)}”</span>
@@ -355,13 +357,69 @@
         </div>`;
       }
 
+      const CAMERA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg>';
+      const SHORTCUT_ICONS = {
+        stuff: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
+        ai: "M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0zM12 16v5",
+        settings: "M4 7h8M16 7h4M4 17h4M12 17h8M12 7a2 2 0 1 0 4 0a2 2 0 1 0 -4 0M8 17a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
+      };
+
+      /** The big "add a manual" card and the shortcuts under it. */
+      function heroAndShortcuts(items, due = [], review = []) {
+        const late = due.filter((t) => t.next_due_on < today()).length;
+        const stuff = items.length
+          ? `${items.length} thing${items.length === 1 ? "" : "s"}${late ? ` · ${late} late` : review.length ? ` · ${review.length} to check` : ""}`
+          : "";
+        const shortcut = (key, tint, label, sub, attrs) =>
+          `<a class="shortcut" ${attrs}><span class="icon-badge ${tint}" style="--s:48px" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${SHORTCUT_ICONS[key]}"></path></svg></span><span class="shortcut-text"><strong>${label}</strong><span class="small muted">${sub}</span></span><svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"></path></svg></a>`;
+        return `<div class="hero">
+            <span class="hero-icon">${CAMERA}</span>
+            <div class="hero-text">
+              <h2>Add a new manual</h2>
+              <p>Snap the label. Muse finds the manual and turns it into a schedule.</p>
+            </div>
+            <div class="hero-actions">
+              <label class="button hero-primary" for="home-camera">Take a photo</label>
+              <label class="button hero-secondary" for="home-upload">Upload a photo</label>
+              <a class="hero-link" href="/things?add=1">or type it in</a>
+            </div>
+            <input id="home-camera" type="file" accept="image/*" capture="environment" class="sr-only">
+            <input id="home-upload" type="file" accept="image/*" class="sr-only">
+          </div>
+          <nav class="shortcuts" aria-label="Shortcuts">
+            ${stuff ? shortcut("stuff", "gold", "Check on your stuff", esc(stuff), 'href="/things"') : ""}
+            ${shortcut("ai", "slate", "Connect your AI", "Claude, ChatGPT", 'href="/connect"')}
+            ${shortcut("settings", "sage", "Settings", "Theme, text size", 'href="#" data-settings')}
+          </nav>`;
+      }
+
+      function wireHero() {
+        for (const id of ["#home-camera", "#home-upload"]) {
+          $(id)?.addEventListener("change", async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            try {
+              await handOffPhoto(file);
+            } catch (err) {
+              toast(err.message);
+            }
+          });
+        }
+        $("[data-settings]")?.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          openSettings();
+        });
+      }
+
       function render({ items, due, review, revisions, kids }) {
         if (!items.length) {
-          main.innerHTML = `<section class="card" style="max-width:640px">
+          main.innerHTML = `<section class="stack">
             <h1>An empty house, for now.</h1>
-            <p class="muted">Add your first thing with a photo of its label or a link to its manual, or load the example home to look around.</p>
-            <div class="row"><a class="button" href="/things?add=1">Add a thing</a><button type="button" class="quiet" id="demo">Load the example home</button></div>
+            ${heroAndShortcuts(items)}
+            <p class="muted">Just looking around? <button type="button" class="link" id="demo">Load the example home</button></p>
           </section>`;
+          wireHero();
           $("#demo").addEventListener("click", async () => {
             const { error } = await (await db()).rpc("load_demo_household");
             if (error) return toast(error.message);
@@ -378,13 +436,11 @@
           <section class="stack">
             <h1 class="sr-only">Home</h1>
             <p class="muted" style="font-weight:600">${esc(date)}</p>
+            ${heroAndShortcuts(items, due, review)}
             <form class="field" id="ask" style="margin-top:6px">
               <label class="sr-only" for="ask-input">Ask or tell</label>
               <input id="ask-input" autocomplete="off" placeholder="Ask or tell: “the washer is at 230 washes”">
               <button type="submit">Go</button>
-              <a class="button outline" href="/things?add=photo">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg>
-                Snap a label</a>
             </form>
           </section>
 
@@ -428,6 +484,7 @@
               : ""
           }`;
 
+        wireHero();
         $("#ask").addEventListener("submit", (e) => {
           e.preventDefault();
           const text = $("#ask-input").value.trim();
