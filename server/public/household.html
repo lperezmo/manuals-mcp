@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Household · Manuals</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap"
+    />
+    <link rel="stylesheet" href="/theme.css" />
+    <script src="/theme.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+  </head>
+  <body>
+    <header class="top" id="top"></header>
+    <main class="wrap" id="main">
+      <p class="muted">One moment…</p>
+    </main>
+
+    <script type="module">
+      import { $, ago, boot, db, esc, shareLink, toast } from "/app.js";
+
+      const main = $("#main");
+      const link = (code) => `${location.origin}/join?invite=${code}`;
+      const until = (iso) => new Date(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+
+      async function start() {
+        if (!(await boot("/household"))) return;
+        const supa = await db();
+        const { data: hid, error: e1 } = await supa.rpc("ensure_household");
+        if (e1) throw new Error(e1.message);
+        const [{ data: people, error: e2 }, { data: home }, { data: invites, error: e3 }] = await Promise.all([
+          supa.rpc("household_people"),
+          supa.from("households").select("is_demo").eq("id", hid).maybeSingle(),
+          supa
+            .from("household_invites")
+            .select("code, expires_at")
+            .eq("household_id", hid)
+            .is("used_at", null)
+            .gt("expires_at", new Date().toISOString())
+            .order("created_at"),
+        ]);
+        if (e2 || e3) throw new Error((e2 || e3).message);
+        const owner = people.find((p) => p.is_me)?.role === "owner";
+
+        const person = (p) => `<div class="fact">
+            <div><strong>${esc(p.email ?? "Someone")}</strong>${p.is_me ? ' <span class="muted">(you)</span>' : ""}
+              <div class="small muted">${p.role === "owner" ? "Made this home" : `Joined ${ago(p.joined_at)}`}</div></div>
+            ${owner && p.role === "member" ? `<div><button type="button" class="quiet small" data-remove="${p.user_id}" data-email="${esc(p.email ?? "")}">Remove</button></div>` : ""}
+          </div>`;
+        const inviteRow = (i) => `<div class="field"><label class="sr-only" for="inv-${i.code}">Invite link</label><input id="inv-${i.code}" readonly value="${esc(link(i.code))}"><button type="button" data-send="${i.code}">Share</button></div>
+          <div class="row small muted" style="margin-top:-6px">Works until ${until(i.expires_at)} · <button type="button" class="link" data-cancel="${i.code}">Cancel it</button></div>`;
+        const inviting = home?.is_demo
+          ? "<p class=\"muted\">The example home can't take invites. Sign in with your own email to invite your family.</p>"
+          : `<p class="muted" style="margin:0">Send a link to a partner, a parent or a roommate. Each link works once, for a week.</p>
+            ${invites.map(inviteRow).join("")}
+            <div class="row"><button type="button" id="invite" ${invites.length ? 'class="quiet"' : ""}>${invites.length ? "Make another link" : "Make an invite link"}</button></div>`;
+
+        main.innerHTML = `
+          <section class="stack">
+            <h1>Your household</h1>
+            <p class="muted">Everyone here sees and updates the same things, schedule and manuals, each signed in as themselves.</p>
+          </section>
+          <section class="card" aria-label="People">${people.map(person).join("")}</section>
+          <section class="card stack"><h2>Invite someone</h2>${inviting}</section>
+          ${
+            owner
+              ? ""
+              : `<section class="card stack">
+                  <h2>Leave this home</h2>
+                  <p class="muted" style="margin:0">You'll go back to your own home, with your things there just as you left them.</p>
+                  <div class="row"><button type="button" class="quiet" id="leave">Leave</button></div>
+                </section>`
+          }`;
+
+        $("#invite")?.addEventListener("click", async () => {
+          const { data, error } = await supa.from("household_invites").insert({}).select("code").single();
+          if (error) return toast(error.message);
+          await start();
+          shareLink(link(data.code), "Join my home on Manuals");
+        });
+        for (const b of main.querySelectorAll("[data-send]")) {
+          b.addEventListener("click", () => shareLink(link(b.dataset.send), "Join my home on Manuals"));
+        }
+        for (const b of main.querySelectorAll("[data-cancel]")) {
+          b.addEventListener("click", async () => {
+            const { error } = await supa.from("household_invites").delete().eq("code", b.dataset.cancel);
+            if (error) return toast(error.message);
+            start();
+          });
+        }
+        for (const b of main.querySelectorAll("[data-remove]")) {
+          b.addEventListener("click", async () => {
+            if (!confirm(`Remove ${b.dataset.email || "them"} from your home? They go back to their own.`)) return;
+            const { error } = await supa.rpc("remove_member", { p_user: b.dataset.remove });
+            if (error) return toast(error.message);
+            start();
+          });
+        }
+        $("#leave")?.addEventListener("click", async () => {
+          if (!confirm("Leave this home? You can come back with a new invite.")) return;
+          const { error } = await supa.rpc("leave_household");
+          if (error) return toast(error.message);
+          location.assign("/");
+        });
+      }
+      start().catch((err) => {
+        main.innerHTML = `<p class="card">Something went wrong: ${esc(err.message)}</p>`;
+      });
+    </script>
+  </body>
+</html>

@@ -156,6 +156,7 @@ function header(current, session) {
         <div class="menu-row"><span>Theme</span><div class="theme-toggle"></div></div>
         ${prefs}
         <hr>
+        <a class="menu-link" href="/household">Your household</a>
         <a class="menu-link" href="/runs">Model log</a>
         <a class="menu-link" href="/connect">Connect your AI</a>
         <button type="button" class="menu-link" id="report-issue">Report an issue</button>
@@ -641,6 +642,24 @@ export function takePendingPhoto() {
     return image;
   } catch {
     return null;
+  }
+}
+
+/** Hands a link to the phone's share sheet, or copies it where there is none. */
+export async function shareLink(url, title) {
+  if (navigator.share) {
+    try {
+      await navigator.share({ title, url });
+      return;
+    } catch (err) {
+      if (err.name === "AbortError") return;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    toast("Link copied.");
+  } catch {
+    prompt("Copy this link:", url);
   }
 }
 

@@ -21,7 +21,7 @@
     </main>
 
     <script type="module">
-      import { $, ago, api, boot, db, esc, howOften, ICONS, iconKey, iconSvg, itemIcon, openChat, relDay, shrink, TINTS, takePendingPhoto, tintKey, toast, today, tool } from "/app.js";
+      import { $, ago, api, boot, db, esc, howOften, ICONS, iconKey, iconSvg, itemIcon, openChat, relDay, shareLink, shrink, TINTS, takePendingPhoto, tintKey, toast, today, tool } from "/app.js";
 
       const main = $("#main");
       const params = new URLSearchParams(location.search);
@@ -137,6 +137,36 @@
 
       // --- One thing -----------------------------------------------------------
 
+      // Someone with the same thing gets a copy of its schedule, facts and pages.
+      async function shareCard(item) {
+        const supa = await db();
+        const body = $("#share-body");
+        const { data: share, error } = await supa.from("item_shares").select("code, copies").eq("item_id", item.id).maybeSingle();
+        if (error) {
+          body.innerHTML = `<p class="small">${esc(error.message)}</p>`;
+          return;
+        }
+        const url = share && `${location.origin}/join?thing=${share.code}`;
+        body.innerHTML = share
+          ? `<p class="muted small" style="margin:0">Anyone with this link can add a copy of the ${esc(item.nickname.toLowerCase())}'s schedule, facts and your fixes to their own home. Your serial number, notes and history stay here.${share.copies ? ` Copied ${share.copies} ${share.copies === 1 ? "time" : "times"} so far.` : ""}</p>
+             <div class="field"><label class="sr-only" for="share-url">Share link</label><input id="share-url" readonly value="${esc(url)}"><button type="button" id="share-send">Share</button></div>
+             <button type="button" class="link" id="share-stop">Stop sharing</button>`
+          : `<p class="muted small" style="margin:0">Know someone with the same ${esc(item.nickname.toLowerCase())}? Make a link and they can add its schedule, facts and your fixes to their own home, without Muse reading it again.</p>
+             <div class="row"><button type="button" id="share-make">Make a share link</button></div>`;
+        $("#share-make")?.addEventListener("click", async () => {
+          const { error: e } = await supa.from("item_shares").insert({ item_id: item.id });
+          if (e) return toast(e.message);
+          shareCard(item);
+        });
+        $("#share-send")?.addEventListener("click", () => shareLink(url, `${item.nickname} manual`));
+        $("#share-stop")?.addEventListener("click", async () => {
+          const { error: e } = await supa.from("item_shares").delete().eq("item_id", item.id);
+          if (e) return toast(e.message);
+          toast("The link no longer works.");
+          shareCard(item);
+        });
+      }
+
       async function detail(id) {
         const supa = await db();
         const { data: item, error } = await supa
@@ -206,6 +236,10 @@
                     .join("")}</div>
                 </div>
               </div>
+            </details>
+            <details class="card" id="share">
+              <summary style="font-weight:700;cursor:pointer">Share this manual</summary>
+              <div class="stack" id="share-body" style="margin-top:14px"><p class="muted small">One moment…</p></div>
             </details>
           </section>
 
@@ -295,6 +329,9 @@
           if ("icon" in change || "tint" in change) $("#look").open = true;
         };
         $("#pin").addEventListener("click", () => saveLook({ pinned: !item.pinned }));
+        $("#share").addEventListener("toggle", (e) => {
+          if (e.target.open) shareCard(item);
+        });
         for (const b of main.querySelectorAll("[data-icon]")) {
           b.addEventListener("click", () => saveLook({ icon: b.dataset.icon }));
         }
