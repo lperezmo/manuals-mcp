@@ -26,16 +26,47 @@
         </p>
       </section>
 
-      <section class="card" style="max-width:720px">
-        <h2>Connector link</h2>
-        <div class="field">
+      <section class="card stack" style="max-width:720px">
+        <fieldset class="seg">
+          <legend class="sr-only">Which assistant</legend>
+          <button type="button" data-pick="muse">Muse</button>
+          <button type="button" data-pick="claude">Claude</button>
+          <button type="button" data-pick="chatgpt">ChatGPT</button>
+        </fieldset>
+
+        <div data-panel="muse" class="stack">
+          <h2>Muse is already here</h2>
+          <p class="muted">
+            Muse is the model that reads your manuals. Ask it anything from the box on the home
+            page. Nothing to set up.
+          </p>
+          <div class="row"><a class="button" href="/">Ask Muse on Home</a></div>
+        </div>
+
+        <div data-panel="claude" class="stack" hidden>
+          <h2>Add it to Claude</h2>
+          <ol class="steps">
+            <li>Copy the link below.</li>
+            <li>In Claude, open <strong>Settings</strong>, then <strong>Connectors</strong>, then <strong>Add custom connector</strong>.</li>
+            <li>Name it Manuals, paste the link and choose <strong>Add</strong>.</li>
+            <li>Choose <strong>Connect</strong> and sign in with the same email you use here.</li>
+          </ol>
+        </div>
+
+        <div data-panel="chatgpt" class="stack" hidden>
+          <h2>Add it to ChatGPT</h2>
+          <ol class="steps">
+            <li>Copy the link below.</li>
+            <li>In ChatGPT, open <strong>Settings</strong>, then <strong>Apps</strong>, then <strong>Advanced settings</strong>, and turn on <strong>Developer mode</strong>.</li>
+            <li>Choose <strong>Create</strong>, name it Manuals, paste the link and pick <strong>OAuth</strong>.</li>
+            <li>Sign in with the same email you use here.</li>
+          </ol>
+        </div>
+
+        <div class="field" data-link hidden>
           <label class="sr-only" for="url">Connector link</label>
           <input id="url" class="code" readonly />
           <button id="copy" type="button">Copy link</button>
-        </div>
-        <div class="chips">
-          <span class="chip teal">Claude: Settings, Connectors, Add custom connector</span>
-          <span class="chip gold">ChatGPT: Settings, Apps, developer mode, Create</span>
         </div>
       </section>
 
@@ -59,6 +90,21 @@
 
       boot("/connect", { open: true });
       $("#url").value = `${location.origin}/mcp`;
+
+      function pick(name) {
+        for (const b of document.querySelectorAll("[data-pick]")) b.setAttribute("aria-pressed", String(b.dataset.pick === name));
+        for (const p of document.querySelectorAll("[data-panel]")) p.hidden = p.dataset.panel !== name;
+        $("[data-link]").hidden = name === "muse";
+        try {
+          localStorage.setItem("manuals-connect", name);
+        } catch {}
+      }
+      for (const b of document.querySelectorAll("[data-pick]")) b.addEventListener("click", () => pick(b.dataset.pick));
+      let saved = "claude";
+      try {
+        saved = localStorage.getItem("manuals-connect") || saved;
+      } catch {}
+      pick(saved);
       $("#copy").addEventListener("click", async (e) => {
         try {
           await navigator.clipboard.writeText($("#url").value);

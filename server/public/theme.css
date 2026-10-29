@@ -856,6 +856,11 @@ button:disabled {
   font-weight: 600;
   font-size: 15px;
 }
+fieldset.seg {
+  border: 0;
+  margin: 0;
+  justify-self: start;
+}
 .seg {
   display: inline-flex;
   gap: 2px;
@@ -1370,8 +1375,11 @@ dialog.report textarea {
 /* Add-a-thing wizard */
 button.link,
 a.link {
+  display: inline-flex;
+  align-items: center;
   min-height: 44px;
   padding: 0;
+  font-size: inherit;
   border: 0;
   background: none;
   color: var(--accent);
@@ -1525,4 +1533,16 @@ a.link {
   .shortcut + .shortcut {
     border-top: 1px solid var(--line);
   }
+}
+
+/* Numbered setup steps on the connect page. */
+.steps {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 8px;
+}
+.stack[hidden],
+.field[hidden] {
+  display: none;
 }

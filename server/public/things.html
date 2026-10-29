@@ -35,6 +35,9 @@
       const GROUPS = { appliance: "Appliances", baby_gear: "Baby gear", vehicle: "Vehicles", other: "Other" };
       let filter = "all";
 
+      // The example home's manuals are made up, so there is no PDF to open.
+      const isExample = (url) => /^https:\/\/example\.com\//.test(url);
+
       function nextTask(i) {
         const open = (i.tasks ?? []).filter((t) => t.active && t.next_due_on).sort((a, b) => a.next_due_on.localeCompare(b.next_due_on));
         return open[0];
@@ -185,7 +188,7 @@
             </div>
             <div class="row">
               <button type="button" id="ask">Ask about the ${esc(item.nickname.toLowerCase())}</button>
-              ${manual?.source_url ? `<a class="button quiet" href="${esc(manual.source_url)}" rel="noopener noreferrer" target="_blank">Open the manual</a>` : ""}
+              ${manual?.source_url && !isExample(manual.source_url) ? `<a class="button quiet" href="${esc(manual.source_url)}" rel="noopener noreferrer" target="_blank">Open the manual</a>` : manual?.source_url ? '<span class="small muted">Example manual, no PDF to open</span>' : ""}
             </div>
             <details class="card" id="look">
               <summary style="font-weight:700;cursor:pointer">Change icon or color</summary>
@@ -569,7 +572,7 @@
             <h2>Take a photo of its label</h2>
             <p class="muted">Muse reads the brand and model off it, then finds the manual for you. The label is usually ${esc(where())}.</p>
             ${photoButton(`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg> Take or choose a photo`)}
-            <div class="row small"><button type="button" class="link" data-type>Type it in instead</button><span class="muted">·</span><a href="/things?add=pdf" class="link">I already have the PDF</a></div>
+            <div class="row"><button type="button" class="link" data-type>Type it in instead</button><span class="muted">·</span><a href="/things?add=pdf" class="link">I already have the PDF</a></div>
           </div>`);
         }
 
