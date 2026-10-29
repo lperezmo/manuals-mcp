@@ -307,3 +307,123 @@ async function send(text, onChange) {
   saveChat(messages);
   renderChat(messages);
 }
+
+// Line icons for things, 24px grid, drawn with currentColor. Matched on the
+// item's category or nickname; anything else gets the manual icon.
+const R = (x, y, w, h, r) =>
+  `M${x + r} ${y}H${x + w - r}A${r} ${r} 0 0 1 ${x + w} ${y + r}V${y + h - r}A${r} ${r} 0 0 1 ${x + w - r} ${y + h}H${x + r}A${r} ${r} 0 0 1 ${x} ${y + h - r}V${y + r}A${r} ${r} 0 0 1 ${x + r} ${y}Z`;
+const C = (cx, cy, r) => `M${cx - r} ${cy}a${r} ${r} 0 1 0 ${2 * r} 0a${r} ${r} 0 1 0 ${-2 * r} 0Z`;
+const L = (a, b, c, d) => `M${a} ${b}L${c} ${d}`;
+const ICONS = [
+  [
+    /dish/,
+    R(4, 2.5, 16, 19, 2.5) +
+      L(4, 7.5, 20, 7.5) +
+      L(9, 10.5, 15, 10.5) +
+      C(7, 5, 0.4) +
+      C(9.5, 5, 0.4) +
+      C(12, 5, 0.4),
+  ],
+  [
+    /dryer/,
+    R(4, 2.5, 16, 19, 2.5) +
+      L(4, 7, 20, 7) +
+      C(12, 14, 4.5) +
+      "M9.6 14.6c.8-.8 1.6-.8 2.4 0s1.6.8 2.4 0" +
+      C(16.5, 4.8, 0.5),
+  ],
+  [
+    /wash/,
+    R(4, 2.5, 16, 19, 2.5) + L(4, 7, 20, 7) + C(12, 14, 4.5) + C(7, 4.8, 0.4) + C(9.5, 4.8, 0.4),
+  ],
+  [
+    /fridge|refrig|freezer/,
+    R(5.5, 2, 13, 20, 2.5) + L(5.5, 9.5, 18.5, 9.5) + L(8.5, 4.5, 8.5, 7) + L(8.5, 12, 8.5, 16),
+  ],
+  [
+    /microwave/,
+    R(2.5, 5, 19, 14, 2.5) +
+      R(5, 8, 10, 8, 1) +
+      L(18, 8.5, 18, 9.5) +
+      L(18, 12, 18, 13) +
+      C(18, 15.8, 0.5),
+  ],
+  [
+    /range|oven|stove|cooktop/,
+    R(4, 3, 16, 18.5, 2) +
+      L(4, 8, 20, 8) +
+      C(8, 5.5, 0.9) +
+      C(12, 5.5, 0.9) +
+      C(16, 5.5, 0.9) +
+      R(7.5, 11, 9, 6.5, 1),
+  ],
+  [
+    /furnace|boiler|hvac/,
+    R(5, 2.5, 14, 19, 2) +
+      L(8, 6, 16, 6) +
+      L(8, 8.5, 16, 8.5) +
+      "M12 18.5c-1.8 0-3-1.2-3-2.8 0-1.6 1.5-2.4 1.8-4.2 1.4.8 1.5 2 1.4 2.8.6-.3 1-.9 1.1-1.6.9.8 1.7 1.8 1.7 3 0 1.6-1.2 2.8-3 2.8z",
+  ],
+  [
+    /water.?heater/,
+    "M6 6.5C6 4.6 8.7 3 12 3s6 1.6 6 3.5V19c0 1.1-2.7 2-6 2s-6-.9-6-2z" +
+      L(9.5, 3.4, 9.5, 1.5) +
+      L(14.5, 3.4, 14.5, 1.5) +
+      C(12, 11, 2) +
+      L(12, 11, 13.2, 9.8),
+  ],
+  [
+    /air.?cond|\bac\b|heat.?pump/,
+    R(2.5, 5, 19, 9, 2.5) +
+      L(5.5, 11, 18.5, 11) +
+      "M7.5 17c0 1.5 1 2.5 1 4M12 17v4M16.5 17c0 1.5-1 2.5-1 4",
+  ],
+  [
+    /car.?seat|booster/,
+    "M7 3.5h5.5a2 2 0 0 1 2 2V12l3.5 2.5V19a1.5 1.5 0 0 1-1.5 1.5H8A2.5 2.5 0 0 1 5.5 18V5A1.5 1.5 0 0 1 7 3.5z" +
+      "M8.5 8v5.5l2.5 2 2.5-2" +
+      C(11, 15.5, 0.6),
+  ],
+  [
+    /stroller|pram/,
+    "M3.5 5h2.5l2.5 9.5h10" +
+      "M11 4.5a7.5 7.5 0 0 1 8 7.5h-8z" +
+      C(9.5, 18.5, 1.8) +
+      C(17, 18.5, 1.8),
+  ],
+  [
+    /mower/,
+    "M4 13h12.5l2 4.5H4z" +
+      L(15, 13, 20.5, 4.5) +
+      L(19, 4, 21.5, 5.5) +
+      C(6.5, 19.2, 1.5) +
+      C(15.5, 19.2, 1.5),
+  ],
+  [/vacuum/, L(16.5, 3, 11, 16.5) + R(4.5, 16.5, 10, 3.5, 1.5) + C(14.8, 7.8, 2.2)],
+  [
+    /coffee|espresso/,
+    R(6, 3, 12, 18, 2) + L(6, 8, 18, 8) + "M9 12h6v4a1.5 1.5 0 0 1-1.5 1.5h-3A1.5 1.5 0 0 1 9 16z",
+  ],
+  [
+    /car|truck|suv|van|vehicle/,
+    "M3.5 15V12l2-4.5c.3-.7 1-1 1.7-1h9.6c.7 0 1.4.3 1.7 1l2 4.5v3c0 .6-.4 1-1 1h-15c-.6 0-1-.4-1-1z" +
+      L(3.5, 12, 20.5, 12) +
+      C(7.5, 17.5, 1.8) +
+      C(16.5, 17.5, 1.8),
+  ],
+];
+const OTHER_ICON =
+  "M5 4.5A1.5 1.5 0 0 1 6.5 3H18v15H6.5A1.5 1.5 0 0 0 5 19.5z" +
+  "M5 19.5A1.5 1.5 0 0 0 6.5 21H18v-3" +
+  L(9, 7.5, 14, 7.5);
+
+/** A tinted icon badge for a thing, as HTML. */
+export function itemIcon(item, size = 44) {
+  const text = `${item?.category ?? ""} ${item?.nickname ?? ""}`.toLowerCase();
+  const d =
+    ICONS.find(([re]) => re.test(text))?.[1] ??
+    (item?.kind === "vehicle" ? ICONS.at(-1)[1] : OTHER_ICON);
+  const tint = { baby_gear: "gold", vehicle: "sage" }[item?.kind] ?? "teal";
+  const px = Math.round(size * 0.6);
+  return `<span class="icon-badge ${tint}" style="width:${size}px;height:${size}px" aria-hidden="true"><svg width="${px}" height="${px}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="${d}"></path></svg></span>`;
+}

@@ -27,9 +27,11 @@
         addDays,
         ago,
         boot,
+        daysBetween,
         db,
         esc,
         howOften,
+        itemIcon,
         openChat,
         relDay,
         signIn,
@@ -39,13 +41,13 @@
       } from "/app.js";
 
       const main = $("#main");
-      const ITEM = "items(id, nickname, brand, model)";
+      const ITEM = "items(id, nickname, brand, model, kind, category)";
       const one = (x) => (Array.isArray(x) ? x[0] : x);
 
       async function load() {
         const supa = await db();
         const now = today();
-        const until = addDays(now, 6);
+        const until = addDays(now, 30);
         const [items, due, facts, tasks, seats, revisions, kids] = await Promise.all([
           supa
             .from("items")
@@ -166,32 +168,44 @@
           .join(" ");
       }
 
-      function weekStrip(due) {
+      function agenda(due) {
         const now = today();
-        const days = Array.from({ length: 7 }, (_, i) => addDays(now, i));
-        return days
-          .map((day, i) => {
-            const date = new Date(`${day}T12:00:00`);
-            const tasks = due.filter((t) =>
-              i === 0 ? t.next_due_on <= day : t.next_due_on === day,
-            );
-            const pills = tasks
+        const groups = [
+          ["Late", (d) => d < 0, "late"],
+          ["This week", (d) => d >= 0 && d < 7, ""],
+          ["Next week", (d) => d >= 7 && d < 14, ""],
+          ["Later this month", (d) => d >= 14, "muted"],
+        ];
+        const html = groups
+          .map(([label, inGroup, tone]) => {
+            const tasks = due.filter((t) => inGroup(daysBetween(now, t.next_due_on)));
+            if (!tasks.length) return "";
+            const rows = tasks
               .map((t) => {
-                const late = t.next_due_on < now;
-                return `<div class="pill ${late ? "late" : ""}">
-                  <strong>${late ? esc(relDay(t.next_due_on)) : esc(howOften(t.interval_unit, t.interval_value))}</strong>
-                  ${esc(t.title)}
-                  <div class="small muted">${esc(one(t.items)?.nickname)}${t.source_page ? ` · p. ${t.source_page}` : ""}</div>
-                  <button type="button" class="quiet small" style="margin-top:6px;width:100%" data-done="${t.id}">Done</button>
-                </div>`;
+                const d = daysBetween(now, t.next_due_on);
+                const date = new Date(`${t.next_due_on}T12:00:00`);
+                const when =
+                  d < 0 ? relDay(t.next_due_on) : d < 2 ? relDay(t.next_due_on) : d < 7
+                    ? date.toLocaleDateString(undefined, { weekday: "long" })
+                    : `in ${d} days`;
+                const item = one(t.items);
+                const meta = [item?.nickname, howOften(t.interval_unit, t.interval_value), t.source_page ? `p. ${t.source_page}` : ""]
+                  .filter(Boolean)
+                  .join(" · ");
+                return `<li class="agenda-row">
+                  ${itemIcon(item)}
+                  <div class="agenda-what"><strong>${esc(t.title)}</strong><span class="small muted">${esc(meta)}</span></div>
+                  <div class="agenda-when"><strong class="${d < 0 ? "late" : ""}">${esc(when.charAt(0).toUpperCase() + when.slice(1))}</strong><span class="small muted">${esc(date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }))}</span></div>
+                  <button type="button" class="agenda-done" data-done="${t.id}" aria-label="Mark ${esc(t.title)} done" title="Done">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+                  </button>
+                </li>`;
               })
               .join("");
-            return `<div class="day ${i === 0 ? "today" : ""}">
-              <div style="font-weight:700">${date.toLocaleDateString(undefined, { weekday: "short" })} <span class="muted">${date.getDate()}</span></div>
-              ${pills}
-            </div>`;
+            return `<div class="agenda-group"><h3 class="agenda-label ${tone}">${label}</h3><ul class="agenda card">${rows}</ul></div>`;
           })
           .join("");
+        return html || '<p class="card muted">Nothing due this month. Enjoy it.</p>';
       }
 
       function reviewCard(r) {
@@ -310,8 +324,8 @@
           </section>
 
           <section aria-labelledby="week-h">
-            <div class="section-head"><h2 id="week-h">This week</h2><span class="small muted">From your manuals and how much you use things</span></div>
-            <div class="scroll-x"><div class="week">${weekStrip(due)}</div></div>
+            <div class="section-head"><h2 id="week-h">Coming up</h2><span class="small muted">From your manuals and how much you use things</span></div>
+            <div class="stack">${agenda(due)}</div>
           </section>
 
           ${
