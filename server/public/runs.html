@@ -21,78 +21,143 @@
     </main>
 
     <script type="module">
-      import { $, ago, boot, db, esc } from "/app.js";
+      import { $, ago, boot, db, esc, toast } from "/app.js";
 
       const main = $("#main");
       const num = (n) => (n == null ? "?" : n.toLocaleString());
+      const FILTERS = [
+        ["all", "All"],
+        ["read", "Manual reads"],
+        ["chat", "Chats"],
+        ["failed", "Failed"],
+      ];
+      let runs = [];
+      let names = new Map();
+      let filter = "all";
 
       function pages(list) {
-        if (!list?.length) return "";
-        return list.length > 8
-          ? `pages ${list.slice(0, 8).join(", ")} and ${list.length - 8} more`
-          : `pages ${list.join(", ")}`;
+        if (!list?.length) return null;
+        return list.length > 12 ? `${list.slice(0, 12).join(", ")} and ${list.length - 12} more` : list.join(", ");
       }
 
-      function row(r, names) {
-        const what =
-          r.kind === "read"
-            ? `Read the ${esc(names.get(r.item_id) ?? "manual")} manual`
-            : `Chat${r.tools_used?.length ? `: ${esc(r.tools_used.join(", "))}` : ""}`;
+      function title(r) {
+        if (r.kind === "read") return `Read the ${names.get(r.item_id) ?? "manual"} manual`;
+        return r.tools_used?.length ? `Chat: ${r.tools_used.join(", ")}` : "Chat, no tools";
+      }
+
+      /** Plain text for pasting into a bug report or a chat with Claude. */
+      function debugText(r) {
+        return [
+          `Manuals model run ${r.id}`,
+          `when: ${new Date(r.created_at).toISOString()}`,
+          `kind: ${r.kind}  ok: ${r.ok}  model: ${r.model ?? "?"}`,
+          `time: ${r.ms ?? "?"} ms  tokens: ${r.tokens_in ?? "?"} in / ${r.tokens_out ?? "?"} out`,
+          r.item_id ? `item: ${names.get(r.item_id) ?? ""} ${r.item_id}` : null,
+          r.manual_id ? `manual: ${r.manual_id}` : null,
+          r.pages_sent?.length ? `pages sent: ${r.pages_sent.join(", ")} (${r.chars_sent ?? "?"} chars)` : null,
+          r.tools_used?.length ? `tools: ${r.tools_used.join(", ")}` : null,
+          r.error ? `error: ${r.error}` : null,
+          r.raw_output ? `--- model answer ---\n${r.raw_output}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }
+
+      function row(r) {
         const facts = [
-          r.model,
-          r.ms != null ? `${(r.ms / 1000).toFixed(1)} s` : null,
-          `${num(r.tokens_in)} in / ${num(r.tokens_out)} out`,
-          r.chars_sent != null ? `${num(r.chars_sent)} chars sent` : null,
-          pages(r.pages_sent),
-        ].filter(Boolean);
-        const details = [
-          r.error ? `<div class="small"><strong>Error:</strong> ${esc(r.error)}</div>` : "",
-          r.raw_output
-            ? `<details><summary class="small">What Muse answered</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:420px;overflow:auto;font-size:12px">${esc(r.raw_output)}</pre></details>`
-            : "",
-        ].join("");
-        return `<div class="fact">
-          <div style="min-width:0">
-            <div><strong>${what}</strong></div>
-            <div class="small muted">${esc(facts.join(" · "))}</div>
-            ${details}
+          ["Model", r.model],
+          ["Time", r.ms != null ? `${(r.ms / 1000).toFixed(1)} s` : null],
+          ["Tokens", `${num(r.tokens_in)} in, ${num(r.tokens_out)} out`],
+          ["Pages sent", pages(r.pages_sent)],
+          ["Text sent", r.chars_sent != null ? `${num(r.chars_sent)} characters` : null],
+          ["Tools", r.tools_used?.length ? r.tools_used.join(", ") : null],
+          ["Run id", r.id],
+        ].filter(([, v]) => v);
+        return `<details class="run">
+          <summary>
+            <span class="run-status ${r.ok ? "ok" : "failed"}">${r.ok ? "OK" : "Failed"}</span>
+            <span class="run-what"><strong>${esc(title(r))}</strong><span class="small muted">${esc([r.ms != null ? `${(r.ms / 1000).toFixed(1)} s` : "", `${num((r.tokens_in ?? 0) + (r.tokens_out ?? 0))} tokens`].filter(Boolean).join(" · "))}</span></span>
+            <span class="small muted run-when">${ago(r.created_at)}</span>
+          </summary>
+          <div class="run-body">
+            ${r.error ? `<p class="run-error"><strong>Error:</strong> ${esc(r.error)}</p>` : ""}
+            <dl class="run-facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+            ${
+              r.raw_output
+                ? `<div class="stack" style="gap:6px"><div class="row" style="justify-content:space-between"><strong class="small">What Muse answered</strong><button type="button" class="quiet small" data-copy-raw="${r.id}">Copy answer</button></div><pre class="run-raw">${esc(r.raw_output)}</pre></div>`
+                : ""
+            }
+            <div class="row"><button type="button" class="quiet small" data-copy="${r.id}">Copy debug info</button></div>
           </div>
-          <div class="small" style="text-align:right">
-            <div style="font-weight:700;color:${r.ok ? "var(--teal)" : "var(--coral)"}">${r.ok ? "OK" : "Failed"}</div>
-            <div class="muted">${ago(r.created_at)}</div>
-          </div>
-        </div>`;
+        </details>`;
+      }
+
+      function draw() {
+        const since = Date.now() - 86_400_000;
+        const today = runs.filter((r) => Date.parse(r.created_at) > since);
+        const count = (kind) => today.filter((r) => r.kind === kind).length;
+        const failed = today.filter((r) => !r.ok).length;
+        const tokens = today.reduce((n, r) => n + (r.tokens_in ?? 0) + (r.tokens_out ?? 0), 0);
+        const shown = runs.filter((r) =>
+          filter === "all" ? true : filter === "failed" ? !r.ok : r.kind === filter,
+        );
+        main.innerHTML = `
+          <section class="stack">
+            <h1>Model log</h1>
+            <p class="muted">Every manual Muse read and every chat question, newest first. Open one to see the details, or copy them for a bug report.</p>
+          </section>
+          <section class="run-stats" aria-label="Last 24 hours">
+            <div class="card"><strong>${count("chat")}</strong><span class="small muted">chat questions today</span></div>
+            <div class="card"><strong>${count("read")}</strong><span class="small muted">manual reads today</span></div>
+            <div class="card"><strong>${num(tokens)}</strong><span class="small muted">tokens today</span></div>
+            <div class="card"><strong ${failed ? 'style="color:var(--coral)"' : ""}>${failed}</strong><span class="small muted">failed today</span></div>
+          </section>
+          <section class="stack">
+            <div class="filters" role="group" aria-label="Show">${FILTERS.map(([k, label]) => `<button type="button" data-filter="${k}" aria-pressed="${filter === k}">${label}</button>`).join("")}</div>
+            <div class="card runs">${
+              shown.map(row).join("") ||
+              `<p class="muted">${runs.length ? "Nothing matches that filter." : "Nothing yet. Ask the chat something or add a manual."}</p>`
+            }</div>
+          </section>`;
+        for (const b of main.querySelectorAll("[data-filter]")) {
+          b.addEventListener("click", () => {
+            filter = b.dataset.filter;
+            draw();
+          });
+        }
+        const copy = async (text, what) => {
+          try {
+            await navigator.clipboard.writeText(text);
+            toast(`${what} copied.`);
+          } catch {
+            toast("Couldn't copy here. Select the text and copy it instead.");
+          }
+        };
+        for (const b of main.querySelectorAll("[data-copy]")) {
+          b.addEventListener("click", () => copy(debugText(runs.find((r) => r.id === b.dataset.copy)), "Debug info"));
+        }
+        for (const b of main.querySelectorAll("[data-copy-raw]")) {
+          b.addEventListener("click", () => copy(runs.find((r) => r.id === b.dataset.copyRaw).raw_output, "Answer"));
+        }
       }
 
       async function start() {
         if (!(await boot("/runs"))) return;
         const client = await db();
-        const [runs, items] = await Promise.all([
+        const [result, items] = await Promise.all([
           client
             .from("model_runs")
             .select(
-              "id, kind, item_id, model, ok, error, ms, tokens_in, tokens_out, pages_sent, chars_sent, tools_used, raw_output, created_at",
+              "id, kind, item_id, manual_id, model, ok, error, ms, tokens_in, tokens_out, pages_sent, chars_sent, tools_used, raw_output, created_at",
             )
             .order("created_at", { ascending: false })
-            .limit(100),
+            .limit(200),
           client.from("items").select("id, nickname"),
         ]);
-        if (runs.error) throw new Error(runs.error.message);
-        const names = new Map((items.data ?? []).map((i) => [i.id, i.nickname]));
-        const since = Date.now() - 86_400_000;
-        const today = runs.data.filter((r) => Date.parse(r.created_at) > since);
-        const chats = today.filter((r) => r.kind === "chat").length;
-        const reads = today.filter((r) => r.kind === "read").length;
-        const tokens = today.reduce((n, r) => n + (r.tokens_in ?? 0) + (r.tokens_out ?? 0), 0);
-        main.innerHTML = `
-          <section class="stack">
-            <h1>Model log</h1>
-            <p class="muted">Every manual Muse read and every chat question, newest first. Last 24 hours: ${chats} chat ${chats === 1 ? "question" : "questions"}, ${reads} manual ${reads === 1 ? "read" : "reads"}, ${num(tokens)} tokens.</p>
-          </section>
-          <section class="card">${
-            runs.data.map((r) => row(r, names)).join("") ||
-            '<p class="muted">Nothing yet. Ask the chat something or add a manual.</p>'
-          }</section>`;
+        if (result.error) throw new Error(result.error.message);
+        runs = result.data;
+        names = new Map((items.data ?? []).map((i) => [i.id, i.nickname]));
+        draw();
       }
       start().catch((err) => {
         main.innerHTML = `<p class="card">Something went wrong: ${esc(err.message)}</p>`;

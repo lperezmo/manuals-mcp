@@ -1189,3 +1189,135 @@ button:disabled {
     padding-bottom: calc(70px + env(safe-area-inset-bottom));
   }
 }
+
+/* Model log */
+.run-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.run-stats .card {
+  gap: 2px;
+}
+.run-stats strong {
+  font-size: 26px;
+  line-height: 1.1;
+}
+.runs {
+  padding: 4px 0;
+  gap: 0;
+}
+.run + .run {
+  border-top: 1px solid var(--line);
+}
+.run summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  cursor: pointer;
+  list-style: none;
+}
+.run summary::-webkit-details-marker {
+  display: none;
+}
+.run summary::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-right: 2px solid var(--ink2);
+  border-bottom: 2px solid var(--ink2);
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+}
+.run[open] summary::after {
+  transform: rotate(45deg);
+}
+.run summary:hover {
+  background: var(--soft);
+}
+.run-status {
+  flex-shrink: 0;
+  min-width: 58px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+.run-status.ok {
+  background: var(--teal-soft);
+  color: var(--teal);
+}
+.run-status.failed {
+  background: var(--coral-soft);
+  color: var(--coral);
+}
+.run-what {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+}
+.run-what strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-when {
+  flex-shrink: 0;
+}
+.run-body {
+  display: grid;
+  gap: 14px;
+  padding: 4px 18px 18px;
+}
+.run-error {
+  background: var(--coral-soft);
+  color: var(--ink);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.run-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 16px;
+  margin: 0;
+  font-size: 14px;
+}
+.run-facts dt {
+  color: var(--ink2);
+  font-weight: 600;
+}
+.run-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.run-raw {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12.5px;
+  background: var(--soft);
+  border-radius: 12px;
+  padding: 12px;
+}
+@media (max-width: 720px) {
+  .run summary {
+    padding: 10px 12px;
+    gap: 10px;
+  }
+  .run-body {
+    padding: 4px 12px 14px;
+  }
+  .run-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .run-stats strong {
+    font-size: 22px;
+  }
+}
