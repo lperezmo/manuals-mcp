@@ -87,23 +87,113 @@ export async function api(path, body) {
 export const tool = (name, args = {}) => api("/api/tool", { name, args });
 
 const NAV = [
-  ["/", "Home"],
-  ["/things", "Things"],
-  ["/history", "History"],
-  ["/connect", "Connect your AI"],
+  ["/", "Home", "M4 11.5 12 5l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5h-5v5H5a1 1 0 0 1-1-1z"],
+  ["/things", "Things", "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"],
+  ["/history", "History", "M12 7v5l3 2M3.5 12a8.5 8.5 0 1 0 2.5-6M3.5 4v4h4"],
+  ["/connect", "Connect your AI", "M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"],
 ];
 
-function header(current, signedIn) {
+// Reading preferences, kept in this browser; theme.js applies them on load.
+const PREFS = {
+  "manuals-size": [
+    "Text size",
+    [
+      ["normal", "Normal"],
+      ["large", "Large"],
+    ],
+  ],
+  "manuals-font": [
+    "Headings",
+    [
+      ["serif", "Serif"],
+      ["sans", "Simple"],
+    ],
+  ],
+};
+
+function pref(key) {
+  try {
+    return localStorage.getItem(key) || PREFS[key][1][0][0];
+  } catch {
+    return PREFS[key][1][0][0];
+  }
+}
+
+function setPref(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {}
+  document.documentElement.dataset[key === "manuals-size" ? "size" : "font"] = value;
+}
+
+function header(current, session) {
   const links = NAV.map(
-    ([href, label]) =>
-      `<a href="${href}"${href === current ? ' aria-current="page"' : ""}>${label}</a>`,
+    ([href, label, d]) =>
+      `<a href="${href}"${href === current ? ' aria-current="page"' : ""}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"></path></svg><span>${label}</span></a>`,
   ).join("");
+  if (!session) {
+    return `<a class="brand" href="/">manuals</a><span style="flex:1"></span><div class="theme-toggle"></div>`;
+  }
+  const email = session.user?.email ?? "";
+  const initial = (email.trim()[0] || "?").toUpperCase();
+  const prefs = Object.entries(PREFS)
+    .map(
+      ([key, [label, options]]) => `<div class="menu-row"><span>${label}</span>
+        <div class="seg" role="group" aria-label="${label}">${options
+          .map(
+            ([value, text]) =>
+              `<button type="button" data-pref="${key}" data-value="${value}" aria-pressed="${pref(key) === value}">${text}</button>`,
+          )
+          .join("")}</div></div>`,
+    )
+    .join("");
   return `<a class="brand" href="/">manuals</a>
-    ${signedIn ? `<nav class="nav" aria-label="Main">${links}</nav>` : '<span style="flex:1"></span>'}
-    <div class="head-tools">
-      <div class="theme-toggle"></div>
-      ${signedIn ? '<button type="button" class="quiet small" id="sign-out">Sign out</button>' : ""}
+    <nav class="nav" aria-label="Main">${links}</nav>
+    <div class="account">
+      <button type="button" class="avatar" id="account" aria-haspopup="true" aria-expanded="false" aria-controls="account-menu" aria-label="Account and settings">${esc(initial)}</button>
+      <div class="menu" id="account-menu" hidden>
+        <div class="menu-who"><span class="avatar" aria-hidden="true">${esc(initial)}</span><div><strong>Signed in</strong><span class="small muted">${esc(email)}</span></div></div>
+        <div class="menu-row"><span>Theme</span><div class="theme-toggle"></div></div>
+        ${prefs}
+        <hr>
+        <a class="menu-link" href="/runs">Model log</a>
+        <a class="menu-link" href="/connect">Connect your AI</a>
+        <hr>
+        <button type="button" class="menu-link" id="sign-out">Sign out</button>
+      </div>
     </div>`;
+}
+
+function wireAccount() {
+  const button = $("#account");
+  const menu = $("#account-menu");
+  if (!button || !menu) return;
+  const close = () => {
+    menu.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+  };
+  button.addEventListener("click", () => {
+    const open = menu.hidden;
+    menu.hidden = !open;
+    button.setAttribute("aria-expanded", String(open));
+  });
+  document.addEventListener("click", (e) => {
+    if (!menu.hidden && !menu.contains(e.target) && e.target !== button) close();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !menu.hidden) {
+      close();
+      button.focus();
+    }
+  });
+  for (const b of menu.querySelectorAll("[data-pref]")) {
+    b.addEventListener("click", () => {
+      setPref(b.dataset.pref, b.dataset.value);
+      for (const other of menu.querySelectorAll(`[data-pref="${b.dataset.pref}"]`)) {
+        other.setAttribute("aria-pressed", String(other === b));
+      }
+    });
+  }
 }
 
 /**
@@ -113,15 +203,15 @@ function header(current, signedIn) {
 export async function boot(current, { open = false } = {}) {
   const supa = await db();
   const { data } = await supa.auth.getSession();
-  const signedIn = Boolean(data.session);
   const top = $("#top");
-  top.innerHTML = header(current, signedIn);
+  top.innerHTML = header(current, data.session);
   window.dispatchEvent(new Event("manuals:theme-toggle"));
+  wireAccount();
   $("#sign-out")?.addEventListener("click", async () => {
     await supa.auth.signOut();
     location.assign("/");
   });
-  if (!signedIn && current !== "/" && !open) {
+  if (!data.session && current !== "/" && !open) {
     location.assign("/");
     return null;
   }

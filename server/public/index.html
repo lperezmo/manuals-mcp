@@ -41,7 +41,7 @@
       } from "/app.js";
 
       const main = $("#main");
-      const ITEM = "items(id, nickname, brand, model, kind, category)";
+      const ITEM = "items(id, nickname, brand, model, kind, category, icon, tint)";
       const one = (x) => (Array.isArray(x) ? x[0] : x);
 
       async function load() {
@@ -208,6 +208,71 @@
         return html || '<p class="card muted">Nothing due this month. Enjoy it.</p>';
       }
 
+      // The same tasks as a timeline: one row per thing, a week back to five ahead.
+      function timeline(due) {
+        const now = today();
+        const start = addDays(now, -7);
+        const SPAN = 42;
+        const at = (day) => Math.min(100, Math.max(0, (daysBetween(start, day) / SPAN) * 100));
+        const STEP = { days: 1, weeks: 7 };
+        const rows = new Map();
+        for (const t of due) {
+          const item = one(t.items);
+          if (!item) continue;
+          if (!rows.has(item.id)) rows.set(item.id, { item, marks: [] });
+          const marks = rows.get(item.id).marks;
+          const late = t.next_due_on < now;
+          marks.push({ t, day: t.next_due_on, kind: late ? "late" : t.interval_unit === "cycles" ? "guess" : "due" });
+          // Repeats after this one, while they fit on the axis.
+          let day = t.next_due_on < now ? now : t.next_due_on;
+          for (let n = 0; n < 4; n++) {
+            if (STEP[t.interval_unit]) day = addDays(day, STEP[t.interval_unit] * t.interval_value);
+            else if (t.interval_unit === "months") {
+              const d = new Date(`${day}T12:00:00`);
+              d.setMonth(d.getMonth() + t.interval_value);
+              day = d.toISOString().slice(0, 10);
+            } else break;
+            if (daysBetween(start, day) > SPAN) break;
+            marks.push({ t, day, kind: "repeat" });
+          }
+        }
+        if (!rows.size) return '<p class="card muted">Nothing due this month. Enjoy it.</p>';
+        const ticks = [0, 7, 14, 21, 28, 35, 42]
+          .map((n) => {
+            const d = new Date(`${addDays(start, n)}T12:00:00`);
+            return `<span class="tl-tick" style="left:${(n / SPAN) * 100}%">${esc(d.toLocaleDateString(undefined, { month: "short", day: "numeric" }))}</span>`;
+          })
+          .join("");
+        const body = [...rows.values()]
+          .map(({ item, marks }) => {
+            marks.sort((a, b) => a.day.localeCompare(b.day));
+            return `<div class="tl-row">
+              <div class="tl-who">${itemIcon(item, 40)}<span>${esc(item.nickname)}</span></div>
+              <div class="tl-track"><span class="tl-today" style="left:${(7 / SPAN) * 100}%" aria-hidden="true"></span>${marks
+                .map((m, i) => {
+                  const date = new Date(`${m.day}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+                  const label = m.kind === "repeat" ? "" : `<span class="tl-label ${i % 2 ? "down" : "up"}">${esc(m.t.title)}<br><span class="muted">${esc(m.kind === "late" ? relDay(m.day) : date)}</span></span>`;
+                  return `<span class="tl-mark ${m.kind}" style="left:${at(m.day)}%" title="${esc(`${m.t.title}, ${date}`)}">${label}</span>`;
+                })
+                .join("")}</div>
+            </div>`;
+          })
+          .join("");
+        return `<div class="scroll-x"><div class="timeline">
+            <div class="tl-axis"><div class="tl-ticks">${ticks}</div></div>
+            <div class="tl-rows">${body}</div>
+          </div></div>
+          <p class="small muted">Filled dots are due, hollow ones repeat after that, dashed ones are guessed from how much you use the thing.</p>`;
+      }
+
+      function readView() {
+        try {
+          return localStorage.getItem("manuals-calendar") === "timeline" ? "timeline" : "list";
+        } catch {
+          return "list";
+        }
+      }
+
       function reviewCard(r) {
         const item = r.item;
         const page = r.pageText
@@ -324,8 +389,13 @@
           </section>
 
           <section aria-labelledby="week-h">
-            <div class="section-head"><h2 id="week-h">Coming up</h2><span class="small muted">From your manuals and how much you use things</span></div>
-            <div class="stack">${agenda(due)}</div>
+            <div class="section-head"><h2 id="week-h">Coming up</h2>
+              <div class="seg" role="group" aria-label="View">
+                <button type="button" data-view="list" aria-pressed="${readView() === "list"}">List</button>
+                <button type="button" data-view="timeline" aria-pressed="${readView() === "timeline"}">Timeline</button>
+              </div>
+            </div>
+            <div class="stack" id="coming">${readView() === "timeline" ? timeline(due) : agenda(due)}</div>
           </section>
 
           ${
@@ -364,16 +434,32 @@
           $("#ask-input").value = "";
           openChat(text || undefined, load);
         });
-        for (const b of main.querySelectorAll("[data-done]")) {
-          b.addEventListener("click", async () => {
-            b.disabled = true;
-            const { error } = await (await db()).rpc("log_task_done", { p_task: b.dataset.done });
-            if (error) {
-              b.disabled = false;
-              return toast(error.message);
+        const bindDone = (root) => {
+          for (const b of root.querySelectorAll("[data-done]")) {
+            b.addEventListener("click", async () => {
+              b.disabled = true;
+              const { error } = await (await db()).rpc("log_task_done", { p_task: b.dataset.done });
+              if (error) {
+                b.disabled = false;
+                return toast(error.message);
+              }
+              toast("Done. The next one is scheduled.");
+              load();
+            });
+          }
+        };
+        bindDone(main);
+        for (const b of main.querySelectorAll("[data-view]")) {
+          b.addEventListener("click", () => {
+            try {
+              localStorage.setItem("manuals-calendar", b.dataset.view);
+            } catch {}
+            for (const other of main.querySelectorAll("[data-view]")) {
+              other.setAttribute("aria-pressed", String(other === b));
             }
-            toast("Done. The next one is scheduled.");
-            load();
+            const coming = $("#coming");
+            coming.innerHTML = b.dataset.view === "timeline" ? timeline(due) : agenda(due);
+            bindDone(coming);
           });
         }
         for (const r of review) {

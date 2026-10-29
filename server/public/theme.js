@@ -17,6 +17,13 @@
     }
   };
   apply(read());
+  // Text size and heading font, set from the account menu.
+  try {
+    const size = localStorage.getItem("manuals-size");
+    const font = localStorage.getItem("manuals-font");
+    if (size) document.documentElement.dataset.size = size;
+    if (font) document.documentElement.dataset.font = font;
+  } catch {}
 
   const ICONS = {
     light:
