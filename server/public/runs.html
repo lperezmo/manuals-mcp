@@ -21,7 +21,7 @@
     </main>
 
     <script type="module">
-      import { $, ago, boot, db, esc, toast } from "/app.js";
+      import { $, ago, boot, db, esc, reportIssue, toast } from "/app.js";
 
       const main = $("#main");
       const num = (n) => (n == null ? "?" : n.toLocaleString());
@@ -87,7 +87,7 @@
                 ? `<div class="stack" style="gap:6px"><div class="row" style="justify-content:space-between"><strong class="small">What Muse answered</strong><button type="button" class="quiet small" data-copy-raw="${r.id}">Copy answer</button></div><pre class="run-raw">${esc(r.raw_output)}</pre></div>`
                 : ""
             }
-            <div class="row"><button type="button" class="quiet small" data-copy="${r.id}">Copy debug info</button></div>
+            <div class="row"><button type="button" class="quiet small" data-copy="${r.id}">Copy debug info</button><button type="button" class="quiet small" data-report="${r.id}">Report this run</button></div>
           </div>
         </details>`;
       }
@@ -135,6 +135,12 @@
         };
         for (const b of main.querySelectorAll("[data-copy]")) {
           b.addEventListener("click", () => copy(debugText(runs.find((r) => r.id === b.dataset.copy)), "Debug info"));
+        }
+        for (const b of main.querySelectorAll("[data-report]")) {
+          b.addEventListener("click", () => {
+            const r = runs.find((x) => x.id === b.dataset.report);
+            reportIssue({ runId: r.id, debug: debugText(r), about: title(r) });
+          });
         }
         for (const b of main.querySelectorAll("[data-copy-raw]")) {
           b.addEventListener("click", () => copy(runs.find((r) => r.id === b.dataset.copyRaw).raw_output, "Answer"));

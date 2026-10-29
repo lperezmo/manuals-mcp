@@ -6,12 +6,19 @@ import {
   metadataCorsOptionsRequestHandler,
   withMcpAuth,
 } from "mcp-handler";
-import { bearer, supabaseVerifier } from "./auth.js";
+import { bearer, supabaseVerifier, userFrom } from "./auth.js";
 import { type ChatUsage, callTool, messageSchema, runChat } from "./chat.js";
 import { householdId, userDb } from "./db.js";
 import { authIssuer, type Env } from "./env.js";
 import { processStoredManual } from "./finder/ingest.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
+import {
+  pushReport,
+  REPORT_DAILY_LIMIT,
+  reportSchema,
+  reportsToday,
+  saveReport,
+} from "./report.js";
 import { logRun, runsToday } from "./runs.js";
 import { MAX_IMAGE_BYTES, readLabel } from "./snap.js";
 
@@ -209,6 +216,52 @@ export function snapHandler(
     }
     try {
       return Response.json(await readLabel(env, { mime: match[1], base64: match[2] }, fetchImpl));
+    } catch (err) {
+      return Response.json({ error: (err as Error).message }, { status: 502 });
+    }
+  };
+}
+
+/** "Report an issue" from the website: saved as the user, then pushed to the maintainer. */
+export function reportHandler(
+  env: Env,
+  verify: Verify = supabaseVerifier(env),
+  fetchImpl: typeof fetch = fetch,
+) {
+  return async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    const auth = await verify(bearer(req));
+    if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return Response.json({ error: "Send JSON with a message." }, { status: 400 });
+    }
+    const parsed = reportSchema.safeParse(body);
+    if (!parsed.success) {
+      return Response.json(
+        { error: "Write a short message (up to 2,000 characters)." },
+        { status: 400 },
+      );
+    }
+    const db = userDb(env, auth.token);
+    try {
+      if ((await reportsToday(db)) >= REPORT_DAILY_LIMIT) {
+        return Response.json(
+          {
+            error: `That's ${REPORT_DAILY_LIMIT} reports today, thank you! Please try again tomorrow.`,
+          },
+          { status: 429 },
+        );
+      }
+      const id = await saveReport(db, parsed.data, req.headers.get("user-agent"));
+      const pushed = await pushReport(
+        env,
+        { ...parsed.data, id, email: userFrom(auth).email },
+        fetchImpl,
+      );
+      return Response.json({ id, pushed });
     } catch (err) {
       return Response.json({ error: (err as Error).message }, { status: 502 });
     }

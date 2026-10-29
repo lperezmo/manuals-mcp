@@ -21,6 +21,8 @@ export interface Env {
   chatModel?: string;
   /** Most chat turns one household can have per day, to keep costs flat. */
   chatDailyLimit: number;
+  /** Where issue reports are pushed (an ntfy.sh topic); reports are saved either way. */
+  notify?: { url: string; topic: string };
 }
 
 function positive(value: string | undefined, fallback: number): number {
@@ -56,6 +58,9 @@ export function readEnv(source: Record<string, string | undefined> = process.env
         : undefined,
     chatModel: source.CHAT_MODEL || undefined,
     chatDailyLimit: positive(source.CHAT_DAILY_LIMIT, 100),
+    notify: source.NTFY_TOPIC
+      ? { url: trimSlash(source.NTFY_URL || "https://ntfy.sh"), topic: source.NTFY_TOPIC }
+      : undefined,
   };
 }
 

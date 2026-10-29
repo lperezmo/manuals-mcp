@@ -6,6 +6,7 @@ import {
   ingestHandler,
   mcpHandler,
   publicConfigHandler,
+  reportHandler,
   resourceMetadataHandler,
   snapHandler,
   toolHandler,
@@ -17,6 +18,7 @@ const metadata = resourceMetadataHandler(config);
 const publicConfig = publicConfigHandler(config);
 const ingest = ingestHandler(config);
 const chat = chatHandler(config);
+const report = reportHandler(config);
 const tool = toolHandler(config);
 const snap = snapHandler(config);
 const port = Number(process.env.PORT ?? 3000);
@@ -30,6 +32,7 @@ Bun.serve({
     if (pathname === "/api/config") return publicConfig();
     if (pathname === "/api/ingest") return ingest(req);
     if (pathname === "/api/chat") return chat(req);
+    if (pathname === "/api/report") return report(req);
     if (pathname === "/api/tool") return tool(req);
     if (pathname === "/api/snap") return snap(req);
     const file = Bun.file(

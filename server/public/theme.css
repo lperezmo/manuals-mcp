@@ -1321,3 +1321,22 @@ button:disabled {
     font-size: 22px;
   }
 }
+
+/* Report an issue */
+dialog.report {
+  width: min(520px, calc(100vw - 32px));
+  border: 0;
+  border-radius: 22px;
+  padding: 22px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+}
+dialog.report::backdrop {
+  background: rgba(20, 26, 26, 0.45);
+}
+dialog.report textarea {
+  width: 100%;
+  max-width: none;
+  resize: vertical;
+}

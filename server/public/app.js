@@ -158,6 +158,7 @@ function header(current, session) {
         <hr>
         <a class="menu-link" href="/runs">Model log</a>
         <a class="menu-link" href="/connect">Connect your AI</a>
+        <button type="button" class="menu-link" id="report-issue">Report an issue</button>
         <hr>
         <button type="button" class="menu-link" id="sign-out">Sign out</button>
       </div>
@@ -207,6 +208,11 @@ export async function boot(current, { open = false } = {}) {
   top.innerHTML = header(current, data.session);
   window.dispatchEvent(new Event("manuals:theme-toggle"));
   wireAccount();
+  $("#report-issue")?.addEventListener("click", () => {
+    $("#account-menu").hidden = true;
+    $("#account").setAttribute("aria-expanded", "false");
+    reportIssue();
+  });
   $("#sign-out")?.addEventListener("click", async () => {
     await supa.auth.signOut();
     location.assign("/");
@@ -550,4 +556,51 @@ export function iconSvg(key, px) {
 /** A tinted icon badge for a thing, as HTML. */
 export function itemIcon(item, size = 44) {
   return `<span class="icon-badge ${tintKey(item)}" style="--s:${size}px" aria-hidden="true">${iconSvg(iconKey(item), Math.round(size * 0.6))}</span>`;
+}
+
+/**
+ * "Report an issue": a small dialog that sends a note to the maintainer,
+ * with the page and, from the model log, the run's debug details attached.
+ */
+export function reportIssue({ runId, debug, about } = {}) {
+  const dialog = document.createElement("dialog");
+  dialog.className = "report";
+  dialog.innerHTML = `
+    <form method="dialog" class="stack">
+      <h2>Report an issue</h2>
+      <p class="muted small">${about ? `About: ${esc(about)}. ` : ""}Tell us what went wrong or what looked off. ${debug ? "The run's details are attached." : "The page you're on is attached."}</p>
+      <label class="sr-only" for="report-text">What happened</label>
+      <textarea id="report-text" rows="5" maxlength="2000" required placeholder="What happened, and what you expected"></textarea>
+      <div class="row" style="justify-content:flex-end">
+        <button type="button" class="quiet" data-cancel>Cancel</button>
+        <button type="submit">Send</button>
+      </div>
+    </form>`;
+  document.body.append(dialog);
+  const close = () => {
+    dialog.close();
+    dialog.remove();
+  };
+  $("[data-cancel]", dialog).addEventListener("click", close);
+  dialog.addEventListener("cancel", close);
+  $("form", dialog).addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const send = $("[type=submit]", dialog);
+    send.disabled = true;
+    try {
+      await api("/api/report", {
+        message: $("#report-text", dialog).value,
+        page: location.pathname + location.search,
+        ...(runId ? { run_id: runId } : {}),
+        ...(debug ? { debug: debug.slice(0, 20000) } : {}),
+      });
+      close();
+      toast("Thanks! Your report was sent.");
+    } catch (err) {
+      send.disabled = false;
+      toast(err.message);
+    }
+  });
+  dialog.showModal();
+  $("#report-text", dialog).focus();
 }
