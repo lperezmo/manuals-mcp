@@ -6,7 +6,7 @@ import type { Db } from "./db.js";
 const MAX_RAW_CHARS = 20_000;
 
 export interface ModelRun {
-  kind: "read" | "chat";
+  kind: "read" | "chat" | "search";
   ok: boolean;
   model?: string | null;
   error?: string | null;

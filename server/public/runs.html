@@ -29,6 +29,7 @@
         ["all", "All"],
         ["read", "Manual reads"],
         ["chat", "Chats"],
+        ["search", "Searches"],
         ["failed", "Failed"],
       ];
       let runs = [];
@@ -42,6 +43,7 @@
 
       function title(r) {
         if (r.kind === "read") return `Read the ${names.get(r.item_id) ?? "manual"} manual`;
+        if (r.kind === "search") return `Searched for the ${names.get(r.item_id) ?? "thing's"} manual`;
         return r.tools_used?.length ? `Chat: ${r.tools_used.join(", ")}` : "Chat, no tools";
       }
 
@@ -84,7 +86,7 @@
             <dl class="run-facts">${facts.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
             ${
               r.raw_output
-                ? `<div class="stack" style="gap:6px"><div class="row" style="justify-content:space-between"><strong class="small">What Muse answered</strong><button type="button" class="quiet small" data-copy-raw="${r.id}">Copy answer</button></div><pre class="run-raw">${esc(r.raw_output)}</pre></div>`
+                ? `<div class="stack" style="gap:6px"><div class="row" style="justify-content:space-between"><strong class="small">${r.kind === "search" ? "Query and PDFs tried" : "What Muse answered"}</strong><button type="button" class="quiet small" data-copy-raw="${r.id}">Copy answer</button></div><pre class="run-raw">${esc(r.raw_output)}</pre></div>`
                 : ""
             }
             <div class="row"><button type="button" class="quiet small" data-copy="${r.id}">Copy debug info</button><button type="button" class="quiet small" data-report="${r.id}">Report this run</button></div>

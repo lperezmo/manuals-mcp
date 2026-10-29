@@ -21,6 +21,8 @@ export interface Env {
   chatModel?: string;
   /** Most chat turns one household can have per day, to keep costs flat. */
   chatDailyLimit: number;
+  /** Web search for finding manuals from the website (Tavily). */
+  search?: { provider: "tavily"; apiKey: string; dailyLimit: number };
   /** Where issue reports are pushed (an ntfy.sh topic); reports are saved either way. */
   notify?: { url: string; topic: string };
 }
@@ -58,6 +60,13 @@ export function readEnv(source: Record<string, string | undefined> = process.env
         : undefined,
     chatModel: source.CHAT_MODEL || undefined,
     chatDailyLimit: positive(source.CHAT_DAILY_LIMIT, 100),
+    search: source.SEARCH_API_KEY
+      ? {
+          provider: "tavily",
+          apiKey: source.SEARCH_API_KEY,
+          dailyLimit: positive(source.SEARCH_DAILY_LIMIT, 20),
+        }
+      : undefined,
     notify: source.NTFY_TOPIC
       ? { url: trimSlash(source.NTFY_URL || "https://ntfy.sh"), topic: source.NTFY_TOPIC }
       : undefined,

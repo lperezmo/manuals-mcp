@@ -1340,3 +1340,17 @@ dialog.report textarea {
   max-width: none;
   resize: vertical;
 }
+
+/* Manuals found online */
+.found-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  background: var(--soft);
+  box-shadow: none;
+}
+.found-card > .stack {
+  flex: 1 1 260px;
+}

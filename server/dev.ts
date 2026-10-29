@@ -3,6 +3,7 @@
 import { env } from "./src/env.js";
 import {
   chatHandler,
+  findManualHandler,
   ingestHandler,
   mcpHandler,
   publicConfigHandler,
@@ -19,6 +20,7 @@ const publicConfig = publicConfigHandler(config);
 const ingest = ingestHandler(config);
 const chat = chatHandler(config);
 const report = reportHandler(config);
+const find = findManualHandler(config);
 const tool = toolHandler(config);
 const snap = snapHandler(config);
 const port = Number(process.env.PORT ?? 3000);
@@ -33,6 +35,7 @@ Bun.serve({
     if (pathname === "/api/ingest") return ingest(req);
     if (pathname === "/api/chat") return chat(req);
     if (pathname === "/api/report") return report(req);
+    if (pathname === "/api/find-manual") return find(req);
     if (pathname === "/api/tool") return tool(req);
     if (pathname === "/api/snap") return snap(req);
     const file = Bun.file(

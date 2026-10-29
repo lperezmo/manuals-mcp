@@ -11,6 +11,7 @@ import { type ChatUsage, callTool, messageSchema, runChat } from "./chat.js";
 import { householdId, userDb } from "./db.js";
 import { authIssuer, type Env } from "./env.js";
 import { processStoredManual } from "./finder/ingest.js";
+import { findManual } from "./finder/search.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
 import {
   pushReport,
@@ -262,6 +263,71 @@ export function reportHandler(
         fetchImpl,
       );
       return Response.json({ id, pushed });
+    } catch (err) {
+      return Response.json({ error: (err as Error).message }, { status: 502 });
+    }
+  };
+}
+
+/** Finds manual PDFs on the web for one of the user's things (website only). */
+export function findManualHandler(
+  env: Env,
+  verify: Verify = supabaseVerifier(env),
+  fetchImpl: typeof fetch = fetch,
+) {
+  return async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    const auth = await verify(bearer(req));
+    if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
+    if (!env.search)
+      return Response.json({ error: "Web search isn't set up here." }, { status: 503 });
+    let itemId: unknown;
+    try {
+      itemId = ((await req.json()) as { item_id?: unknown }).item_id;
+    } catch {}
+    if (typeof itemId !== "string")
+      return Response.json({ error: "item_id is required." }, { status: 400 });
+    const db = userDb(env, auth.token);
+    try {
+      if ((await runsToday(db, "search")) >= env.search.dailyLimit) {
+        return Response.json(
+          {
+            error: `That's all the manual searches for today (${env.search.dailyLimit}). Paste a link or upload the PDF instead.`,
+          },
+          { status: 429 },
+        );
+      }
+      const { data: item, error } = await db
+        .from("items")
+        .select("id, nickname, brand, model")
+        .eq("id", itemId)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!item)
+        return Response.json({ error: "That thing isn't in your household." }, { status: 404 });
+      const started = Date.now();
+      try {
+        const found = await findManual(env, item, fetchImpl);
+        await logRun(db, {
+          kind: "search",
+          ok: true,
+          model: env.search.provider,
+          ms: Date.now() - started,
+          item_id: item.id,
+          raw_output: JSON.stringify({ query: found.query, tried: found.tried }, null, 2),
+        });
+        return Response.json({ query: found.query, candidates: found.candidates });
+      } catch (err) {
+        await logRun(db, {
+          kind: "search",
+          ok: false,
+          model: env.search.provider,
+          error: (err as Error).message,
+          ms: Date.now() - started,
+          item_id: item.id,
+        });
+        throw err;
+      }
     } catch (err) {
       return Response.json({ error: (err as Error).message }, { status: 502 });
     }
