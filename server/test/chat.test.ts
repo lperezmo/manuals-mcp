@@ -63,6 +63,7 @@ describe("website chat", () => {
       supabaseAuth.push(new Headers(init?.headers).get("authorization"));
       if (url.includes("/rpc/ensure_household"))
         return Response.json("11111111-1111-1111-1111-111111111111");
+      if (url.includes("/rpc/model_runs_today_all")) return Response.json(12);
       if (url.includes("/rest/v1/model_runs")) {
         if (init?.method === "POST") {
           logged.push(JSON.parse(String(init.body)));

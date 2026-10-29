@@ -1,12 +1,12 @@
 import type { Db } from "./db.js";
 
-// The model_runs log: one row per manual read or chat turn, written as the
+// The model_runs log: one row per manual read, chat turn, search or label photo, written as the
 // user so it lands in their household. Logging never breaks the real work.
 
 const MAX_RAW_CHARS = 20_000;
 
 export interface ModelRun {
-  kind: "read" | "chat" | "search";
+  kind: "read" | "chat" | "search" | "snap";
   ok: boolean;
   model?: string | null;
   error?: string | null;
@@ -40,3 +40,13 @@ export async function runsToday(db: Db, kind: ModelRun["kind"]): Promise<number>
   if (error) throw new Error(`Couldn't check today's usage: ${error.message}`);
   return count ?? 0;
 }
+
+/** Model calls (reads, chats, label photos) across every household in the last 24 hours. */
+export async function modelRunsTodayAll(db: Db): Promise<number> {
+  const { data, error } = await db.rpc("model_runs_today_all");
+  if (error) throw new Error(`Couldn't check today's usage: ${error.message}`);
+  return typeof data === "number" ? data : 0;
+}
+
+export const BUDGET_USED =
+  "Manuals has used its model budget for today. It resets within a day; everything else still works.";

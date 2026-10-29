@@ -20,7 +20,7 @@ import {
   reportsToday,
   saveReport,
 } from "./report.js";
-import { logRun, runsToday } from "./runs.js";
+import { BUDGET_USED, logRun, modelRunsTodayAll, runsToday } from "./runs.js";
 import { MAX_IMAGE_BYTES, readLabel } from "./snap.js";
 
 // HTTP entry points, shared by the Vercel functions in api/ and the local
@@ -130,6 +130,9 @@ export function chatHandler(
           { status: 429 },
         );
       }
+      if ((await modelRunsTodayAll(db)) >= env.globalDailyLimit) {
+        return Response.json({ error: BUDGET_USED }, { status: 429 });
+      }
     } catch (err) {
       return Response.json({ error: (err as Error).message }, { status: 502 });
     }
@@ -215,10 +218,32 @@ export function snapHandler(
     if (match[2].length * 0.75 > MAX_IMAGE_BYTES) {
       return Response.json({ error: "That photo is too big; try a smaller one." }, { status: 413 });
     }
+    const db = userDb(env, auth.token);
     try {
-      return Response.json(await readLabel(env, { mime: match[1], base64: match[2] }, fetchImpl));
+      if ((await runsToday(db, "snap")) >= env.snapDailyLimit) {
+        return Response.json(
+          {
+            error: `That's all the label photos for today (${env.snapDailyLimit}). Type the brand and model instead.`,
+          },
+          { status: 429 },
+        );
+      }
+      if ((await modelRunsTodayAll(db)) >= env.globalDailyLimit) {
+        return Response.json({ error: BUDGET_USED }, { status: 429 });
+      }
     } catch (err) {
       return Response.json({ error: (err as Error).message }, { status: 502 });
+    }
+    const model = env.chatModel ?? env.reader?.model ?? null;
+    const started = Date.now();
+    try {
+      const label = await readLabel(env, { mime: match[1], base64: match[2] }, fetchImpl);
+      await logRun(db, { kind: "snap", ok: true, model, ms: Date.now() - started });
+      return Response.json(label);
+    } catch (err) {
+      const error = (err as Error).message;
+      await logRun(db, { kind: "snap", ok: false, model, error, ms: Date.now() - started });
+      return Response.json({ error }, { status: 502 });
     }
   };
 }

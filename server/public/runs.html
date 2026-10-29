@@ -30,6 +30,7 @@
         ["read", "Manual reads"],
         ["chat", "Chats"],
         ["search", "Searches"],
+        ["snap", "Label photos"],
         ["failed", "Failed"],
       ];
       let runs = [];
@@ -43,6 +44,7 @@
 
       function title(r) {
         if (r.kind === "read") return `Read the ${names.get(r.item_id) ?? "manual"} manual`;
+        if (r.kind === "snap") return "Read a label photo";
         if (r.kind === "search") return `Searched for the ${names.get(r.item_id) ?? "thing's"} manual`;
         return r.tools_used?.length ? `Chat: ${r.tools_used.join(", ")}` : "Chat, no tools";
       }

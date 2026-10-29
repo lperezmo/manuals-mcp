@@ -69,9 +69,26 @@ describe("/api/tool", () => {
   });
 });
 
+function usage(today: number, all: number, logged: any[] = []) {
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input instanceof Request ? input.url : input);
+    if (url.includes("/rpc/model_runs_today_all")) return Response.json(all);
+    if (url.includes("/rest/v1/model_runs")) {
+      if (init?.method === "POST") {
+        logged.push(JSON.parse(String(init.body)));
+        return new Response(null, { status: 201 });
+      }
+      return new Response(null, { status: 200, headers: { "content-range": `*/${today}` } });
+    }
+    return new Response("unexpected", { status: 500 });
+  }) as typeof fetch;
+}
+
 describe("/api/snap", () => {
   test("reads a label photo with the reader model", async () => {
     const { verify, mint } = await testAuth();
+    const logged: any[] = [];
+    usage(0, 0, logged);
     let sent: any;
     const model = (async (_url: string, init: RequestInit) => {
       sent = JSON.parse(String(init.body));
@@ -100,6 +117,36 @@ describe("/api/snap", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ found: true, brand: "Brightwash", model: "BW-4100" });
     expect(sent.messages[1].content[1].image_url.url).toBe("data:image/jpeg;base64,AAAA");
+    expect(logged).toEqual([expect.objectContaining({ kind: "snap", ok: true })]);
+  });
+
+  test("stops at the household's daily photo limit", async () => {
+    const { verify, mint } = await testAuth();
+    usage(20, 20);
+    let asked = false;
+    const model = (async () => {
+      asked = true;
+      return Response.json({});
+    }) as unknown as typeof fetch;
+    const res = await snapHandler(
+      env,
+      verify,
+      model,
+    )(post("/api/snap", { image: "data:image/jpeg;base64,AAAA" }, await mint()));
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toContain("20");
+    expect(asked).toBe(false);
+  });
+
+  test("stops when the site-wide budget is used up", async () => {
+    const { verify, mint } = await testAuth();
+    usage(0, 400);
+    const res = await snapHandler(
+      env,
+      verify,
+    )(post("/api/snap", { image: "data:image/jpeg;base64,AAAA" }, await mint()));
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toContain("budget");
   });
 
   test("refuses anything that isn't an image", async () => {

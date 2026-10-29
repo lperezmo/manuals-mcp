@@ -1,6 +1,6 @@
 import type { Db, ItemRow, ManualRow } from "../db.js";
 import type { Env } from "../env.js";
-import { logRun } from "../runs.js";
+import { BUDGET_USED, logRun, modelRunsTodayAll } from "../runs.js";
 import { itemLabel } from "../tools/context.js";
 import { saveKnowledge } from "./knowledge.js";
 import { type PageText, pdfPages } from "./pdf-text.js";
@@ -168,6 +168,11 @@ async function processPdf(args: {
     .gte("reader_at", since);
   if ((count ?? 0) >= env.reader.dailyLimit) {
     outcome.note = `Saved and searchable. The daily limit of ${env.reader.dailyLimit} manual reads is used up, so it wasn't read yet; try again tomorrow.`;
+    await db.from("manuals").update({ status_detail: outcome.note }).eq("id", manualId);
+    return outcome;
+  }
+  if ((await modelRunsTodayAll(db)) >= env.globalDailyLimit) {
+    outcome.note = `Saved and searchable, but not read yet. ${BUDGET_USED}`;
     await db.from("manuals").update({ status_detail: outcome.note }).eq("id", manualId);
     return outcome;
   }
