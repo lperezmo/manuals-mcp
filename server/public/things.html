@@ -21,7 +21,7 @@
     </main>
 
     <script type="module">
-      import { $, ago, api, boot, db, esc, howOften, openChat, relDay, toast, today, tool } from "/app.js";
+      import { $, ago, api, boot, db, esc, howOften, ICONS, iconKey, iconSvg, itemIcon, openChat, relDay, TINTS, tintKey, toast, today, tool } from "/app.js";
 
       const main = $("#main");
       const params = new URLSearchParams(location.search);
@@ -31,29 +31,105 @@
 
       // --- List ---------------------------------------------------------------
 
+      const PIN = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M9 3h6l-1 6 4 4v2h-5v6l-1 1-1-1v-6H6v-2l4-4z"></path></svg>';
+      const GROUPS = { appliance: "Appliances", baby_gear: "Baby gear", vehicle: "Vehicles", other: "Other" };
+      let filter = "all";
+
+      function nextTask(i) {
+        const open = (i.tasks ?? []).filter((t) => t.active && t.next_due_on).sort((a, b) => a.next_due_on.localeCompare(b.next_due_on));
+        return open[0];
+      }
+
+      function summary(i) {
+        const tasks = (i.tasks ?? []).filter((t) => t.active);
+        const late = tasks.filter((t) => t.next_due_on && t.next_due_on < today()).length;
+        const check = (i.manual_facts ?? []).filter((f) => f.status === "needs_review").length;
+        if (!i.manuals?.length) return { late, text: "No manual yet" };
+        const parts = [`${tasks.length} task${tasks.length === 1 ? "" : "s"}`];
+        if (late) parts.push(`${late} late`);
+        else if (check) parts.push(`${check} to check`);
+        return { late, text: parts.join(" · ") };
+      }
+
       async function list() {
         const { data, error } = await (await db())
           .from("items")
-          .select("id, nickname, brand, model, category, manuals(page_count), manual_facts(status), tasks(active)")
+          .select("id, nickname, brand, model, kind, category, icon, tint, pinned, manuals(page_count), manual_facts(status), tasks(active, title, next_due_on)")
           .order("created_at");
         if (error) throw new Error(error.message);
+        drawList(data);
+      }
+
+      function drawList(items) {
+        const kinds = Object.keys(GROUPS).filter((k) => items.some((i) => i.kind === k));
+        if (filter !== "all" && !kinds.includes(filter)) filter = "all";
+        const shown = items.filter((i) => filter === "all" || i.kind === filter);
+        const pinned = items.filter((i) => i.pinned);
+        const pinButton = (i) =>
+          `<button type="button" class="pin" data-pin="${i.id}" aria-pressed="${i.pinned}" aria-label="${i.pinned ? "Unpin" : "Pin"} ${esc(i.nickname)}" title="${i.pinned ? "Unpin" : "Pin to the top"}">${PIN}</button>`;
         main.innerHTML = `
-          <div class="section-head" style="margin:0">
-            <h1>Your things</h1>
-            <a class="button" href="/things?add=1">Add a thing</a>
+          <div class="section-head" style="margin:0;align-items:flex-end">
+            <div class="stack" style="gap:4px"><h1>Your things</h1><p class="muted" style="margin:0">Tap a thing for its tasks and manual. Pin the ones you check most.</p></div>
+            ${kinds.length > 1 ? `<div class="filters" role="group" aria-label="Show">${["all", ...kinds].map((k) => `<button type="button" data-filter="${k}" aria-pressed="${filter === k}">${k === "all" ? "All" : GROUPS[k]}</button>`).join("")}</div>` : ""}
           </div>
-          <div class="grid">${
-            data
+          ${
+            pinned.length
+              ? `<section aria-labelledby="pinned-h" class="stack">
+                  <h2 id="pinned-h" style="margin:0">Pinned</h2>
+                  <div class="pinned-grid">${pinned
+                    .map((i) => {
+                      const next = nextTask(i);
+                      const late = next && next.next_due_on < today();
+                      return `<div class="card pinned-card">
+                        ${itemIcon(i, 64)}
+                        <div>
+                          <a href="/things?id=${i.id}" style="color:inherit;text-decoration:none;font-weight:700;font-size:18px">${esc(i.nickname)}</a>
+                          <span class="small muted">${esc([i.brand, i.model].filter(Boolean).join(" ")) || "No model saved"}</span>
+                          <span class="small" style="font-weight:700;margin-top:6px;color:${late ? "var(--coral)" : "var(--teal)"}">${next ? `${esc(next.title)}: ${esc(relDay(next.next_due_on))}` : esc(summary(i).text)}</span>
+                        </div>
+                        ${pinButton(i)}
+                      </div>`;
+                    })
+                    .join("")}</div>
+                </section>`
+              : ""
+          }
+          <section aria-labelledby="all-h" class="stack">
+            ${pinned.length ? '<h2 id="all-h" style="margin:0">Everything</h2>' : '<h2 id="all-h" class="sr-only">Everything</h2>'}
+            <div class="tile-grid">${shown
               .map((i) => {
-                const check = (i.manual_facts ?? []).filter((f) => f.status === "needs_review").length;
-                return `<a class="card" href="/things?id=${i.id}" style="color:inherit;text-decoration:none">
-                  <h3>${esc(i.nickname)}</h3>
-                  <div class="small muted">${esc([i.brand, i.model].filter(Boolean).join(" ")) || "No model saved"}</div>
-                  <div class="small">${i.manuals?.[0]?.page_count ? `${i.manuals[0].page_count}-page manual` : "No manual yet"} · ${(i.manual_facts ?? []).length} facts · ${(i.tasks ?? []).filter((t) => t.active).length} tasks${check ? ` · <strong>${check} to check</strong>` : ""}</div>
-                </a>`;
+                const sum = summary(i);
+                return `<div class="card tile">
+                  ${sum.late ? '<span class="late-tag">Late</span>' : ""}
+                  ${pinButton(i)}
+                  ${itemIcon(i, 64)}
+                  <a class="tile-name" href="/things?id=${i.id}">${esc(i.nickname)}</a>
+                  <span class="small muted">${esc(sum.text)}</span>
+                </div>`;
               })
-              .join("") || '<p class="muted">Nothing yet. Add your first thing.</p>'
-          }</div>`;
+              .join("")}
+              <a class="add-tile" href="/things?add=1"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>Add a thing</a>
+            </div>
+          </section>`;
+        for (const b of main.querySelectorAll("[data-filter]")) {
+          b.addEventListener("click", () => {
+            filter = b.dataset.filter;
+            drawList(items);
+          });
+        }
+        for (const b of main.querySelectorAll("[data-pin]")) {
+          b.addEventListener("click", async () => {
+            const item = items.find((i) => i.id === b.dataset.pin);
+            b.disabled = true;
+            const { error } = await (await db()).from("items").update({ pinned: !item.pinned }).eq("id", item.id);
+            if (error) {
+              b.disabled = false;
+              return toast(error.message);
+            }
+            item.pinned = !item.pinned;
+            drawList(items);
+          });
+        }
       }
 
       // --- One thing -----------------------------------------------------------
@@ -63,7 +139,7 @@
         const { data: item, error } = await supa
           .from("items")
           .select(
-            "id, nickname, brand, model, serial, category, kind, uses_per_week, manuals(id, title, page_count, source_url, status, status_detail), manual_facts(id, kind, label, value, source_page, source, status), tasks(id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source, status, active), seat_modes(id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, source, status), item_readings(kind, value, measured_on)",
+            "id, nickname, brand, model, serial, category, kind, icon, tint, pinned, uses_per_week, manuals(id, title, page_count, source_url, status, status_detail), manual_facts(id, kind, label, value, source_page, source, status), tasks(id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source, status, active), seat_modes(id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, source, status), item_readings(kind, value, measured_on)",
           )
           .eq("id", id)
           .maybeSingle();
@@ -99,12 +175,35 @@
         main.innerHTML = `
           <section class="stack">
             <a href="/things" style="font-weight:700;text-decoration:none">← Your things</a>
-            <h1>${esc(item.nickname)}</h1>
-            <p class="muted">${esc([item.brand, item.model, item.serial && `serial ${item.serial}`].filter(Boolean).join(" · "))}</p>
+            <div class="row" style="gap:16px;align-items:center;flex-wrap:nowrap">
+              ${itemIcon(item, 72)}
+              <div style="flex:1 1 auto;min-width:0">
+                <h1 style="margin:0">${esc(item.nickname)}</h1>
+                <p class="muted" style="margin:0">${esc([item.brand, item.model, item.serial && `serial ${item.serial}`].filter(Boolean).join(" · "))}</p>
+              </div>
+              <button type="button" class="pin" id="pin" aria-pressed="${!!item.pinned}" aria-label="${item.pinned ? "Unpin" : "Pin"} ${esc(item.nickname)}" title="${item.pinned ? "Unpin" : "Pin to the top"}">${PIN}</button>
+            </div>
             <div class="row">
               <button type="button" id="ask">Ask about the ${esc(item.nickname.toLowerCase())}</button>
               ${manual?.source_url ? `<a class="button quiet" href="${esc(manual.source_url)}" rel="noopener noreferrer" target="_blank">Open the manual</a>` : ""}
             </div>
+            <details class="card" id="look">
+              <summary style="font-weight:700;cursor:pointer">Change icon or color</summary>
+              <div class="stack" style="margin-top:14px">
+                <div class="stack" style="gap:8px">
+                  <span class="small" style="font-weight:700">Icon</span>
+                  <div class="choices" role="group" aria-label="Icon">${Object.keys(ICONS)
+                    .map((k) => `<button type="button" data-icon="${k}" aria-pressed="${iconKey(item) === k}" aria-label="${ICONS[k][0]}" title="${ICONS[k][0]}">${iconSvg(k, 26)}</button>`)
+                    .join("")}</div>
+                </div>
+                <div class="stack" style="gap:8px">
+                  <span class="small" style="font-weight:700">Color</span>
+                  <div class="choices" role="group" aria-label="Color">${Object.keys(TINTS)
+                    .map((k) => `<button type="button" class="swatch ${k}" data-tint="${k}" aria-pressed="${tintKey(item) === k}" aria-label="${TINTS[k]}" title="${TINTS[k]}"></button>`)
+                    .join("")}</div>
+                </div>
+              </div>
+            </details>
           </section>
 
           ${
@@ -186,6 +285,19 @@
           }`;
 
         $("#ask").addEventListener("click", () => openChat(undefined, () => detail(id)));
+        const saveLook = async (change) => {
+          const { error } = await supa.from("items").update(change).eq("id", id);
+          if (error) return toast(error.message);
+          await detail(id);
+          if ("icon" in change || "tint" in change) $("#look").open = true;
+        };
+        $("#pin").addEventListener("click", () => saveLook({ pinned: !item.pinned }));
+        for (const b of main.querySelectorAll("[data-icon]")) {
+          b.addEventListener("click", () => saveLook({ icon: b.dataset.icon }));
+        }
+        for (const b of main.querySelectorAll("[data-tint]")) {
+          b.addEventListener("click", () => saveLook({ tint: b.dataset.tint }));
+        }
         wireManualForm(item, () => detail(id));
         for (const b of main.querySelectorAll("[data-done]")) {
           b.addEventListener("click", async () => {

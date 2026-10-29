@@ -16,6 +16,8 @@
   --mark: #fce7a6;
   --sage: #47602e;
   --sage-soft: #e3ead8;
+  --slate: #3b4868;
+  --slate-soft: #e2e6ef;
   --shadow: 0 1px 2px rgba(60, 45, 20, 0.06), 0 10px 30px rgba(60, 45, 20, 0.06);
   color-scheme: light;
 }
@@ -37,6 +39,8 @@
     --mark: #5a4a1a;
     --sage: #b5cf8f;
     --sage-soft: #2b3420;
+    --slate: #b3c0e0;
+    --slate-soft: #262d3d;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px rgba(0, 0, 0, 0.25);
     color-scheme: dark;
   }
@@ -58,6 +62,8 @@
   --mark: #5a4a1a;
   --sage: #b5cf8f;
   --sage-soft: #2b3420;
+  --slate: #b3c0e0;
+  --slate-soft: #262d3d;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 30px rgba(0, 0, 0, 0.25);
   color-scheme: dark;
 }
@@ -475,6 +481,169 @@ button:disabled {
 .icon-badge.sage {
   background: var(--sage-soft);
   color: var(--sage);
+}
+.icon-badge.slate {
+  background: var(--slate-soft);
+  color: var(--slate);
+}
+
+/* Things grid */
+.filters {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.filters button {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font-weight: 700;
+}
+.filters button[aria-pressed="true"] {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: var(--on-teal);
+}
+.pinned-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.pinned-card {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.pinned-card > div {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 14px;
+}
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  padding: 20px 12px 16px;
+}
+.tile-name {
+  color: inherit;
+  font-weight: 700;
+  text-decoration: none;
+}
+/* The whole tile opens the thing; the pin button sits above that link. */
+.tile-name::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.tile .late-tag {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+}
+.pin {
+  position: relative;
+  z-index: 1;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--ink2);
+}
+.tile .pin {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
+.pin[aria-pressed="true"] {
+  background: var(--gold-soft);
+  color: var(--gold);
+}
+.pin[aria-pressed="true"] svg {
+  fill: currentColor;
+}
+.add-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 150px;
+  border: 2px dashed var(--line);
+  border-radius: 22px;
+  color: var(--teal);
+  font-weight: 700;
+  text-decoration: none;
+}
+.late-tag {
+  background: var(--coral-soft);
+  color: var(--coral);
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+/* Icon and color picker */
+.choices {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.choices button {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  border: 2px solid var(--line);
+  background: var(--card);
+  color: var(--ink2);
+}
+.choices button[aria-pressed="true"] {
+  border-color: var(--teal);
+  background: var(--teal-soft);
+  color: var(--teal);
+}
+.choices .swatch {
+  border-radius: 999px;
+}
+.swatch.teal {
+  background: var(--teal-soft);
+}
+.swatch.gold {
+  background: var(--gold-soft);
+}
+.swatch.sage {
+  background: var(--sage-soft);
+}
+.swatch.slate {
+  background: var(--slate-soft);
+}
+.choices .swatch[aria-pressed="true"] {
+  border-width: 3px;
+  border-color: var(--ink);
 }
 
 /* Things */
