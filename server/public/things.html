@@ -466,86 +466,230 @@
         });
       }
 
+      // --- Add a thing: a short wizard -----------------------------------------
+
+      // Where the model label usually is, by what the thing is.
+      const LABEL_SPOTS = {
+        washer: "under the lid or around the door opening",
+        dryer: "inside the door frame",
+        dishwasher: "on the edge of the door, top or side",
+        fridge: "on a wall inside the fridge, near the top or the crisper",
+        range: "behind the storage drawer or on the oven frame",
+        microwave: "inside the door frame or on the back",
+        furnace: "inside the front panel door",
+        water_heater: "on the side of the tank",
+        air_conditioner: "on the side of the outdoor unit",
+        car_seat: "on a sticker on the side or the bottom of the seat",
+        stroller: "on the frame near the back wheels",
+        mower: "on the deck, near the back",
+        vacuum: "under the base or the bin",
+        coffee: "on the bottom",
+        car: "on the driver's door frame",
+        other: "on the back, the bottom, or inside a door",
+      };
+      const KIND_OF = { car_seat: "baby_gear", stroller: "baby_gear", car: "vehicle", mower: "other", other: "other" };
+
       function add() {
-        main.innerHTML = `
-          <section class="stack">
+        // What we know so far; the photo fills it, the person corrects it.
+        const thing = { nickname: "", brand: "", model: "", serial: "", category: null, kind: "appliance", pdf: "" };
+        let image = null;
+        let manual = params.get("add") === "pdf";
+
+        const head = `<section class="stack">
             <a href="/things" style="font-weight:700;text-decoration:none">← Your things</a>
-            <h1>One photo of the label. That's it.</h1>
-            <p class="muted">Muse reads the brand and model off the label. Then add the manual's link or PDF and it's read into tasks and facts.</p>
-          </section>
-          <div class="grid" style="align-items:start">
-            <section class="card">
-              <div class="row"><span class="chip teal strong">1</span><h2 style="font-size:20px">The label</h2></div>
-              <p class="small muted">Inside the door, on the back, or under the base.</p>
-              <label class="button outline" for="photo" style="cursor:pointer">Take or choose a photo</label>
-              <input id="photo" type="file" accept="image/*" capture="environment" class="sr-only">
-              <img id="preview" alt="Your label photo" class="hidden" style="width:100%;border-radius:16px">
-              <p class="small muted" id="snap-msg" role="status"></p>
-            </section>
-            <form class="card" id="add-form">
-              <div class="row"><span class="chip teal strong">2</span><h2 style="font-size:20px">What it is</h2></div>
-              <label class="small" for="f-nick"><strong>What do you call it?</strong></label>
-              <input id="f-nick" required placeholder="Washer">
-              <label class="small" for="f-brand"><strong>Brand</strong></label><input id="f-brand">
-              <label class="small" for="f-model"><strong>Model</strong></label><input id="f-model">
-              <label class="small" for="f-serial"><strong>Serial</strong></label><input id="f-serial">
-              <label class="small" for="f-kind"><strong>Kind</strong></label>
-              <select id="f-kind"><option value="appliance">Appliance</option><option value="baby_gear">Baby gear</option><option value="vehicle">Vehicle</option><option value="other">Other</option></select>
-              <label class="small" for="f-pdf"><strong>Link to the manual PDF</strong> <span class="muted">(optional)</span></label>
-              <input id="f-pdf" type="url" placeholder="https://maker.example/manual.pdf">
-              <button type="submit">Add it</button>
-              <p class="small muted" id="add-msg" role="status"></p>
-            </form>
+            <h1>Add a thing</h1>
+          </section>`;
+
+        function where() {
+          const key = thing.category ? iconKey({ category: thing.category }) : null;
+          return LABEL_SPOTS[key] ?? "inside the door, on the back, or under the base";
+        }
+
+        function picker(label) {
+          return `<div class="stack" style="gap:8px">
+            <strong class="small">${label}</strong>
+            <div class="choices" role="group" aria-label="${label}">${Object.keys(ICONS)
+              .map((k) => `<button type="button" data-what="${k}" aria-pressed="${thing.category && iconKey({ category: thing.category }) === k}" aria-label="${ICONS[k][0]}" title="${ICONS[k][0]}">${iconSvg(k, 26)}</button>`)
+              .join("")}</div>
           </div>`;
-        let category = null;
-        $("#photo").addEventListener("change", async (e) => {
-          const file = e.target.files?.[0];
-          if (!file) return;
-          const msg = $("#snap-msg");
-          msg.textContent = "Reading the label…";
+        }
+
+        function photoButton(text, quiet = false) {
+          return `<label class="button ${quiet ? "outline" : ""}" for="photo" style="cursor:pointer">${text}</label>`;
+        }
+
+        function detailsForm(open) {
+          return `<details class="card" id="manual-entry" ${open ? "open" : ""}>
+            <summary style="font-weight:700;cursor:pointer">${open ? "Details" : "Enter the details yourself"}</summary>
+            <form class="stack" id="add-form" style="margin-top:12px">
+              <label class="small" for="f-nick"><strong>What do you call it?</strong></label>
+              <input id="f-nick" required placeholder="Washer" value="${esc(thing.nickname)}">
+              <label class="small" for="f-brand"><strong>Brand</strong></label><input id="f-brand" value="${esc(thing.brand)}">
+              <label class="small" for="f-model"><strong>Model</strong></label><input id="f-model" value="${esc(thing.model)}">
+              <label class="small" for="f-serial"><strong>Serial</strong> <span class="muted">(optional)</span></label><input id="f-serial" value="${esc(thing.serial)}">
+              <label class="small" for="f-kind"><strong>Kind</strong></label>
+              <select id="f-kind">${[["appliance", "Appliance"], ["baby_gear", "Baby gear"], ["vehicle", "Vehicle"], ["other", "Other"]]
+                .map(([v, t]) => `<option value="${v}" ${thing.kind === v ? "selected" : ""}>${t}</option>`)
+                .join("")}</select>
+              <label class="small" for="f-pdf"><strong>Link to the manual PDF</strong> <span class="muted">(optional; we'll search for it otherwise)</span></label>
+              <input id="f-pdf" type="url" placeholder="https://maker.example/manual.pdf" value="${esc(thing.pdf)}">
+              <button type="submit">Add it</button>
+              <p class="small muted" data-add-msg role="status"></p>
+            </form>
+          </details>`;
+        }
+
+        function step(body) {
+          main.innerHTML = `${head}
+            <section class="card wizard" style="max-width:640px">${body}</section>
+            <input id="photo" type="file" accept="image/*" capture="environment" class="sr-only">
+            <div style="max-width:640px">${detailsForm(manual)}</div>`;
+          $("#photo").addEventListener("change", (e) => {
+            const file = e.target.files?.[0];
+            if (file) read(file);
+          });
+          for (const b of main.querySelectorAll("[data-what]")) {
+            b.addEventListener("click", () => {
+              thing.category = b.dataset.what;
+              thing.kind = KIND_OF[b.dataset.what] ?? "appliance";
+              if (!thing.nickname) thing.nickname = ICONS[b.dataset.what][0];
+              redraw();
+            });
+          }
+          $("[data-type]")?.addEventListener("click", () => {
+            manual = true;
+            redraw();
+            $("#f-nick").focus();
+          });
+          $("[data-continue]")?.addEventListener("click", () => save(main.querySelector("[data-continue]")));
+          $("#add-form").addEventListener("submit", (e) => {
+            e.preventDefault();
+            thing.nickname = $("#f-nick").value.trim();
+            thing.brand = $("#f-brand").value.trim();
+            thing.model = $("#f-model").value.trim();
+            thing.serial = $("#f-serial").value.trim();
+            thing.kind = $("#f-kind").value;
+            thing.pdf = $("#f-pdf").value.trim();
+            save($("#add-form [type=submit]"));
+          });
+          $("#f-nick-quick")?.addEventListener("input", (e) => {
+            thing.nickname = e.target.value;
+          });
+        }
+
+        let redraw = start;
+
+        function start() {
+          redraw = start;
+          step(`<div class="stack" style="justify-items:start">
+            <h2>Take a photo of its label</h2>
+            <p class="muted">Muse reads the brand and model off it, then finds the manual for you. The label is usually ${esc(where())}.</p>
+            ${photoButton(`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg> Take or choose a photo`)}
+            <div class="row small"><button type="button" class="link" data-type>Type it in instead</button><span class="muted">·</span><a href="/things?add=pdf" class="link">I already have the PDF</a></div>
+          </div>`);
+        }
+
+        function reading() {
+          step(`<div class="stack">
+            ${image ? `<img src="${image}" alt="Your label photo" class="wizard-photo">` : ""}
+            <p class="muted" role="status">Reading the label…</p>
+          </div>`);
+        }
+
+        function notFound() {
+          redraw = notFound;
+          step(`<div class="stack">
+            ${image ? `<img src="${image}" alt="Your label photo" class="wizard-photo">` : ""}
+            <h2>Couldn't read a label in that one</h2>
+            <p class="muted">Get close enough that the text fills most of the photo, in good light, without glare. ${thing.category ? `On a ${esc(ICONS[iconKey({ category: thing.category })][0].toLowerCase())} it's usually ${esc(where())}.` : "Tell me what it is and I'll say where to look."}</p>
+            ${picker("What is it?")}
+            <div class="row">${photoButton("Try another photo")}<button type="button" class="quiet" data-type>Type it in</button></div>
+          </div>`);
+        }
+
+        function partial() {
+          redraw = partial;
+          const got = [thing.brand && `<strong>${esc(thing.brand)}</strong>`, thing.model && `model <strong>${esc(thing.model)}</strong>`].filter(Boolean).join(", ");
+          const missing = !thing.model ? "the model number" : "all of it clearly";
+          step(`<div class="stack">
+            ${image ? `<img src="${image}" alt="Your label photo" class="wizard-photo">` : ""}
+            <h2>Almost</h2>
+            <p>I read ${got || "part of it"}, but not ${missing}. ${thing.category ? `On a ${esc(ICONS[iconKey({ category: thing.category })][0].toLowerCase())} the model label is usually ${esc(where())}.` : ""} A close photo of just that sticker works best.</p>
+            ${thing.category ? "" : picker("What is it?")}
+            <div class="row">${photoButton("Take a closer photo")}<button type="button" class="quiet" data-type>Type the model</button><button type="button" class="quiet" data-continue>Continue without it</button></div>
+            <p class="small muted" data-add-msg role="status"></p>
+          </div>`);
+        }
+
+        function confirm() {
+          redraw = confirm;
+          const key = iconKey(thing);
+          step(`<div class="stack">
+            <div class="row" style="gap:14px;flex-wrap:nowrap">
+              ${itemIcon(thing, 64)}
+              <div style="min-width:0">
+                <h2 style="margin:0">${esc([thing.brand, ICONS[key][0].toLowerCase() === "other" ? "" : ICONS[key][0].toLowerCase()].filter(Boolean).join(" "))}</h2>
+                <p class="muted" style="margin:0">Model ${esc(thing.model)}${thing.serial ? ` · serial ${esc(thing.serial)}` : ""}</p>
+              </div>
+            </div>
+            <label class="small" for="f-nick-quick"><strong>What do you call it?</strong></label>
+            <input id="f-nick-quick" value="${esc(thing.nickname)}" placeholder="Washer">
+            <div class="row"><button type="button" data-continue>Add it and find the manual</button>${photoButton("Retake", true)}</div>
+            <p class="small muted">Something off? Fix it in the details below.</p>
+            <p class="small muted" data-add-msg role="status"></p>
+          </div>`);
+        }
+
+        async function read(file) {
+          // A closer photo after "Almost" adds to what we read; any other photo starts over.
+          if (redraw !== partial) {
+            Object.assign(thing, { nickname: "", brand: "", model: "", serial: "", category: null, kind: "appliance" });
+          }
           try {
-            const image = await shrink(file);
-            $("#preview").src = image;
-            $("#preview").classList.remove("hidden");
+            image = await shrink(file);
+            reading();
             const label = await api("/api/snap", { image });
-            if (!label.found) {
-              msg.textContent = "Couldn't find a label in that photo. Try closer, or type it in.";
-              return;
-            }
-            $("#f-nick").value = label.nickname || $("#f-nick").value;
-            $("#f-brand").value = label.brand || "";
-            $("#f-model").value = label.model || "";
-            $("#f-serial").value = label.serial || "";
-            if (label.kind) $("#f-kind").value = label.kind;
-            category = label.category || null;
-            msg.textContent = label.unsure ? "Read it, but part was hard to read. Check the fields." : "Read it. Check the fields, then add it.";
+            if (label.category) thing.category = label.category;
+            if (label.kind) thing.kind = label.kind;
+            if (!label.found && !label.brand && !label.model) return notFound();
+            thing.nickname = label.nickname || thing.nickname;
+            thing.brand = label.brand || thing.brand;
+            thing.model = label.model || thing.model;
+            thing.serial = label.serial || thing.serial;
+            if (!thing.model || label.unsure) return partial();
+            confirm();
           } catch (err) {
-            msg.textContent = err.message;
+            notFound();
+            toast(err.message);
           }
-        });
-        $("#add-form").addEventListener("submit", async (e) => {
-          e.preventDefault();
-          const msg = $("#add-msg");
-          const pdf = $("#f-pdf").value.trim();
-          msg.textContent = pdf ? "Adding it. Muse is reading the manual, up to a minute." : "Adding it…";
-          const args = {
-            nickname: $("#f-nick").value.trim(),
-            kind: $("#f-kind").value,
-            ...(category ? { category } : {}),
-          };
-          for (const [key, el] of [["brand", "#f-brand"], ["model", "#f-model"], ["serial", "#f-serial"]]) {
-            if ($(el).value.trim()) args[key] = $(el).value.trim();
+        }
+
+        async function save(button) {
+          const msg = main.querySelector("[data-add-msg]");
+          if (!thing.nickname) thing.nickname = thing.category ? ICONS[iconKey(thing)][0] : "";
+          if (!thing.nickname) {
+            manual = true;
+            redraw();
+            $("#f-nick").focus();
+            return;
           }
-          if (pdf) args.pdf_url = pdf;
+          button.disabled = true;
+          if (msg) msg.textContent = thing.pdf ? "Adding it. Muse is reading the manual, up to a minute." : "Adding it…";
+          const args = { nickname: thing.nickname, kind: thing.kind, ...(thing.category ? { category: thing.category } : {}) };
+          for (const key of ["brand", "model", "serial"]) if (thing[key]) args[key] = thing[key];
+          if (thing.pdf) args.pdf_url = thing.pdf;
           try {
             const out = await tool("add_item", args);
             toast(out.summary.split(".")[0]);
-            location.assign(`/things?id=${out.data.item.id}${pdf ? "" : "&find=1"}`);
+            location.assign(`/things?id=${out.data.item.id}${thing.pdf ? "" : "&find=1"}`);
           } catch (err) {
-            msg.textContent = err.message;
+            button.disabled = false;
+            if (msg) msg.textContent = err.message;
+            else toast(err.message);
           }
-        });
-        if (params.get("add") === "photo") $("label[for=photo]").focus();
+        }
+
+        start();
       }
 
       async function start() {

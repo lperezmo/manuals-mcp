@@ -39,7 +39,7 @@ export async function readLabel(
     body: JSON.stringify({
       model: env.chatModel ?? reader.model,
       response_format: { type: "json_object" },
-      max_tokens: 300,
+      max_tokens: 1500,
       messages: [
         { role: "system", content: INSTRUCTIONS },
         {
