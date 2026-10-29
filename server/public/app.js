@@ -549,5 +549,5 @@ export function iconSvg(key, px) {
 
 /** A tinted icon badge for a thing, as HTML. */
 export function itemIcon(item, size = 44) {
-  return `<span class="icon-badge ${tintKey(item)}" style="width:${size}px;height:${size}px;border-radius:${Math.round(size * 0.32)}px" aria-hidden="true">${iconSvg(iconKey(item), Math.round(size * 0.6))}</span>`;
+  return `<span class="icon-badge ${tintKey(item)}" style="--s:${size}px" aria-hidden="true">${iconSvg(iconKey(item), Math.round(size * 0.6))}</span>`;
 }
