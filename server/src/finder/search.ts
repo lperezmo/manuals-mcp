@@ -25,6 +25,8 @@ export interface Candidate {
   has_model?: boolean;
   /** How the PDF names the model; see modelMatch. */
   match?: Match;
+  /** The model number as this PDF spells it, when the saved one looks misread (GSWWD0951A09B -> GSWWD09S1A09B). */
+  model_hint?: string;
   problem?: string;
   /** The check didn't finish (slow site, network); the PDF may still be fine. */
   unchecked?: boolean;
@@ -82,6 +84,29 @@ function contains(text: string, model: string): "exact" | "family" | null {
 }
 
 /**
+ * The saved model number re-spelled the way the text prints it, when they only
+ * differ by look-alike characters: the label said GSWWD09S1A09B but was read
+ * as GSWWD0951A09B. A family match keeps the saved variant letter(s) at the end.
+ * Null when the text spells it the same, or doesn't name it.
+ */
+export function suggestModel(text: string, model: string | null | undefined): string | null {
+  const m = squash(model ?? "");
+  if (m.length < 6) return null;
+  const t = squash(text);
+  if (contains(t, m)) return null;
+  // squash and lookalike keep every character in place, so positions line up.
+  const lt = lookalike(text);
+  const lm = lookalike(m);
+  for (const cut of [0, 1, 2]) {
+    const stem = cut ? lm.slice(0, -cut) : lm;
+    if (cut && stem.length < 7) break;
+    const at = lt.indexOf(stem);
+    if (at >= 0) return (t.slice(at, at + stem.length) + m.slice(m.length - cut)).toUpperCase();
+  }
+  return null;
+}
+
+/**
  * How text names a model: "exact"; "family" when only the last one or two
  * characters differ (GSWWD09S1A09B on the sticker, GSWWD09S1A09A in the PDF);
  * "lookalike" when it matches once easily confused characters are folded
@@ -127,12 +152,14 @@ export function rankResults(
     seen.add(url.toString());
     const official = isBrandHost(host, item.brand);
     const named = modelMatch(`${r.title} ${url.pathname}`, item.model) !== null;
+    const hint = suggestModel(`${r.title} ${url.pathname}`, item.model);
     ranked.push({
       url: url.toString(),
       title: r.title,
       host,
       official,
       named,
+      ...(hint ? { model_hint: hint } : {}),
       rank: (official ? 3 : 0) + (named ? 2 : 0) + r.score,
     });
   }
@@ -172,12 +199,15 @@ export async function checkCandidate(
     const { bytes } = await fetchPdf(candidate.url, fetchImpl);
     const { pageCount, pages } = await pdfPages(bytes);
     // No text layer (a scan) or no model to look for: we can't tell, so don't claim a match.
-    const match = modelMatch(pages.map((p) => p.content).join(" "), model);
+    const text = pages.map((p) => p.content).join(" ");
+    const match = modelMatch(text, model);
+    const hint = match === "lookalike" ? suggestModel(text, model) : null;
     return {
       ...candidate,
       page_count: pageCount,
       has_model: match !== null,
       ...(match ? { match } : {}),
+      ...(hint ? { model_hint: hint } : {}),
     };
   } catch (err) {
     // A FetchPdfError is a definite answer (not a PDF, 404, too big); anything

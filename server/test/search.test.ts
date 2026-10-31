@@ -8,6 +8,7 @@ import {
   searchQueries,
   searchQuery,
   squash,
+  suggestModel,
 } from "../src/finder/search.js";
 
 // Shapes from real Tavily answers, 2026-10-28.
@@ -130,5 +131,35 @@ describe("misread model numbers", () => {
       searchQueries({ brand: "Galanz", model: "GSWWD0951A09B", nickname: "Microwave" }),
     ).toEqual(["Galanz GSWWD0951A09B owner's manual pdf", "Galanz GSWWD0951A09B Microwave manual"]);
     expect(searchQueries({ brand: "Galanz", nickname: "Microwave" })).toHaveLength(1);
+  });
+});
+
+describe("suggestModel", () => {
+  test("re-spells a misread model the way the maker prints it", () => {
+    expect(suggestModel("GSWWD09S1A09B Microwave", "GSWWD0951A09B")).toBe("GSWWD09S1A09B");
+    // Family match: the PDF is for the A variant, the saved letter B stays.
+    expect(suggestModel("/uploads/GSWWD09S1A09A-User-Manual.pdf", "GSWWD0951A09B")).toBe(
+      "GSWWD09S1A09B",
+    );
+  });
+
+  test("says nothing when the spelling already matches or the model isn't there", () => {
+    expect(suggestModel("GSWWD09S1A09B", "GSWWD09S1A09B")).toBeNull();
+    expect(suggestModel("GSWWD12S1SA10A-User-Manual.pdf", "GSWWD0951A09B")).toBeNull();
+    expect(suggestModel("E4 error", "E4")).toBeNull();
+  });
+
+  test("ranking carries the hint from the link", () => {
+    const [c] = rankResults(
+      [
+        {
+          url: "https://www.galanz.com/us/wp-content/uploads/2021/01/GSWWD09S1A09A-User-Manual.pdf",
+          title: "",
+          score: 0.5,
+        },
+      ],
+      { brand: "Galanz", model: "GSWWD0951A09B" },
+    );
+    expect(c?.model_hint).toBe("GSWWD09S1A09B");
   });
 });

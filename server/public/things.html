@@ -426,6 +426,7 @@
             <strong style="overflow-wrap:anywhere">${esc(c.title || c.url.split("/").pop())}</strong>
             <span class="small muted" style="overflow-wrap:anywhere">${esc(c.host)}${c.page_count ? ` · ${c.page_count} pages` : ""}</span>
             <div class="row" style="gap:6px">${tags}</div>
+            ${c.model_hint ? `<p class="small" style="margin:4px 0 0">This manual spells it <strong>${esc(c.model_hint)}</strong>; the label photo may have been misread. <button type="button" class="quiet small" data-fix-model="${esc(c.model_hint)}">Fix the model</button></p>` : ""}
           </div>
           <div class="row">
             <button type="button" data-use="${esc(c.url)}" data-official="${c.official}">Use this</button>
@@ -461,6 +462,20 @@
             return;
           }
           found.innerHTML = `<h3>Is this yours?</h3>${out.candidates.map(candidateCard).join("")}`;
+          // The maker's PDF prints the real number; one tap saves it on the thing.
+          for (const b of found.querySelectorAll("[data-fix-model]")) {
+            b.addEventListener("click", async () => {
+              b.disabled = true;
+              const { error } = await (await db()).from("items").update({ model: b.dataset.fixModel }).eq("id", item.id);
+              if (error) {
+                b.disabled = false;
+                return toast(error.message);
+              }
+              item.model = b.dataset.fixModel;
+              for (const other of found.querySelectorAll("[data-fix-model]")) other.closest("p")?.remove();
+              toast(`Model saved as ${item.model}.`);
+            });
+          }
           for (const b of found.querySelectorAll("[data-use]")) {
             b.addEventListener("click", async () => {
               for (const other of found.querySelectorAll("[data-use]")) other.disabled = true;
