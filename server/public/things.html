@@ -615,6 +615,7 @@
             $("#f-nick").focus();
           });
           $("[data-continue]")?.addEventListener("click", () => save(main.querySelector("[data-continue]")));
+          $("[data-anyway]")?.addEventListener("click", () => readImage(async () => image, true));
           $("#add-form").addEventListener("submit", (e) => {
             e.preventDefault();
             thing.nickname = $("#f-nick").value.trim();
@@ -660,6 +661,17 @@
           </div>`);
         }
 
+        // Jev's quick look found no label, or text too blurry to read; Muse wasn't asked yet.
+        function retake(reason) {
+          redraw = () => retake(reason);
+          step(`<div class="stack">
+            ${image ? `<img src="${image}" alt="Your label photo" class="wizard-photo">` : ""}
+            <h2>${reason === "blurry" ? "That one's a little blurry" : "I don't see a label in that one"}</h2>
+            <p class="muted">${reason === "blurry" ? "Hold steady a moment, tap to focus, and avoid glare on the sticker." : "Look for a sticker with the model number, usually inside the door, on the back or under the base."} A close photo of just the label works best.</p>
+            <div class="row">${photoButton("Take another photo")}<button type="button" class="quiet" data-anyway>Read it anyway</button><button type="button" class="quiet" data-type>Type it in</button></div>
+          </div>`);
+        }
+
         function partial() {
           redraw = partial;
           const got = [thing.brand && `<strong>${esc(thing.brand)}</strong>`, thing.model && `model <strong>${esc(thing.model)}</strong>`].filter(Boolean).join(", ");
@@ -697,7 +709,7 @@
           return readImage(() => shrink(file));
         }
 
-        async function readImage(getImage) {
+        async function readImage(getImage, force = false) {
           // A closer photo after "Almost" adds to what we read; any other photo starts over.
           if (redraw !== partial) {
             Object.assign(thing, { nickname: "", brand: "", model: "", serial: "", category: null, kind: "appliance" });
@@ -705,7 +717,8 @@
           try {
             image = await getImage();
             reading();
-            const label = await api("/api/snap", { image });
+            const label = await api("/api/snap", force ? { image, force: true } : { image });
+            if (label.retake) return retake(label.retake);
             if (label.category) thing.category = label.category;
             if (label.kind) thing.kind = label.kind;
             if (!label.found && !label.brand && !label.model) return notFound();

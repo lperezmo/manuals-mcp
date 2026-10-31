@@ -13,6 +13,7 @@ import { authIssuer, type Env } from "./env.js";
 import { processStoredManual } from "./finder/ingest.js";
 import { findManual } from "./finder/search.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
+import { checkPhoto } from "./photo-check.js";
 import {
   pushReport,
   REPORT_DAILY_LIMIT,
@@ -237,8 +238,11 @@ export function snapHandler(
     const auth = await verify(bearer(req));
     if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
     let image: unknown;
+    let force = false;
     try {
-      image = ((await req.json()) as { image?: unknown }).image;
+      const body = (await req.json()) as { image?: unknown; force?: unknown };
+      image = body.image;
+      force = body.force === true;
     } catch {
       return Response.json({ error: "Send JSON with an image data URL." }, { status: 400 });
     }
@@ -267,8 +271,28 @@ export function snapHandler(
     }
     const model = env.chatModel ?? env.reader?.model ?? null;
     const started = Date.now();
+    const photo = { mime: match[1], base64: match[2] };
+    // Jev's quick look: a photo with no label or unreadable text is sent back
+    // before Muse spends a read on it. "Read it anyway" skips this.
+    const check = force ? null : await checkPhoto(env, photo, fetchImpl);
+    if (check?.retake) {
+      await logRun(db, {
+        kind: "snap",
+        ok: true,
+        model: env.router?.model ?? null,
+        ms: check.ms,
+        tokens_in: check.tokens_in,
+        tokens_out: 0,
+        raw_output: JSON.stringify({
+          retake: check.retake,
+          label: check.label,
+          sharp: check.sharp,
+        }),
+      });
+      return Response.json({ found: false, retake: check.retake });
+    }
     try {
-      const label = await readLabel(env, { mime: match[1], base64: match[2] }, fetchImpl);
+      const label = await readLabel(env, photo, fetchImpl);
       await logRun(db, { kind: "snap", ok: true, model, ms: Date.now() - started });
       return Response.json(label);
     } catch (err) {
