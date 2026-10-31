@@ -249,8 +249,8 @@
               ? manualLine(manual)
               : `<section class="card">
                   <h2>Add its manual</h2>
-                  <p class="muted">Paste a link to the PDF on the maker's site, or upload the PDF. Muse reads it into tasks and facts, each with its page.</p>
-                  ${manualForm()}
+                  <p class="muted">${item.brand || item.model ? "Looking for it online first. Pick the right PDF and Muse reads it into tasks and facts, each with its page." : "Add the brand and model in the details above and Muse can look for it online, or upload the PDF yourself."}</p>
+                  ${manualForm(!!(item.brand || item.model))}
                 </section>`
           }
 
@@ -393,14 +393,22 @@
 
       // --- Adding --------------------------------------------------------------
 
-      function manualForm() {
-        return `<div class="row"><button type="button" id="find-manual">Find it online</button><span class="small muted">Searches the web for the PDF; nothing is read until you pick one.</span></div>
-          <div class="stack" id="found" aria-live="polite"></div>
-          <form class="field" data-link><label class="sr-only" for="pdf-url">Link to the manual PDF</label>
-            <input id="pdf-url" type="url" placeholder="https://maker.example/manual.pdf"><button type="submit">Read it</button></form>
-          <div class="row"><label class="button quiet" for="pdf-file" style="cursor:pointer">Upload a PDF</label>
-            <input id="pdf-file" type="file" accept="application/pdf" class="sr-only"><span class="small muted" data-progress role="status"></span></div>`;
+      // Searching is the default; a link or an upload is the fallback, opened when the search comes up empty.
+      function manualForm(searchable) {
+        return `<div class="stack" id="found" aria-live="polite"></div>
+          ${searchable ? '<div class="row"><button type="button" class="quiet small hidden" id="find-manual">Search again</button></div>' : ""}
+          <details id="own-pdf"${searchable ? "" : " open"}>
+            <summary>Have the PDF or a link?</summary>
+            <div class="stack" style="margin-top:10px">
+              <form class="field" data-link><label class="sr-only" for="pdf-url">Link to the manual PDF</label>
+                <input id="pdf-url" type="url" placeholder="https://maker.example/manual.pdf"><button type="submit">Read it</button></form>
+              <div class="row"><label class="button quiet" for="pdf-file" style="cursor:pointer">Upload a PDF</label>
+                <input id="pdf-file" type="file" accept="application/pdf" class="sr-only"><span class="small muted" data-progress role="status"></span></div>
+            </div>
+          </details>`;
       }
+
+      const FOUND_KEY = (id) => `manuals-found-${id}`;
 
       function candidateCard(c) {
         const tags = [
@@ -420,15 +428,30 @@
         </div>`;
       }
 
-      async function findOnline(item, after) {
+      async function findOnline(item, after, fresh = false) {
         const found = $("#found");
         const button = $("#find-manual");
-        button.disabled = true;
-        found.innerHTML = '<p class="muted small">Searching the web and opening the best PDFs. About 10 seconds…</p>';
+        const fallback = () => {
+          const own = $("#own-pdf");
+          if (own) own.open = true;
+        };
+        if (button) button.disabled = true;
+        found.innerHTML = '<p class="muted small" role="status">Searching the web for the manual and opening the best PDFs. About 10 seconds…</p>';
         try {
-          const out = await api("/api/find-manual", { item_id: item.id });
+          // One search per thing per visit; going back and forth reuses it.
+          let out;
+          try {
+            out = fresh ? null : JSON.parse(sessionStorage.getItem(FOUND_KEY(item.id)) || "null");
+          } catch {}
+          if (!out) {
+            out = await api("/api/find-manual", { item_id: item.id });
+            try {
+              sessionStorage.setItem(FOUND_KEY(item.id), JSON.stringify(out));
+            } catch {}
+          }
           if (!out.candidates.length) {
-            found.innerHTML = `<p class="muted small">No PDF that looks like this one turned up for “${esc(out.query)}”. Paste a link or upload it below.</p>`;
+            found.innerHTML = `<p class="muted small">Couldn't find a PDF that looks like this one for “${esc(out.query)}”. If you have the paper manual, the maker's site often has it under Support; paste that link or upload the PDF below.</p>`;
+            fallback();
             return;
           }
           found.innerHTML = `<h3>Is this yours?</h3>${out.candidates.map(candidateCard).join("")}`;
@@ -448,19 +471,21 @@
           }
         } catch (err) {
           found.innerHTML = `<p class="small" style="color:var(--coral)">${esc(err.message)}</p>`;
+          fallback();
         } finally {
-          button.disabled = false;
+          if (button) {
+            button.disabled = false;
+            button.classList.remove("hidden");
+          }
         }
       }
 
       function wireManualForm(item, after) {
         const link = main.querySelector("[data-link]");
         if (!link) return;
-        $("#find-manual")?.addEventListener("click", () => findOnline(item, after));
-        if (params.get("find") === "1" && (item.brand || item.model)) {
-          history.replaceState(null, "", `/things?id=${item.id}`);
-          findOnline(item, after);
-        }
+        $("#find-manual")?.addEventListener("click", () => findOnline(item, after, true));
+        if (params.get("find") === "1") history.replaceState(null, "", `/things?id=${item.id}`);
+        if (item.brand || item.model) findOnline(item, after);
         const progress = $("[data-progress]");
         link.addEventListener("submit", async (e) => {
           e.preventDefault();
