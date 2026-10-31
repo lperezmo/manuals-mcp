@@ -5,6 +5,7 @@ import { itemLabel } from "../tools/context.js";
 import { saveKnowledge } from "./knowledge.js";
 import { type PageText, pdfPages } from "./pdf-text.js";
 import { distill, ReaderError } from "./reader.js";
+import { verifyKnowledge } from "./verify.js";
 
 // Turns a manual PDF into raw pages (searchable) and, when a server reader
 // is configured, distilled tasks and facts. Without a reader the manual is
@@ -209,17 +210,36 @@ async function processPdf(args: {
         reader_tokens_out: usage.tokens_out,
       })
       .eq("id", manualId);
+    // Each entry checked against its own page; misses are flagged, never dropped.
+    const verified = await verifyKnowledge(env, knowledge, pages);
+    if (env.router) {
+      await logRun(db, {
+        kind: "read",
+        ok: true,
+        model: env.router.model,
+        ms: verified.ms,
+        tokens_in: verified.tokens_in,
+        tokens_out: 0,
+        item_id: item.id,
+        manual_id: manualId,
+        raw_output: JSON.stringify({ checked: verified.checked, flagged: verified.flagged }),
+      });
+    }
     outcome.distilled = await saveKnowledge({
       db,
       householdId,
       itemId: item.id,
       manualId,
-      knowledge,
+      knowledge: verified.knowledge,
       replace: true,
     });
     outcome.status = "distilled";
-    if (trimmed || dropped) {
+    if (trimmed || dropped || verified.flagged.length) {
+      const doubted = verified.flagged.length;
       outcome.note = [
+        doubted
+          ? `${doubted} ${doubted === 1 ? "entry didn't" : "entries didn't"} match ${doubted === 1 ? "its" : "their"} page and ${doubted === 1 ? "is" : "are"} flagged for you to check`
+          : "",
         trimmed
           ? `${trimmed} long ${trimmed === 1 ? "entry was" : "entries were"} shortened and flagged for you to check`
           : "",
