@@ -1604,3 +1604,113 @@ a.link {
 .field[hidden] {
   display: none;
 }
+
+/* Upkeep tiles: "What do you want to work on?" */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 84px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  text-align: left;
+}
+.tile[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.tile.due strong {
+  color: var(--accent);
+}
+.late {
+  color: var(--coral);
+  font-weight: 700;
+}
+
+/* One-line entries that open on tap */
+.lines {
+  display: flex;
+  flex-direction: column;
+}
+.line {
+  border-top: 1px solid var(--line);
+}
+.line:first-child {
+  border-top: 0;
+}
+.line > summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 6px 0;
+  cursor: pointer;
+  list-style: none;
+}
+.line > summary::-webkit-details-marker {
+  display: none;
+}
+.line-title {
+  font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.line-body {
+  gap: 8px;
+  padding: 2px 0 14px;
+}
+.fold > summary {
+  cursor: pointer;
+}
+.fold > .lines {
+  margin-top: 8px;
+}
+
+/* Specs at a glance */
+.glance {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 8px 14px;
+  margin: 0 0 10px;
+}
+.glance dt {
+  color: var(--muted, inherit);
+  opacity: 0.8;
+  overflow-wrap: anywhere;
+}
+.glance dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* Error code chips */
+.codes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.code {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+}
+.code[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}

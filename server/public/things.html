@@ -21,7 +21,7 @@
     </main>
 
     <script type="module">
-      import { $, ago, api, boot, db, esc, howOften, ICONS, iconKey, iconSvg, itemIcon, openChat, relDay, shareLink, shrink, TINTS, takePendingPhoto, tintKey, toast, today, tool } from "/app.js";
+      import { $, ago, api, boot, daysBetween, db, esc, howOften, ICONS, iconKey, iconSvg, itemIcon, openChat, relDay, shareLink, shrink, TINTS, takePendingPhoto, tintKey, toast, today, tool } from "/app.js";
 
       const main = $("#main");
       const params = new URLSearchParams(location.search);
@@ -197,9 +197,6 @@
         const manual = item.manuals?.[0];
         const readings = [...item.item_readings].sort((a, b) => b.measured_on.localeCompare(a.measured_on));
         const cycles = readings.find((r) => r.kind === "cycles");
-        const byKind = Object.keys(KINDS)
-          .map((k) => [k, item.manual_facts.filter((f) => f.kind === k)])
-          .filter(([, fs]) => fs.length);
         const badge = (x) =>
           STATUS[x.status] ? `<span class="chip ${STATUS[x.status][1]} strong">${STATUS[x.status][0]}</span>` : "";
         const source = (x) =>
@@ -256,19 +253,9 @@
 
           ${
             item.tasks.length
-              ? `<section aria-labelledby="sched-h">
+              ? `<section aria-labelledby="sched-h" id="upkeep">
                   <div class="section-head"><h2 id="sched-h">Upkeep</h2>${cycles ? `<span class="small muted">${Number(cycles.value)} uses so far${item.uses_per_week ? `, about ${Number(item.uses_per_week)} a week` : ""}</span>` : ""}</div>
-                  <div class="card">${item.tasks
-                    .map(
-                      (t) => `<div class="fact">
-                        <div><strong>${esc(t.title)}</strong> <span class="muted">${esc(howOften(t.interval_unit, t.interval_value))}</span>
-                          ${t.details ? `<div>${esc(t.details)}</div>` : ""}
-                          <div class="row" style="margin-top:4px">${source(t)}${badge(t)}${t.next_due_on ? `<span class="small ${t.next_due_on < today() ? "" : "muted"}" ${t.next_due_on < today() ? 'style="color:var(--coral);font-weight:700"' : ""}>Next ${esc(relDay(t.next_due_on))}</span>` : ""}</div>
-                        </div>
-                        <div class="fact-actions">${t.active ? `<button type="button" class="quiet small" data-done="${t.id}">Done</button>` : ""}<button type="button" class="quiet small" data-fix="task:${t.id}">Fix</button></div>
-                      </div>`,
-                    )
-                    .join("")}</div>
+                  <div id="upkeep-body"></div>
                 </section>`
               : ""
           }
@@ -290,21 +277,10 @@
               : ""
           }
 
-          ${byKind
-            .map(
-              ([k, fs]) => `<section aria-label="${KINDS[k]}">
-                <div class="section-head"><h2>${KINDS[k]}</h2></div>
-                <div class="card">${fs
-                  .map(
-                    (f) => `<div class="fact"><div><strong>${esc(f.label)}</strong><div>${esc(f.value)}</div><div class="row" style="margin-top:4px">${source(f)}${badge(f)}</div></div>
-                      <div class="fact-actions"><button type="button" class="quiet small" data-fix="fact:${f.id}">Fix</button></div></div>`,
-                  )
-                  .join("")}</div></section>`,
-            )
-            .join("")}
+          ${item.manual_facts.length ? '<div id="facts" class="stack"></div>' : ""}
 
           ${
-            item.kind === "appliance"
+            item.tasks.some((t) => t.interval_unit === "cycles")
               ? `<section class="card flat"><h2 style="font-size:22px">Log a reading</h2>
                   <p class="muted small">The cycle count from its display keeps "every 30 washes" tasks on real dates.</p>
                   <form class="field" id="reading"><label class="sr-only" for="cycles">Cycle count</label>
@@ -344,14 +320,12 @@
           b.addEventListener("click", () => saveLook({ tint: b.dataset.tint }));
         }
         wireManualForm(item, () => detail(id));
-        for (const b of main.querySelectorAll("[data-done]")) {
-          b.addEventListener("click", async () => {
-            const { error: e } = await supa.rpc("log_task_done", { p_task: b.dataset.done });
-            if (e) return toast(e.message);
-            toast("Done. The next one is scheduled.");
-            detail(id);
-          });
-        }
+        const markDone = async (taskId) => {
+          const { error: e } = await supa.rpc("log_task_done", { p_task: taskId });
+          if (e) return toast(e.message);
+          toast("Done. The next one is scheduled.");
+          detail(id);
+        };
         for (const b of main.querySelectorAll("[data-reread]")) {
           b.addEventListener("click", async () => {
             b.disabled = true;
@@ -365,20 +339,84 @@
             detail(id);
           });
         }
+        const fixIt = (fix) => {
+          const [type, target] = fix.split(":");
+          const field = { fact: "value", task: "details", seat_limit: "fit_note" }[type];
+          const value = prompt("What should it say? Your version wins, and the old one is kept.");
+          if (!value?.trim()) return;
+          tool("revise_fact", { id: target, type, source: "user", changes: { [field]: value.trim() }, reason: "Set by you." })
+            .then(() => {
+              toast("Saved.");
+              detail(id);
+            })
+            .catch((err) => toast(err.message));
+        };
+        // Car seat limits are drawn with the page; upkeep and facts are redrawn on taps, so they delegate.
         for (const b of main.querySelectorAll("[data-fix]")) {
-          b.addEventListener("click", () => {
-            const [type, target] = b.dataset.fix.split(":");
-            const field = { fact: "value", task: "details", seat_limit: "fit_note" }[type];
-            const value = prompt("What should it say? Your version wins, and the old one is kept.");
-            if (!value?.trim()) return;
-            tool("revise_fact", { id: target, type, source: "user", changes: { [field]: value.trim() }, reason: "Set by you." })
-              .then(() => {
-                toast("Saved.");
-                detail(id);
-              })
-              .catch((err) => toast(err.message));
-          });
+          if (!b.closest("#upkeep, #facts")) b.addEventListener("click", () => fixIt(b.dataset.fix));
         }
+        const remember = (key, value) => {
+          try {
+            sessionStorage.setItem(key, value ?? "");
+          } catch {}
+        };
+        const recall = (key) => {
+          try {
+            return sessionStorage.getItem(key) || null;
+          } catch {
+            return null;
+          }
+        };
+
+        const upkeep = $("#upkeep");
+        let groups = guessGroups(item.tasks);
+        const drawUpkeep = () => {
+          $("#upkeep-body").innerHTML = upkeepBody(item.tasks, groups, recall(`manuals-upkeep-${id}`), { source, badge });
+        };
+        upkeep?.addEventListener("click", (e) => {
+          const done = e.target.closest("[data-done]");
+          const fix = e.target.closest("[data-fix]");
+          const tile = e.target.closest("[data-group]");
+          if (done) markDone(done.dataset.done);
+          else if (fix) fixIt(fix.dataset.fix);
+          else if (tile) {
+            remember(`manuals-upkeep-${id}`, tile.getAttribute("aria-pressed") === "true" ? null : tile.dataset.group);
+            drawUpkeep();
+          }
+        });
+        if (upkeep) {
+          drawUpkeep();
+          // Jev's grouping replaces the keyword guess when it's back; remembered for this visit.
+          const key = `manuals-groups-${id}-${item.tasks.length}`;
+          let cached = null;
+          try {
+            cached = JSON.parse(recall(key) || "null");
+          } catch {}
+          (cached ? Promise.resolve(cached) : api("/api/upkeep-groups", { item_id: id }).then((r) => r.groups))
+            .then((jev) => {
+              remember(key, JSON.stringify(jev));
+              groups = { ...groups, ...jev };
+              if (document.body.contains(upkeep)) drawUpkeep();
+            })
+            .catch(() => {});
+        }
+
+        const facts = $("#facts");
+        let openCode = null;
+        const drawFacts = () => {
+          facts.innerHTML = factsBody(item.manual_facts, openCode, { source, badge });
+        };
+        facts?.addEventListener("click", (e) => {
+          const fix = e.target.closest("[data-fix]");
+          const code = e.target.closest("[data-code]");
+          if (fix) fixIt(fix.dataset.fix);
+          else if (e.target.closest("[data-ask-facts]")) openChat(undefined, () => detail(id));
+          else if (code) {
+            openCode = openCode === code.dataset.code ? null : code.dataset.code;
+            drawFacts();
+          }
+        });
+        if (facts) drawFacts();
         $("#reading")?.addEventListener("submit", async (e) => {
           e.preventDefault();
           try {
@@ -389,6 +427,110 @@
             toast(err.message);
           }
         });
+      }
+
+      // --- Upkeep tiles -------------------------------------------------------
+      // "What do you want to work on?": tasks sorted into a few groups, one
+      // tile each; a tile opens its tasks as one line each, details on tap.
+      const UPKEEP = [
+        ["due", "Due soon"],
+        ["cleaning", "Cleaning", /clean|wash|wipe|descal|rinse|deodor|soak|scrub|dust|stain|odor/i],
+        ["parts", "Filters & parts", /filter|replac|bulb|lamp|batter|seal|gasket|accessor|turntable|rack|\bparts?\b/i],
+        ["checks", "Checks", /inspect|check|test|look for|examine|wear|damage|leak|loose|tighten/i],
+        ["setup", "Setup & use", /install|set ?up|setting|program|mode|how to|adjust|level/i],
+        ["safety", "Safety", /safety|warn|unplug|disconnect|power|child|expir|recall|discard|never|do not/i],
+        ["other", "Other"],
+      ];
+
+      /** Instant keyword guess per task; Jev's answer replaces it when it arrives. */
+      function guessGroups(tasks) {
+        const out = {};
+        for (const t of tasks) {
+          const text = `${t.title} ${t.details ?? ""}`;
+          out[t.id] = UPKEEP.find(([, , re]) => re?.test(text))?.[0] ?? "other";
+        }
+        return out;
+      }
+
+      const dueSoon = (t) => t.active && t.next_due_on && daysBetween(today(), t.next_due_on) <= 14;
+      const late = (t) => t.active && t.next_due_on && t.next_due_on < today();
+
+      function upkeepBody(tasks, groups, open, { source, badge }) {
+        const members = (key) =>
+          key === "due"
+            ? tasks.filter(dueSoon).sort((a, b) => a.next_due_on.localeCompare(b.next_due_on))
+            : tasks.filter((t) => groups[t.id] === key);
+        const tiles = UPKEEP.map(([key, label]) => {
+          const list = members(key);
+          if (!list.length) return "";
+          const overdue = list.filter(late).length;
+          return `<button type="button" class="tile${key === "due" ? " due" : ""}" data-group="${key}" aria-pressed="${open === key}">
+            <strong>${esc(label)}</strong>
+            <span class="small muted">${list.length} ${list.length === 1 ? "task" : "tasks"}</span>
+            ${overdue ? `<span class="small late">${overdue} late</span>` : ""}
+          </button>`;
+        }).join("");
+        const when = (t) =>
+          t.next_due_on
+            ? `<span class="small ${late(t) ? "late" : "muted"}">${esc(relDay(t.next_due_on))}</span>`
+            : `<span class="small muted">${esc(howOften(t.interval_unit, t.interval_value))}</span>`;
+        const rows = (open ? members(open) : [])
+          .map(
+            (t) => `<details class="line">
+              <summary><span class="line-title">${esc(t.title)}</span>${when(t)}</summary>
+              <div class="stack line-body">
+                ${t.details ? `<div>${esc(t.details)}</div>` : ""}
+                <div class="row">${source(t)}${badge(t)}<span class="small muted">${esc(howOften(t.interval_unit, t.interval_value))}</span></div>
+                <div class="row">${t.active ? `<button type="button" class="small" data-done="${t.id}">Done</button>` : ""}<button type="button" class="quiet small" data-fix="task:${t.id}">Fix</button></div>
+              </div>
+            </details>`,
+          )
+          .join("");
+        return `<p class="muted" style="margin:0 0 10px">What do you want to work on?</p>
+          <div class="tiles" role="group" aria-label="Kinds of upkeep">${tiles}</div>
+          ${open && members(open).length ? `<div class="card lines">${rows}</div>` : ""}`;
+      }
+
+      // --- Facts overview -----------------------------------------------------
+      // Specs as one compact table, error codes as chips you tap, the rest
+      // folded away with a count. Fix lives inside an opened entry, not on every row.
+      function factsBody(facts, openCode, { source, badge }) {
+        const of = (kind) => facts.filter((f) => f.kind === kind);
+        const page = (f) => (f.source_page ? `<span class="small muted"> p. ${f.source_page}</span>` : "");
+        const check = (f) => (f.status === "needs_review" ? ' <span class="chip gold strong">To check</span>' : "");
+        const specs = of("spec");
+        const codes = of("error_code");
+        const glance = specs.length
+          ? `<section aria-labelledby="glance-h"><div class="section-head"><h2 id="glance-h">At a glance</h2></div>
+              <div class="card"><dl class="glance">${specs
+                .map((f) => `<dt>${esc(f.label)}</dt><dd>${esc(f.value)}${page(f)}${check(f)}</dd>`)
+                .join("")}</dl>
+              <button type="button" class="link small" data-ask-facts>Something off? Ask Muse</button></div></section>`
+          : "";
+        const open = codes.find((f) => f.id === openCode);
+        const codeCard = codes.length
+          ? `<section aria-labelledby="codes-h"><div class="section-head"><h2 id="codes-h">Error codes</h2></div>
+              <div class="card"><p class="muted" style="margin:0 0 10px">Seeing a code on the display?</p>
+                <div class="codes" role="group" aria-label="Error codes">${codes
+                  .map((f) => `<button type="button" class="code" data-code="${f.id}" aria-pressed="${f.id === openCode}">${esc(f.label)}</button>`)
+                  .join("")}</div>
+                ${open ? `<div class="stack line-body" style="margin-top:12px"><div><strong>${esc(open.label)}</strong>: ${esc(open.value)}</div><div class="row">${source(open)}${badge(open)}<button type="button" class="quiet small" data-fix="fact:${open.id}">Fix</button></div></div>` : ""}
+              </div></section>`
+          : "";
+        const folded = ["part", "safety", "other"]
+          .map((kind) => {
+            const list = of(kind);
+            if (!list.length) return "";
+            return `<details class="card fold"><summary><strong>${KINDS[kind]}</strong> <span class="muted small">${list.length}</span></summary>
+              <div class="lines">${list
+                .map(
+                  (f) => `<details class="line"><summary><span class="line-title">${esc(f.label)}</span>${f.status === "needs_review" ? '<span class="chip gold strong">To check</span>' : ""}</summary>
+                    <div class="stack line-body"><div>${esc(f.value)}</div><div class="row">${source(f)}${badge(f)}<button type="button" class="quiet small" data-fix="fact:${f.id}">Fix</button></div></div></details>`,
+                )
+                .join("")}</div></details>`;
+          })
+          .join("");
+        return glance + codeCard + folded;
       }
 
       // --- Adding --------------------------------------------------------------
@@ -452,8 +594,10 @@
           } catch {}
           if (!out) {
             out = await api("/api/find-manual", { item_id: item.id });
+            // Only a search that found something is remembered; an empty one is tried again next visit.
             try {
-              sessionStorage.setItem(FOUND_KEY(item.id), JSON.stringify(out));
+              if (out.candidates.length) sessionStorage.setItem(FOUND_KEY(item.id), JSON.stringify(out));
+              else sessionStorage.removeItem(FOUND_KEY(item.id));
             } catch {}
           }
           if (!out.candidates.length) {

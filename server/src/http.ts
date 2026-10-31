@@ -31,7 +31,8 @@ import {
 } from "./router.js";
 import { BUDGET_USED, logRun, modelRunsTodayAll, runsToday } from "./runs.js";
 import { MAX_IMAGE_BYTES, readLabel } from "./snap.js";
-import { ITEM_COLUMNS } from "./tools/context.js";
+import { ITEM_COLUMNS, itemLabel } from "./tools/context.js";
+import { groupTasks } from "./upkeep.js";
 
 // HTTP entry points, shared by the Vercel functions in api/ and the local
 // dev server. All of them are Web-standard (Request) => Response.
@@ -163,6 +164,42 @@ export function attachHandler(
         official: body.official === true,
       });
       return Response.json({ manual_id: manualId });
+    } catch (err) {
+      return Response.json({ error: (err as Error).message }, { status: 502 });
+    }
+  };
+}
+
+/** Sorts a thing's upkeep tasks into the page's tiles. Reads the tasks as the user (RLS). */
+export function upkeepGroupsHandler(
+  env: Env,
+  verify: Verify = supabaseVerifier(env),
+  fetchImpl: typeof fetch = fetch,
+) {
+  return async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    const auth = await verify(bearer(req));
+    if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
+    let itemId: unknown;
+    try {
+      itemId = ((await req.json()) as { item_id?: unknown }).item_id;
+    } catch {}
+    if (typeof itemId !== "string")
+      return Response.json({ error: "item_id is required." }, { status: 400 });
+    if (!env.router) return Response.json({ groups: {} });
+    const db = userDb(env, auth.token);
+    try {
+      const { data: item, error } = await db
+        .from("items")
+        .select("nickname, brand, model, tasks(id, title, details)")
+        .eq("id", itemId)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!item)
+        return Response.json({ error: "That thing isn't in your household." }, { status: 404 });
+      const tasks = (item.tasks ?? []) as { id: string; title: string; details: string | null }[];
+      const groups = await groupTasks(env, itemLabel(item as never), tasks.slice(0, 80), fetchImpl);
+      return Response.json({ groups });
     } catch (err) {
       return Response.json({ error: (err as Error).message }, { status: 502 });
     }
