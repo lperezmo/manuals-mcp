@@ -818,7 +818,12 @@
 
       function manualLine(manual) {
         const detail = /couldn't distill/.test(manual.status_detail || "") ? READ_FAILED : manual.status_detail;
-        const button = canReread(manual) ? ` <button type="button" class="small" data-reread="${esc(manual.id)}">Read it again</button>` : "";
+        // A failed or unread manual gets the button up front; a read one gets a quiet one (your fixes are kept).
+        const button = canReread(manual)
+          ? ` <button type="button" class="small" data-reread="${esc(manual.id)}">Read it again</button>`
+          : manual.status === "distilled"
+            ? ` <button type="button" class="link small" data-reread="${esc(manual.id)}">Read it again</button>`
+            : "";
         return `<p class="small muted">${esc(manual.title || "Manual")}${manual.page_count ? `, ${manual.page_count} pages` : ""}${detail ? `. ${esc(detail)}` : ""}${button}</p>`;
       }
 

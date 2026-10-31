@@ -188,11 +188,21 @@ export async function saveKnowledge(args: SaveKnowledgeArgs) {
   const status = (x: { unsure?: boolean }) => (x.unsure ? "needs_review" : "extracted");
 
   if (args.replace && manualId) {
+    // A re-read replaces only what the reader wrote: anything a person or an
+    // assistant checked or rewrote stays, and so does a task already done.
     await check(
-      db.from("tasks").delete().eq("source_manual_id", manualId).is("last_done_on", null),
+      db
+        .from("tasks")
+        .delete()
+        .eq("source_manual_id", manualId)
+        .eq("source", "reader")
+        .is("last_done_on", null),
       "clear old tasks",
     );
-    await check(db.from("manual_facts").delete().eq("manual_id", manualId), "clear old facts");
+    await check(
+      db.from("manual_facts").delete().eq("manual_id", manualId).eq("source", "reader"),
+      "clear old facts",
+    );
   }
 
   const tasks = knowledge.tasks

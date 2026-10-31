@@ -5,6 +5,7 @@ import { itemLabel } from "../tools/context.js";
 import { saveKnowledge } from "./knowledge.js";
 import { type PageText, pdfPages } from "./pdf-text.js";
 import { distill, ReaderError } from "./reader.js";
+import { trimTrivia } from "./trim.js";
 import { verifyKnowledge } from "./verify.js";
 import { englishPages, MAX_VISION_PAGES, renderPages, transcribePages } from "./vision.js";
 
@@ -283,18 +284,23 @@ async function processPdf(args: {
       })
       .eq("id", manualId);
     // Each entry checked against its own page; misses are flagged, never dropped.
-    const verified = await verifyKnowledge(env, knowledge, pages);
+    const lean = await trimTrivia(env, knowledge, { label: itemLabel(item), kind: item.kind });
+    const verified = await verifyKnowledge(env, lean.knowledge, pages);
     if (env.router) {
       await logRun(db, {
         kind: "read",
         ok: true,
         model: env.router.model,
         ms: verified.ms,
-        tokens_in: verified.tokens_in,
+        tokens_in: verified.tokens_in + lean.tokens_in,
         tokens_out: 0,
         item_id: item.id,
         manual_id: manualId,
-        raw_output: JSON.stringify({ checked: verified.checked, flagged: verified.flagged }),
+        raw_output: JSON.stringify({
+          checked: verified.checked,
+          flagged: verified.flagged,
+          dropped_as_common_sense: lean.dropped,
+        }),
       });
     }
     outcome.distilled = await saveKnowledge({
