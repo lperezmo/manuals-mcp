@@ -6,7 +6,9 @@ import type { PageText } from "./pdf-text.js";
 // Every page stays saved and searchable; this only decides what the reader sees.
 
 const STOPWORDS: Record<string, string[]> = {
-  en: "the and of to is in for with this that your not be are on or if it do when from use".split(" "),
+  en: "the and of to is in for with this that your not be are on or if it do when from use".split(
+    " ",
+  ),
   es: "el la los las de del que y en para con por una este esta su no se es al como".split(" "),
   fr: "le la les des de du et pour avec une est dans sur ne pas vous votre ce que au".split(" "),
   de: "der die das und nicht mit ist ein eine sie den dem zu auf für von wenn ihr bei".split(" "),
