@@ -12,7 +12,7 @@
     />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=archive,auto_awesome,build,check,cleaning_services,delete,edit,event,fact_check,forum,health_and_safety,menu_book,more_horiz,palette,share,tune,unarchive&display=block"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=archive,auto_awesome,build,check,cleaning_services,delete,edit,event,fact_check,forum,health_and_safety,menu_book,more_horiz,palette,settings,share,tune,unarchive&display=block"
     />
     <link rel="stylesheet" href="/theme.css" />
     <script src="/theme.js"></script>
@@ -142,7 +142,7 @@
           `<button type="button" class="pin" data-pin="${i.id}" aria-pressed="${i.pinned}" aria-label="${i.pinned ? "Unpin" : "Pin"} ${esc(i.nickname)}" title="${i.pinned ? "Unpin" : "Pin to the top"}">${PIN}</button>`;
         main.innerHTML = `
           <div class="section-head" style="margin:0;align-items:flex-end">
-            <div class="stack" style="gap:4px"><h1>Your things</h1><p class="muted" style="margin:0">Tap a thing for its tasks and manual. Pin the ones you check most. <a href="/things?manage=1">Manage things${archived ? ` (${archived} archived)` : ""}</a></p></div>
+            <div class="stack" style="gap:4px"><div class="row" style="align-items:center;justify-content:space-between;flex-wrap:nowrap"><h1>Your things</h1><a class="button quiet small" href="/things?manage=1" title="Manage things: archive, restore or delete">${ic("settings")}Manage${archived ? ` (${archived})` : ""}</a></div><p class="muted" style="margin:0">Tap a thing for its tasks and manual. Pin the ones you check most.</p></div>
             ${kinds.length > 1 ? `<div class="filters" role="group" aria-label="Show">${["all", ...kinds].map((k) => `<button type="button" data-filter="${k}" aria-pressed="${filter === k}">${k === "all" ? "All" : GROUPS[k]}</button>`).join("")}</div>` : ""}
           </div>
           ${
