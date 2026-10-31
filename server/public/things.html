@@ -321,14 +321,15 @@
         // Deleting the item cascades to its manuals, pages, tasks, facts and history;
         // the stored PDFs are removed first, while their paths can still be read.
         $("#remove-item").addEventListener("click", async (e) => {
+          const button = e.currentTarget;
           if (!confirm(`Remove the ${item.nickname} and everything saved with it (manual, upkeep, facts, history)? This can't be undone.`)) return;
-          e.currentTarget.disabled = true;
+          button.disabled = true;
           const { data: files } = await supa.from("manuals").select("storage_path").eq("item_id", id);
           const paths = (files ?? []).map((f) => f.storage_path).filter(Boolean);
           if (paths.length) await supa.storage.from("manuals").remove(paths);
           const { error: e2 } = await supa.from("items").delete().eq("id", id);
           if (e2) {
-            e.currentTarget.disabled = false;
+            button.disabled = false;
             return toast(e2.message);
           }
           toast(`Removed the ${item.nickname}.`);
