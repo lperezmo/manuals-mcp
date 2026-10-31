@@ -549,7 +549,7 @@
       // A failed read used to save the reader's raw error here; show those as one plain sentence.
       const READ_FAILED = "Muse couldn't turn it into a schedule this time. The text is still searchable, and you can read it again.";
       const canReread = (m) =>
-        m.status === "text_ready" && /couldn't distill|couldn't turn it into|wasn't read yet|not read yet/.test(m.status_detail || "");
+        m.status === "text_ready" && /couldn't distill|couldn't turn it into|wasn't read yet|not read yet|scanned pages/.test(m.status_detail || "");
 
       function manualLine(manual) {
         const detail = /couldn't distill/.test(manual.status_detail || "") ? READ_FAILED : manual.status_detail;
