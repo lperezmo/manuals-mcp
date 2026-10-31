@@ -1774,3 +1774,8 @@ details.panel > summary {
 details.panel:not([open]) {
   display: none;
 }
+
+button.danger {
+  color: var(--coral);
+  border-color: var(--coral);
+}

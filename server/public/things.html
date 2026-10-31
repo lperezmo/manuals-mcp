@@ -12,7 +12,7 @@
     />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=auto_awesome,build,check,cleaning_services,edit,event,fact_check,forum,health_and_safety,menu_book,more_horiz,palette,share,tune&display=block"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=auto_awesome,build,check,cleaning_services,delete,edit,event,fact_check,forum,health_and_safety,menu_book,more_horiz,palette,share,tune&display=block"
     />
     <link rel="stylesheet" href="/theme.css" />
     <script src="/theme.js"></script>
@@ -238,6 +238,9 @@
                     .map((k) => `<button type="button" class="swatch ${k}" data-tint="${k}" aria-pressed="${tintKey(item) === k}" aria-label="${TINTS[k]}" title="${TINTS[k]}"></button>`)
                     .join("")}</div>
                 </div>
+                <div class="row" style="justify-content:flex-end;border-top:1px solid var(--line);padding-top:12px">
+                  <button type="button" class="quiet small danger" id="remove-item">${ic("delete")}Remove this thing</button>
+                </div>
               </div>
             </details>
             <details class="card panel" id="share">
@@ -315,6 +318,22 @@
           if ("icon" in change || "tint" in change) $("#look").open = true;
         };
         $("#pin").addEventListener("click", () => saveLook({ pinned: !item.pinned }));
+        // Deleting the item cascades to its manuals, pages, tasks, facts and history;
+        // the stored PDFs are removed first, while their paths can still be read.
+        $("#remove-item").addEventListener("click", async (e) => {
+          if (!confirm(`Remove the ${item.nickname} and everything saved with it (manual, upkeep, facts, history)? This can't be undone.`)) return;
+          e.currentTarget.disabled = true;
+          const { data: files } = await supa.from("manuals").select("storage_path").eq("item_id", id);
+          const paths = (files ?? []).map((f) => f.storage_path).filter(Boolean);
+          if (paths.length) await supa.storage.from("manuals").remove(paths);
+          const { error: e2 } = await supa.from("items").delete().eq("id", id);
+          if (e2) {
+            e.currentTarget.disabled = false;
+            return toast(e2.message);
+          }
+          toast(`Removed the ${item.nickname}.`);
+          location.assign("/things");
+        });
         for (const [button, panel] of [["#look-btn", "#look"], ["#share-btn", "#share"]]) {
           $(button).addEventListener("click", () => {
             const d = $(panel);
