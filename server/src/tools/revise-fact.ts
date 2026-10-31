@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { Env } from "../env.js";
+import { LIMITS } from "../finder/knowledge.js";
 import { today } from "../lib/schedule.js";
 import { round, toCm, toKg } from "../lib/units.js";
 import { guarded, reply, session } from "./context.js";
@@ -48,7 +49,7 @@ const changesSchema = z
     min_height: z.number().positive().optional().describe("seat_limit"),
     max_height: z.number().positive().optional().describe("seat_limit"),
     height_unit: z.enum(["cm", "in"]).default("cm"),
-    fit_note: z.string().max(300).optional().describe("seat_limit"),
+    fit_note: z.string().max(LIMITS.fit_note).optional().describe("seat_limit"),
     source_page: z.number().int().positive().optional(),
   })
   .partial();

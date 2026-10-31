@@ -7,6 +7,18 @@ import { toCm, toKg } from "../lib/units.js";
 // (Muse Spark) produces this shape; anything it isn't sure of is flagged for
 // review instead of guessed (D6).
 
+/** Longest text each field takes. The reader is told these, and over-long answers are trimmed. */
+export const LIMITS = {
+  task_title: 160,
+  task_details: 1000,
+  fact_label: 120,
+  fact_value: 1000,
+  fit_note: 600,
+  tasks: 60,
+  facts: 120,
+  seat_modes: 4,
+} as const;
+
 const page = z.number().int().positive().optional().describe("Manual page the fact comes from.");
 const unsure = z
   .boolean()
@@ -14,10 +26,14 @@ const unsure = z
   .describe("True when the manual is unclear or hard to read here, so a person should check it.");
 
 export const taskSchema = z.object({
-  title: z.string().min(1).max(160).describe('Short imperative, e.g. "Run the Tub Clean cycle".'),
+  title: z
+    .string()
+    .min(1)
+    .max(LIMITS.task_title)
+    .describe('Short imperative, e.g. "Run the Tub Clean cycle".'),
   details: z
     .string()
-    .max(1000)
+    .max(LIMITS.task_details)
     .optional()
     .describe("How to do it, briefly, in the manual's terms."),
   interval_unit: z.enum(["days", "weeks", "months", "cycles", "once", "as_needed"]),
@@ -35,8 +51,12 @@ export const taskSchema = z.object({
 
 export const factSchema = z.object({
   kind: z.enum(["error_code", "part", "spec", "safety", "other"]).default("other"),
-  label: z.string().min(1).max(120).describe('e.g. "E4", "Drain pump filter", "Max load".'),
-  value: z.string().min(1).max(1000),
+  label: z
+    .string()
+    .min(1)
+    .max(LIMITS.fact_label)
+    .describe('e.g. "E4", "Drain pump filter", "Max load".'),
+  value: z.string().min(1).max(LIMITS.fact_value),
   source_page: page,
   unsure,
 });
@@ -52,7 +72,7 @@ export const seatModeSchema = z.object({
   min_age_months: z.number().int().nonnegative().optional(),
   fit_note: z
     .string()
-    .max(300)
+    .max(LIMITS.fit_note)
     .optional()
     .describe('Limits that aren\'t a number, e.g. "head 1 inch below the top of the shell".'),
   source_page: page,
@@ -60,12 +80,98 @@ export const seatModeSchema = z.object({
 });
 
 export const knowledgeSchema = z.object({
-  tasks: z.array(taskSchema).max(60).default([]),
-  facts: z.array(factSchema).max(120).default([]),
-  seat_modes: z.array(seatModeSchema).max(4).default([]),
+  tasks: z.array(taskSchema).max(LIMITS.tasks).default([]),
+  facts: z.array(factSchema).max(LIMITS.facts).default([]),
+  seat_modes: z.array(seatModeSchema).max(LIMITS.seat_modes).default([]),
 });
 
 export type Knowledge = z.infer<typeof knowledgeSchema>;
+
+export interface ReadKnowledge {
+  knowledge: Knowledge;
+  /** Entries with text cut to fit; each is flagged unsure so a person checks it. */
+  trimmed: number;
+  /** Entries left out because they still didn't fit after trimming, or past a list's cap. */
+  dropped: number;
+}
+
+/**
+ * Takes the reader's parsed JSON and keeps everything that fits, one entry at
+ * a time. A long manual can produce a note or a value longer than a field
+ * takes; that text is cut at a word and the entry is flagged unsure, so one
+ * wordy entry never throws away the rest of the read.
+ */
+export function readKnowledge(raw: unknown): ReadKnowledge {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error("the answer wasn't a JSON object");
+  }
+  const lists = raw as Record<string, unknown>;
+  let trimmed = 0;
+  let dropped = 0;
+  const keep = <T>(list: unknown, schema: z.ZodType<T>, cap: number): T[] => {
+    if (list === undefined || list === null) return [];
+    if (!Array.isArray(list)) {
+      dropped++;
+      return [];
+    }
+    const out: T[] = [];
+    for (const entry of list) {
+      if (out.length >= cap) {
+        dropped++;
+        continue;
+      }
+      const fit = fitEntry(entry, schema);
+      if (!fit) {
+        dropped++;
+        continue;
+      }
+      if (fit.trimmed) trimmed++;
+      out.push(fit.value);
+    }
+    return out;
+  };
+  const knowledge: Knowledge = {
+    tasks: keep(lists.tasks, taskSchema, LIMITS.tasks),
+    facts: keep(lists.facts, factSchema, LIMITS.facts),
+    seat_modes: keep(lists.seat_modes, seatModeSchema, LIMITS.seat_modes),
+  };
+  return { knowledge, trimmed, dropped };
+}
+
+/** Parses one entry, cutting any string that is too long; null when it can't fit. */
+function fitEntry<T>(entry: unknown, schema: z.ZodType<T>): { value: T; trimmed: boolean } | null {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const draft: Record<string, unknown> = { ...(entry as Record<string, unknown>) };
+  let trimmed = false;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const parsed = schema.safeParse(draft);
+    if (parsed.success) {
+      return { value: parsed.data, trimmed };
+    }
+    const long = parsed.error.issues.filter(
+      (i) => i.code === "too_big" && i.origin === "string" && i.path.length === 1,
+    );
+    if (long.length === 0 || long.length !== parsed.error.issues.length) return null;
+    for (const issue of long) {
+      const key = String(issue.path[0]);
+      const text = draft[key];
+      if (typeof text !== "string" || issue.code !== "too_big") return null;
+      draft[key] = cut(text, Number(issue.maximum));
+    }
+    draft.unsure = true;
+    trimmed = true;
+  }
+  return null;
+}
+
+/** Shortens text to at most max characters, at a word where one is close, ending with an ellipsis. */
+export function cut(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const room = text.slice(0, Math.max(0, max - 1));
+  const space = room.lastIndexOf(" ");
+  const head = space >= room.length * 0.8 ? room.slice(0, space) : room;
+  return `${head.trimEnd()}\u2026`;
+}
 
 export interface SaveKnowledgeArgs {
   db: Db;

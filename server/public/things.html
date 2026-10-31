@@ -245,7 +245,7 @@
 
           ${
             manual
-              ? `<p class="small muted">${esc(manual.title || "Manual")}${manual.page_count ? `, ${manual.page_count} pages` : ""}${manual.status_detail ? `. ${esc(manual.status_detail)}` : ""}</p>`
+              ? manualLine(manual)
               : `<section class="card">
                   <h2>Add its manual</h2>
                   <p class="muted">Paste a link to the PDF on the maker's site, or upload the PDF. Muse reads it into tasks and facts, each with its page.</p>
@@ -344,6 +344,19 @@
             const { error: e } = await supa.rpc("log_task_done", { p_task: b.dataset.done });
             if (e) return toast(e.message);
             toast("Done. The next one is scheduled.");
+            detail(id);
+          });
+        }
+        for (const b of main.querySelectorAll("[data-reread]")) {
+          b.addEventListener("click", async () => {
+            b.disabled = true;
+            b.textContent = "Reading, up to a minute…";
+            try {
+              const out = await api("/api/ingest", { manual_id: b.dataset.reread });
+              toast(out.distilled ? `Read it: ${out.distilled.tasks} tasks, ${out.distilled.facts} facts.` : out.note || "Saved.");
+            } catch (err) {
+              toast(err.message);
+            }
             detail(id);
           });
         }
@@ -468,6 +481,17 @@
             progress.textContent = err.message;
           }
         });
+      }
+
+      // A failed read used to save the reader's raw error here; show those as one plain sentence.
+      const READ_FAILED = "Muse couldn't turn it into a schedule this time. The text is still searchable, and you can read it again.";
+      const canReread = (m) =>
+        m.status === "text_ready" && /couldn't distill|couldn't turn it into|wasn't read yet|not read yet/.test(m.status_detail || "");
+
+      function manualLine(manual) {
+        const detail = /couldn't distill/.test(manual.status_detail || "") ? READ_FAILED : manual.status_detail;
+        const button = canReread(manual) ? ` <button type="button" class="small" data-reread="${esc(manual.id)}">Read it again</button>` : "";
+        return `<p class="small muted">${esc(manual.title || "Manual")}${manual.page_count ? `, ${manual.page_count} pages` : ""}${detail ? `. ${esc(detail)}` : ""}${button}</p>`;
       }
 
       async function uploadManual(item, file, say) {

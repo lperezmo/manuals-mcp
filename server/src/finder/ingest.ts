@@ -11,6 +11,10 @@ import { distill, ReaderError } from "./reader.js";
 // left at "text_ready": searchable, but with no schedule.
 
 export const BUCKET = "manuals";
+
+/** What the page shows when the reader failed. The page offers "Read it again" on it. */
+export const READ_FAILED =
+  "Muse couldn't turn it into a schedule this time. The text is still searchable, and you can read it again.";
 const PAGE_BATCH = 50;
 
 export function storagePath(householdId: string, manualId: string): string {
@@ -179,7 +183,10 @@ async function processPdf(args: {
 
   const started = Date.now();
   try {
-    const { knowledge, usage, trace } = await distill(env, { itemLabel: itemLabel(item), pages });
+    const { knowledge, usage, trace, trimmed, dropped } = await distill(env, {
+      itemLabel: itemLabel(item),
+      pages,
+    });
     await logRun(db, {
       kind: "read",
       ok: true,
@@ -211,6 +218,20 @@ async function processPdf(args: {
       replace: true,
     });
     outcome.status = "distilled";
+    if (trimmed || dropped) {
+      outcome.note = [
+        trimmed
+          ? `${trimmed} long ${trimmed === 1 ? "entry was" : "entries were"} shortened and flagged for you to check`
+          : "",
+        dropped
+          ? `${dropped} ${dropped === 1 ? "entry" : "entries"} didn't fit and ${dropped === 1 ? "was" : "were"} left out`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("; ")
+        .replace(/^./, (c) => c.toUpperCase())
+        .concat(".");
+    }
   } catch (err) {
     const trace = err instanceof ReaderError ? err.trace : undefined;
     await logRun(db, {
@@ -227,7 +248,8 @@ async function processPdf(args: {
       chars_sent: trace?.chars_sent,
       raw_output: trace?.raw_output,
     });
-    outcome.note = `The server reader couldn't distill it (${(err as Error).message}); the text is still searchable.`;
+    // The full error stays in model_runs; the page gets a sentence a person can use.
+    outcome.note = READ_FAILED;
     await db.from("manuals").update({ status_detail: outcome.note }).eq("id", manualId);
   }
   return outcome;
