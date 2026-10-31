@@ -413,7 +413,11 @@
       function candidateCard(c) {
         const tags = [
           c.official ? '<span class="chip teal strong">From the maker</span>' : "",
-          c.has_model ? '<span class="chip teal">Names your model</span>' : '<span class="chip gold">Model not found in the text</span>',
+          c.unchecked
+            ? `<span class="chip gold">Couldn't open it to check; the link names your model</span>`
+            : c.has_model
+              ? `<span class="chip teal">${c.family ? "Same model family" : "Names your model"}</span>`
+              : '<span class="chip gold">Model not found in the text</span>',
         ].join("");
         return `<div class="card found-card">
           <div class="stack" style="gap:4px;min-width:0">

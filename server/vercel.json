@@ -4,16 +4,16 @@
   "cleanUrls": true,
   "functions": {
     "api/ingest.ts": {
-      "maxDuration": 60
+      "maxDuration": 150
     },
     "api/mcp.ts": {
-      "maxDuration": 60
+      "maxDuration": 150
     },
     "api/chat.ts": {
-      "maxDuration": 60
+      "maxDuration": 150
     },
     "api/tool.ts": {
-      "maxDuration": 60
+      "maxDuration": 150
     },
     "api/snap.ts": {
       "maxDuration": 60

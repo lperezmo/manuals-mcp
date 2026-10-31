@@ -37,10 +37,16 @@ export function looksLikePdf(bytes: Uint8Array): boolean {
   return head.includes("%PDF-");
 }
 
+/** Quick check of a search result. Attaching a manual waits longer: some makers' sites are slow. */
+export const CHECK_TIMEOUT_MS = 25_000;
+export const ATTACH_TIMEOUT_MS = 50_000;
+
 export async function fetchPdf(
   raw: string,
   fetchImpl: typeof fetch = fetch,
+  timeoutMs = CHECK_TIMEOUT_MS,
 ): Promise<{ bytes: Uint8Array; finalUrl: string }> {
+  const signal = AbortSignal.timeout(timeoutMs);
   let url = checkPublicHttpsUrl(raw);
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     const res = await fetchImpl(url, {
@@ -49,7 +55,7 @@ export async function fetchPdf(
         accept: "application/pdf,*/*;q=0.5",
         "user-agent": "manuals-mcp/0.1 (+manual fetcher)",
       },
-      signal: AbortSignal.timeout(25_000),
+      signal,
     });
     if (res.status >= 300 && res.status < 400) {
       const next = res.headers.get("location");

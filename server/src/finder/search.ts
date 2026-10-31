@@ -23,7 +23,11 @@ export interface Candidate {
   /** Filled in by checkCandidate. */
   page_count?: number;
   has_model?: boolean;
+  /** The match was the model family: the number without its last letter or two (a color or region variant). */
+  family?: boolean;
   problem?: string;
+  /** The check didn't finish (slow site, network); the PDF may still be fine. */
+  unchecked?: boolean;
 }
 
 /** Sites that list manuals but rarely serve the PDF itself, or aren't manuals at all. */
@@ -43,6 +47,27 @@ export function squash(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+/**
+ * How text names a model: "exact", "family" when only the last one or two
+ * characters differ (GSWWD09S1A09B on the sticker, GSWWD09S1A09A in the PDF),
+ * or null. Family needs at least 7 characters left, so short numbers can't
+ * match by accident.
+ */
+export function modelMatch(
+  text: string,
+  model: string | null | undefined,
+): "exact" | "family" | null {
+  const m = squash(model ?? "");
+  if (m.length < 4) return null;
+  const t = squash(text);
+  if (t.includes(m)) return "exact";
+  for (const cut of [1, 2]) {
+    const stem = m.slice(0, -cut);
+    if (stem.length >= 7 && t.includes(stem)) return "family";
+  }
+  return null;
+}
+
 function isPdfUrl(url: URL): boolean {
   return /\.pdf$/i.test(url.pathname) || /[?&][^=]*=?[^&]*\.pdf/i.test(url.search);
 }
@@ -58,7 +83,6 @@ export function rankResults(
   results: SearchResult[],
   item: { brand?: string | null; model?: string | null },
 ): Candidate[] {
-  const model = squash(item.model ?? "");
   const seen = new Set<string>();
   const ranked: (Candidate & { rank: number })[] = [];
   for (const r of results) {
@@ -73,7 +97,7 @@ export function rankResults(
     if (seen.has(url.toString())) continue;
     seen.add(url.toString());
     const official = isBrandHost(host, item.brand);
-    const named = model.length >= 4 && squash(`${r.title} ${url.pathname}`).includes(model);
+    const named = modelMatch(`${r.title} ${url.pathname}`, item.model) !== null;
     ranked.push({
       url: url.toString(),
       title: r.title,
@@ -118,18 +142,22 @@ export async function checkCandidate(
   try {
     const { bytes } = await fetchPdf(candidate.url, fetchImpl);
     const { pageCount, pages } = await pdfPages(bytes);
-    const wanted = squash(model ?? "");
-    const text = squash(pages.map((p) => p.content).join(" "));
+    // No text layer (a scan) or no model to look for: we can't tell, so don't claim a match.
+    const match = modelMatch(pages.map((p) => p.content).join(" "), model);
     return {
       ...candidate,
       page_count: pageCount,
-      // No text layer (a scan) or no model to look for: we can't tell, so don't claim a match.
-      has_model: wanted.length >= 4 && text.includes(wanted),
+      has_model: match !== null,
+      ...(match === "family" ? { family: true } : {}),
     };
   } catch (err) {
+    // A FetchPdfError is a definite answer (not a PDF, 404, too big); anything
+    // else is a timeout or network trouble, which says nothing about the PDF.
+    const definite = err instanceof FetchPdfError;
     return {
       ...candidate,
-      problem: err instanceof FetchPdfError ? err.message : "Couldn't open that PDF.",
+      problem: definite ? err.message : "Couldn't open that PDF in time.",
+      ...(definite ? {} : { unchecked: true }),
     };
   }
 }
@@ -156,11 +184,17 @@ export async function findManual(
   );
   // A PDF that names neither the model nor comes from the maker is likely
   // someone else's (a fictional "BW-4100" found a forklift's "XL4100").
+  // A slow maker's site isn't a wrong PDF: keep an unchecked one when it's the
+  // maker's own and its link names the model, and let the person decide.
   const candidates = tried
-    .filter((c) => !c.problem && (c.has_model || c.official || c.named))
+    .filter((c) =>
+      c.problem ? c.unchecked && c.official && c.named : c.has_model || c.official || c.named,
+    )
     .sort(
       (a, b) =>
-        Number(b.has_model) - Number(a.has_model) || Number(b.official) - Number(a.official),
+        Number(Boolean(b.has_model)) - Number(Boolean(a.has_model)) ||
+        Number(!b.unchecked) - Number(!a.unchecked) ||
+        Number(b.official) - Number(a.official),
     );
   return { query, candidates, tried };
 }
