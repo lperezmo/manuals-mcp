@@ -31,9 +31,7 @@ export interface IngestOutcome {
   note?: string;
 }
 
-/** Creates a manual for an item from PDF bytes, then processes it. */
-export async function ingestPdf(args: {
-  env: Env;
+interface StoreArgs {
   db: Db;
   householdId: string;
   item: ItemRow;
@@ -42,7 +40,27 @@ export async function ingestPdf(args: {
   sourceUrl?: string;
   official?: boolean;
   title?: string;
-}): Promise<IngestOutcome> {
+}
+
+/** Creates a manual for an item from PDF bytes, then processes it. */
+export async function ingestPdf(args: StoreArgs & { env: Env }): Promise<IngestOutcome> {
+  const manualId = await storeManual(args);
+  return processPdf({
+    env: args.env,
+    db: args.db,
+    householdId: args.householdId,
+    item: args.item,
+    manualId,
+    bytes: args.bytes,
+  });
+}
+
+/**
+ * Saves the PDF and its manual row, without reading it. The website attaches
+ * a manual in two calls (store, then /api/ingest), so a slow maker's site and
+ * Muse's read each get their own time limit.
+ */
+export async function storeManual(args: StoreArgs): Promise<string> {
   const { db, householdId, item } = args;
   const { data: manual, error } = await db
     .from("manuals")
@@ -65,15 +83,7 @@ export async function ingestPdf(args: {
     .upload(path, args.bytes, { contentType: "application/pdf", upsert: true });
   if (upload.error) throw new Error(`Couldn't store the PDF: ${upload.error.message}`);
   await db.from("manuals").update({ storage_path: path }).eq("id", manual.id);
-
-  return processPdf({
-    env: args.env,
-    db,
-    householdId,
-    item,
-    manualId: manual.id,
-    bytes: args.bytes,
-  });
+  return manual.id as string;
 }
 
 /** Processes a manual whose PDF is already in storage (the app's upload path). */

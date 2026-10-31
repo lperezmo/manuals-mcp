@@ -40,6 +40,8 @@ export function looksLikePdf(bytes: Uint8Array): boolean {
 /** Quick check of a search result. Attaching a manual waits longer: some makers' sites are slow. */
 export const CHECK_TIMEOUT_MS = 25_000;
 export const ATTACH_TIMEOUT_MS = 50_000;
+/** The website's two-step attach: the download has its own call, so it can wait longest. */
+export const ATTACH_DOWNLOAD_MS = 120_000;
 
 export async function fetchPdf(
   raw: string,

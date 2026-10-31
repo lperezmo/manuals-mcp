@@ -476,17 +476,29 @@
               toast(`Model saved as ${item.model}.`);
             });
           }
+          // Two calls: download and store (a maker's site can be slow), then Muse's read.
+          // Progress and errors stay on the card, not in a toast that disappears.
           for (const b of found.querySelectorAll("[data-use]")) {
             b.addEventListener("click", async () => {
-              for (const other of found.querySelectorAll("[data-use]")) other.disabled = true;
-              found.insertAdjacentHTML("beforeend", '<p class="muted small" role="status">Muse is reading the manual. This takes up to a minute.</p>');
+              const uses = found.querySelectorAll("[data-use]");
+              for (const other of uses) other.disabled = true;
+              let status = found.querySelector("[data-attach-status]");
+              if (!status) {
+                found.insertAdjacentHTML("beforeend", '<p class="small" role="status" data-attach-status></p>');
+                status = found.querySelector("[data-attach-status]");
+              }
+              status.style.color = "";
+              status.textContent = "Downloading the manual from the maker's site. Some are slow; this can take a minute or two.";
               try {
-                const res = await tool("add_item", { attach_to: item.id, pdf_url: b.dataset.use, official: b.dataset.official === "true" });
-                toast(res.summary);
+                const { manual_id } = await api("/api/attach", { item_id: item.id, url: b.dataset.use, official: b.dataset.official === "true" });
+                status.textContent = "Got it. Muse is reading the manual now, about a minute.";
+                const out = await api("/api/ingest", { manual_id });
+                toast(out.distilled ? `Read it: ${out.distilled.tasks} tasks, ${out.distilled.facts} facts.` : out.note || "Saved.");
                 after();
               } catch (err) {
-                toast(err.message);
-                for (const other of found.querySelectorAll("[data-use]")) other.disabled = false;
+                status.style.color = "var(--coral)";
+                status.textContent = err.message;
+                for (const other of uses) other.disabled = false;
               }
             });
           }

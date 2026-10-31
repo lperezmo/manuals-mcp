@@ -20,6 +20,9 @@
     },
     "api/find-manual.ts": {
       "maxDuration": 60
+    },
+    "api/attach.ts": {
+      "maxDuration": 150
     }
   },
   "rewrites": [

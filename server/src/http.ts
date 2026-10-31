@@ -8,9 +8,10 @@ import {
 } from "mcp-handler";
 import { bearer, supabaseVerifier, userFrom } from "./auth.js";
 import { type ChatUsage, callTool, messageSchema, runChat, withCard } from "./chat.js";
-import { householdId, userDb } from "./db.js";
+import { householdId, type ItemRow, userDb } from "./db.js";
 import { authIssuer, type Env } from "./env.js";
-import { processStoredManual } from "./finder/ingest.js";
+import { ATTACH_DOWNLOAD_MS, FetchPdfError, fetchPdf } from "./finder/fetch-pdf.js";
+import { processStoredManual, storeManual } from "./finder/ingest.js";
 import { findManual } from "./finder/search.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
 import { checkPhoto } from "./photo-check.js";
@@ -30,6 +31,7 @@ import {
 } from "./router.js";
 import { BUDGET_USED, logRun, modelRunsTodayAll, runsToday } from "./runs.js";
 import { MAX_IMAGE_BYTES, readLabel } from "./snap.js";
+import { ITEM_COLUMNS } from "./tools/context.js";
 
 // HTTP entry points, shared by the Vercel functions in api/ and the local
 // dev server. All of them are Web-standard (Request) => Response.
@@ -105,6 +107,64 @@ export function ingestHandler(env: Env, verify: Verify = supabaseVerifier(env)) 
       return Response.json(outcome);
     } catch (err) {
       return Response.json({ error: (err as Error).message }, { status: 422 });
+    }
+  };
+}
+
+/**
+ * "Use this" on a found manual: downloads the PDF and stores it, nothing more.
+ * The page then calls /api/ingest for Muse's read. A slow maker's site gets
+ * this whole call; it doesn't eat into the read's time.
+ */
+export function attachHandler(
+  env: Env,
+  verify: Verify = supabaseVerifier(env),
+  fetchImpl: typeof fetch = fetch,
+) {
+  return async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    const auth = await verify(bearer(req));
+    if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
+    let body: { item_id?: unknown; url?: unknown; official?: unknown };
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return Response.json({ error: "Send JSON with item_id and url." }, { status: 400 });
+    }
+    if (typeof body.item_id !== "string" || typeof body.url !== "string")
+      return Response.json({ error: "item_id and url are required." }, { status: 400 });
+    const db = userDb(env, auth.token);
+    try {
+      const { data: item, error } = await db
+        .from("items")
+        .select(ITEM_COLUMNS)
+        .eq("id", body.item_id)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!item)
+        return Response.json({ error: "That thing isn't in your household." }, { status: 404 });
+      let fetched: Awaited<ReturnType<typeof fetchPdf>>;
+      try {
+        fetched = await fetchPdf(body.url, fetchImpl, ATTACH_DOWNLOAD_MS);
+      } catch (err) {
+        const message =
+          err instanceof FetchPdfError
+            ? err.message
+            : "The maker's site is too slow right now. Try again in a bit, or open the PDF, save it and upload it.";
+        return Response.json({ error: message }, { status: 422 });
+      }
+      const manualId = await storeManual({
+        db,
+        householdId: await householdId(db),
+        item: item as ItemRow,
+        bytes: fetched.bytes,
+        source: "url",
+        sourceUrl: fetched.finalUrl,
+        official: body.official === true,
+      });
+      return Response.json({ manual_id: manualId });
+    } catch (err) {
+      return Response.json({ error: (err as Error).message }, { status: 502 });
     }
   };
 }

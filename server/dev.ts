@@ -2,6 +2,7 @@
 //   cp .env.example .env && bun run dev
 import { env } from "./src/env.js";
 import {
+  attachHandler,
   chatHandler,
   findManualHandler,
   ingestHandler,
@@ -23,6 +24,7 @@ const report = reportHandler(config);
 const find = findManualHandler(config);
 const tool = toolHandler(config);
 const snap = snapHandler(config);
+const attach = attachHandler(config);
 const port = Number(process.env.PORT ?? 3000);
 
 Bun.serve({
@@ -38,6 +40,7 @@ Bun.serve({
     if (pathname === "/api/find-manual") return find(req);
     if (pathname === "/api/tool") return tool(req);
     if (pathname === "/api/snap") return snap(req);
+    if (pathname === "/api/attach") return attach(req);
     const file = Bun.file(
       `./public${pathname === "/" ? "/index.html" : pathname}${pathname.includes(".") || pathname === "/" ? "" : ".html"}`,
     );
