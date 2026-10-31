@@ -1,5 +1,6 @@
 import type { Env } from "../env.js";
 import { type Knowledge, LIMITS, readKnowledge } from "./knowledge.js";
+import { keepEnglish } from "./language.js";
 import type { PageText } from "./pdf-text.js";
 
 // The server-side reader (D6): Muse Spark, or any OpenAI-compatible chat
@@ -84,7 +85,8 @@ export async function distill(
 ): Promise<Distilled> {
   const reader = env.reader;
   if (!reader) throw new Error("No server reader is configured.");
-  const chosen = selectPages(args.pages, reader.maxChars);
+  // Other-language copies of the same content are left out before ranking.
+  const chosen = selectPages(keepEnglish(args.pages).kept, reader.maxChars);
   const text = formatPages(chosen);
   const trace: ReaderTrace = {
     pages_sent: chosen.map((p) => p.page_number),
