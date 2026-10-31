@@ -159,6 +159,33 @@
       }
 
       /** Marks the sentence(s) of the page that share the most words and numbers with what was read. */
+      /** The one or two sentences of a page that match what Muse read, the match marked. */
+      function excerpt(text, read) {
+        const tokens = (s) =>
+          s
+            .toLowerCase()
+            .split(/[^a-z0-9.]+/)
+            .map((w) => w.replace(/\.$/, ""))
+            .filter((w) => w.length > 4 || /^\d/.test(w));
+        const words = new Set(tokens(read));
+        const sentences = text.split(/(?<=[.!?])\s+/);
+        const scores = sentences.map((s) => new Set(tokens(s).filter((w) => words.has(w))).size);
+        const best = Math.max(0, ...scores);
+        if (!best) return esc(text.slice(0, 240)) + (text.length > 240 ? "…" : "");
+        const top = scores
+          .map((score, i) => ({ score, i }))
+          .filter((x) => x.score > 0)
+          .sort((a, b) => b.score - a.score || a.i - b.i)
+          .slice(0, 2)
+          .sort((a, b) => a.i - b.i);
+        return top
+          .map(({ i }) => {
+            const s = sentences[i].length > 260 ? `${sentences[i].slice(0, 260)}…` : sentences[i];
+            return scores[i] === best ? `<mark>${esc(s)}</mark>` : esc(s);
+          })
+          .join(" … ");
+      }
+
       function highlight(text, read) {
         const tokens = (s) =>
           s
@@ -280,10 +307,19 @@
         }
       }
 
+      const REVIEW_KIND = { fact: "Fact", task: "Upkeep", seat_limit: "Car seat limit" };
+      function reviewTile(r) {
+        return `<button type="button" class="rv-tile" data-review-tile="${r.id}" aria-pressed="false">
+          <span class="small rv-kind">${REVIEW_KIND[r.type] ?? "Entry"}</span>
+          <strong class="rv-title">${esc(r.title)}</strong>
+          <span class="small muted">${esc(r.item?.nickname ?? "")}</span>
+        </button>`;
+      }
+
       function reviewCard(r) {
         const item = r.item;
         const page = r.pageText
-          ? `<div class="panel"><div class="label">Page ${r.page} says</div><p style="margin-top:6px">${highlight(r.pageText, r.read)}</p></div>`
+          ? `<div class="panel"><div class="label">Page ${r.page} says</div><p style="margin-top:6px">${excerpt(r.pageText, r.read)}</p><details class="small" style="margin-top:6px"><summary style="cursor:pointer">Whole page</summary><p class="muted" style="margin-top:6px">${highlight(r.pageText, r.read)}</p></details></div>`
           : `<div class="panel"><div class="label">Page ${r.page ?? "?"}</div><p class="muted" style="margin-top:6px">The page text isn't saved, so check the paper manual.</p></div>`;
         return `<article class="card" data-review="${r.id}">
           <div class="row" style="align-items:baseline">
@@ -291,7 +327,7 @@
             <span class="small muted">${esc(item?.nickname)} · ${esc([item?.brand, item?.model].filter(Boolean).join(" "))}</span>
           </div>
           <div class="grid">
-            <div class="panel gold"><div class="label">Muse read</div><p style="margin-top:6px;font-size:17px">${esc(r.read)}</p><p class="small muted" style="margin-top:6px">Muse flagged this one as unsure.</p></div>
+            <div class="panel gold"><div class="label">Muse read (unsure)</div><p style="margin-top:6px">${esc(r.read)}</p></div>
             ${page}
           </div>
           <div class="row">
@@ -463,7 +499,9 @@
             review.length
               ? `<section aria-labelledby="review-h" class="stack">
                   <div class="section-head" style="margin:0"><h2 id="review-h">Needs your eyes <span class="chip gold strong" style="font-family:inherit;font-size:14px;vertical-align:middle">${review.length}</span></h2></div>
-                  ${review.map(reviewCard).join("")}
+                  <p class="muted" style="margin:0">Muse wasn't sure about these. Tap one to check it against its page.</p>
+                  <div class="rv-grid" role="group" aria-label="To check">${review.map(reviewTile).join("")}</div>
+                  <div id="review-open"></div>
                 </section>`
               : ""
           }
@@ -524,8 +562,21 @@
             bindDone(coming);
           });
         }
-        for (const r of review) {
-          const card = main.querySelector(`[data-review="${r.id}"]`);
+        const reviewOpen = $("#review-open");
+        for (const tile of main.querySelectorAll("[data-review-tile]")) {
+          tile.addEventListener("click", () => {
+            const wasOpen = tile.getAttribute("aria-pressed") === "true";
+            for (const t of main.querySelectorAll("[data-review-tile]")) t.setAttribute("aria-pressed", "false");
+            reviewOpen.innerHTML = "";
+            if (wasOpen) return;
+            tile.setAttribute("aria-pressed", "true");
+            const r = review.find((x) => x.id === tile.dataset.reviewTile);
+            reviewOpen.innerHTML = reviewCard(r);
+            wireReview(r, reviewOpen.firstElementChild);
+            reviewOpen.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          });
+        }
+        function wireReview(r, card) {
           $("[data-ask]", card).addEventListener("click", () =>
             openChat(
               `Check "${r.title}" for the ${r.item?.nickname?.toLowerCase()} against page ${r.page} of its manual, and fix it if it's wrong.`,

@@ -1835,3 +1835,82 @@ button.danger {
   gap: 10px;
   border: 1px solid var(--gold, var(--line));
 }
+
+/* Needs your eyes: small squares, one opens below */
+.rv-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.rv-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 96px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  text-align: left;
+}
+.rv-tile[aria-pressed="true"] {
+  background: var(--gold-soft);
+  border-color: var(--gold);
+}
+.rv-kind {
+  color: var(--gold);
+  font-weight: 700;
+}
+.rv-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* Specs: one line that unfolds (option C) */
+.glance-more > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  margin-right: 44px;
+  cursor: pointer;
+  list-style: none;
+}
+.glance-more > summary::-webkit-details-marker {
+  display: none;
+}
+.glance-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.glance-all {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.glance-more[open] .when-closed,
+.glance-more:not([open]) .when-open {
+  display: none;
+}
+.glance-more[open] > .glance {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.glance-card {
+  padding: 6px 8px 6px 16px;
+}
+.glance-card .corner-copy {
+  top: 6px;
+  right: 6px;
+}

@@ -615,6 +615,13 @@
       // --- Facts overview -----------------------------------------------------
       // Specs as one compact table, error codes as chips you tap, the rest
       // folded away with a count. Fix lives inside an opened entry, not on every row.
+      /** The specs' one-line summary: up to three short values, numbers first. */
+      function glanceLine(specs) {
+        const short = specs.filter((f) => f.value.length <= 20);
+        const picked = [...short.filter((f) => /\d/.test(f.value)), ...short.filter((f) => !/\d/.test(f.value))].slice(0, 3);
+        return (picked.length ? picked : specs.slice(0, 2)).map((f) => (f.value.length > 24 ? `${f.value.slice(0, 24)}…` : f.value)).join(" · ");
+      }
+
       function factsBody(facts, openCode, { source, badge }) {
         const of = (kind) => facts.filter((f) => f.kind === kind);
         const page = (f) => (f.source_page ? `<span class="small muted"> p. ${f.source_page}</span>` : "");
@@ -623,10 +630,13 @@
         const codes = of("error_code");
         const glance = specs.length
           ? `<section aria-labelledby="glance-h"><div class="section-head"><h2 id="glance-h">At a glance</h2></div>
-              <div class="card glance-card"><button type="button" class="corner-copy" data-copy-specs aria-label="Copy all specs" title="Copy all specs">${ic("content_copy")}</button><dl class="glance">${specs
-                .map((f) => `<dt>${esc(f.label)}</dt><dd>${esc(f.value)}${page(f)}${check(f)}</dd>`)
-                .join("")}</dl>
-              <button type="button" class="link small" data-ask-facts>Something off? Ask Muse</button></div></section>`
+              <div class="card glance-card"><button type="button" class="corner-copy" data-copy-specs aria-label="Copy all specs" title="Copy all specs">${ic("content_copy")}</button>
+                <details class="glance-more"><summary><span class="glance-line">${esc(glanceLine(specs))}</span><span class="glance-all"><span class="when-closed">All ${specs.length}</span><span class="when-open">Less</span></span></summary>
+                  <dl class="glance">${specs
+                    .map((f) => `<dt>${esc(f.label)}</dt><dd>${esc(f.value)}${page(f)}${check(f)}</dd>`)
+                    .join("")}</dl>
+                  <button type="button" class="link small" data-ask-facts>Something off? Ask Muse</button>
+                </details></div></section>`
           : "";
         const open = codes.find((f) => f.id === openCode);
         const codeCard = codes.length
