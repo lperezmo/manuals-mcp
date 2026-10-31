@@ -1676,22 +1676,53 @@ a.link {
   margin-top: 8px;
 }
 
-/* Specs at a glance */
+/* Specs at a glance: compact, with a copy button in the corner */
+.glance-card {
+  position: relative;
+  padding: 14px 16px;
+}
 .glance {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
-  gap: 8px 14px;
-  margin: 0 0 10px;
+  gap: 4px 12px;
+  margin: 0 40px 8px 0;
+  font-size: 14px;
+  line-height: 1.35;
 }
 .glance dt {
-  color: var(--muted, inherit);
-  opacity: 0.8;
+  opacity: 0.7;
   overflow-wrap: anywhere;
 }
 .glance dd {
   margin: 0;
   font-weight: 600;
   overflow-wrap: anywhere;
+}
+.glance .small {
+  font-size: 12px;
+}
+.glance .chip {
+  font-size: 11px;
+  padding: 1px 8px;
+}
+.corner-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+.corner-copy .msi {
+  margin: 0;
+  font-size: 18px;
 }
 
 /* Error code chips */

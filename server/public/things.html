@@ -12,7 +12,7 @@
     />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=archive,auto_awesome,build,check,cleaning_services,delete,edit,event,fact_check,forum,health_and_safety,menu_book,more_horiz,palette,settings,share,tune,unarchive&display=block"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=archive,auto_awesome,build,check,cleaning_services,content_copy,delete,edit,event,fact_check,forum,health_and_safety,menu_book,more_horiz,palette,settings,share,tune,unarchive&display=block"
     />
     <link rel="stylesheet" href="/theme.css" />
     <script src="/theme.js"></script>
@@ -517,6 +517,18 @@
           const code = e.target.closest("[data-code]");
           if (fix) fixIt(fix.dataset.fix);
           else if (e.target.closest("[data-ask-facts]")) openChat(undefined, () => detail(id));
+          else if (e.target.closest("[data-copy-specs]")) {
+            // Plain "Label: value" lines, ready to paste into a parts order or a support chat.
+            const text = [
+              [item.nickname, item.brand, item.model].filter(Boolean).join(" "),
+              ...item.manual_facts.filter((f) => f.kind === "spec").map((f) => `${f.label}: ${f.value}`),
+            ].join("
+");
+            navigator.clipboard
+              .writeText(text)
+              .then(() => toast("Specs copied."))
+              .catch(() => toast("Couldn't copy here; select the text instead."));
+          }
           else if (code) {
             openCode = openCode === code.dataset.code ? null : code.dataset.code;
             drawFacts();
@@ -612,7 +624,7 @@
         const codes = of("error_code");
         const glance = specs.length
           ? `<section aria-labelledby="glance-h"><div class="section-head"><h2 id="glance-h">At a glance</h2></div>
-              <div class="card"><dl class="glance">${specs
+              <div class="card glance-card"><button type="button" class="corner-copy" data-copy-specs aria-label="Copy all specs" title="Copy all specs">${ic("content_copy")}</button><dl class="glance">${specs
                 .map((f) => `<dt>${esc(f.label)}</dt><dd>${esc(f.value)}${page(f)}${check(f)}</dd>`)
                 .join("")}</dl>
               <button type="button" class="link small" data-ask-facts>Something off? Ask Muse</button></div></section>`
