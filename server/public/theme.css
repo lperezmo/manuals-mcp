@@ -1606,12 +1606,12 @@ a.link {
 }
 
 /* Upkeep tiles: "What do you want to work on?" */
-.tiles {
+.uk-tiles {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 10px;
 }
-.tile {
+.uk-tile {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -1624,11 +1624,11 @@ a.link {
   border: 1px solid var(--line);
   text-align: left;
 }
-.tile[aria-pressed="true"] {
+.uk-tile[aria-pressed="true"] {
   background: var(--accent-soft);
   border-color: var(--accent);
 }
-.tile.due strong {
+.uk-tile.due strong {
   color: var(--accent);
 }
 .late {
@@ -1713,4 +1713,64 @@ a.link {
 .code[aria-pressed="true"] {
   background: var(--accent-soft);
   border-color: var(--accent);
+}
+
+/* Material Symbols */
+.msi {
+  font-family: "Material Symbols Rounded", sans-serif;
+  font-weight: normal;
+  font-style: normal;
+  font-size: 20px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  white-space: nowrap;
+  direction: ltr;
+  display: inline-block;
+  vertical-align: -4px;
+  margin-right: 6px;
+  font-feature-settings: "liga";
+  -webkit-font-smoothing: antialiased;
+}
+.pin .msi,
+.corner-btn .msi {
+  margin: 0;
+}
+.uk-icon {
+  font-size: 26px;
+  margin: 0 0 6px;
+  color: var(--accent);
+}
+
+/* The thing's icon with a small customize button on its corner */
+.icon-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.corner-btn {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+.corner-btn .msi {
+  font-size: 18px;
+}
+
+/* Panels the header buttons open: no summary row, hidden while closed */
+details.panel > summary {
+  display: none;
+}
+details.panel:not([open]) {
+  display: none;
 }
