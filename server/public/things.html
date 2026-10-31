@@ -522,8 +522,7 @@
             const text = [
               [item.nickname, item.brand, item.model].filter(Boolean).join(" "),
               ...item.manual_facts.filter((f) => f.kind === "spec").map((f) => `${f.label}: ${f.value}`),
-            ].join("
-");
+            ].join("\n");
             navigator.clipboard
               .writeText(text)
               .then(() => toast("Specs copied."))
