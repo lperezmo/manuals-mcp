@@ -5,6 +5,7 @@ import {
   isBrandHost,
   modelMatch,
   rankResults,
+  searchQueries,
   searchQuery,
   squash,
 } from "../src/finder/search.js";
@@ -114,5 +115,20 @@ describe("a slow maker's site", () => {
         : new Response("gone", { status: 404 })) as unknown as typeof fetch);
     expect(found.candidates).toEqual([]);
     expect(found.tried[0]?.problem).toContain("404");
+  });
+});
+
+describe("misread model numbers", () => {
+  test("S read as 5 still finds the manual, flagged as a lookalike", () => {
+    expect(modelMatch("GSWWD09S1A09A-User-Manual.pdf", "GSWWD0951A09B")).toBe("lookalike");
+    expect(modelMatch("Model GSWWD09S1A09B", "GSWWD0951A09B")).toBe("lookalike");
+    expect(modelMatch("GSWWD12S1SA10A-User-Manual.pdf", "GSWWD0951A09B")).toBeNull();
+  });
+
+  test("runs a plainer second query with what the thing is", () => {
+    expect(
+      searchQueries({ brand: "Galanz", model: "GSWWD0951A09B", nickname: "Microwave" }),
+    ).toEqual(["Galanz GSWWD0951A09B owner's manual pdf", "Galanz GSWWD0951A09B Microwave manual"]);
+    expect(searchQueries({ brand: "Galanz", nickname: "Microwave" })).toHaveLength(1);
   });
 });

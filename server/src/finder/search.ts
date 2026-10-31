@@ -23,8 +23,8 @@ export interface Candidate {
   /** Filled in by checkCandidate. */
   page_count?: number;
   has_model?: boolean;
-  /** The match was the model family: the number without its last letter or two (a color or region variant). */
-  family?: boolean;
+  /** How the PDF names the model; see modelMatch. */
+  match?: Match;
   problem?: string;
   /** The check didn't finish (slow site, network); the PDF may still be fine. */
   unchecked?: boolean;
@@ -42,29 +42,58 @@ export function searchQuery(item: {
   return [item.brand, item.model || item.nickname, "owner's manual pdf"].filter(Boolean).join(" ");
 }
 
+/**
+ * The queries run together: the main one, and a plainer one with what the
+ * thing is. Search engines correct a misread model number more readily in the
+ * plainer one ("GSWWD0951A09B microwave manual" finds GSWWD09S1A09B's).
+ */
+export function searchQueries(item: {
+  brand?: string | null;
+  model?: string | null;
+  nickname?: string | null;
+}): string[] {
+  const main = searchQuery(item);
+  if (!item.model) return [main];
+  return [main, [item.brand, item.model, item.nickname, "manual"].filter(Boolean).join(" ")];
+}
+
 /** Letters and digits only, lower case: "WTW-5000 DW" and "wtw5000dw" match. */
 export function squash(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+export type Match = "exact" | "family" | "lookalike";
+
+/** Characters a label photo or a person easily confuses, folded together: S/5, O/0, I/L/1, B/8, Z/2. */
+export function lookalike(text: string): string {
+  return squash(text).replace(
+    /[soilbz]/g,
+    (c) => ({ s: "5", o: "0", i: "1", l: "1", b: "8", z: "2" })[c] ?? c,
+  );
+}
+
+function contains(text: string, model: string): "exact" | "family" | null {
+  if (text.includes(model)) return "exact";
+  for (const cut of [1, 2]) {
+    const stem = model.slice(0, -cut);
+    if (stem.length >= 7 && text.includes(stem)) return "family";
+  }
+  return null;
+}
+
 /**
- * How text names a model: "exact", "family" when only the last one or two
- * characters differ (GSWWD09S1A09B on the sticker, GSWWD09S1A09A in the PDF),
- * or null. Family needs at least 7 characters left, so short numbers can't
- * match by accident.
+ * How text names a model: "exact"; "family" when only the last one or two
+ * characters differ (GSWWD09S1A09B on the sticker, GSWWD09S1A09A in the PDF);
+ * "lookalike" when it matches once easily confused characters are folded
+ * together (a label read as GSWWD0951A09B); or null. Family needs at least 7
+ * characters left and lookalike at least 6, so short numbers can't match by accident.
  */
-export function modelMatch(
-  text: string,
-  model: string | null | undefined,
-): "exact" | "family" | null {
+export function modelMatch(text: string, model: string | null | undefined): Match | null {
   const m = squash(model ?? "");
   if (m.length < 4) return null;
-  const t = squash(text);
-  if (t.includes(m)) return "exact";
-  for (const cut of [1, 2]) {
-    const stem = m.slice(0, -cut);
-    if (stem.length >= 7 && t.includes(stem)) return "family";
-  }
+  const direct = contains(squash(text), m);
+  if (direct) return direct;
+  if (m.length >= 6 && contains(lookalike(text), lookalike(m))) return "lookalike";
   return null;
 }
 
@@ -148,7 +177,7 @@ export async function checkCandidate(
       ...candidate,
       page_count: pageCount,
       has_model: match !== null,
-      ...(match === "family" ? { family: true } : {}),
+      ...(match ? { match } : {}),
     };
   } catch (err) {
     // A FetchPdfError is a definite answer (not a PDF, 404, too big); anything
@@ -177,8 +206,18 @@ export async function findManual(
   fetchImpl: typeof fetch = fetch,
   check = 3,
 ): Promise<FindOutcome> {
-  const query = searchQuery(item);
-  const ranked = rankResults(await searchWeb(env, query, fetchImpl), item);
+  const queries = searchQueries(item);
+  const query = queries[0] as string;
+  const answers = await Promise.allSettled(queries.map((q) => searchWeb(env, q, fetchImpl)));
+  const ok = answers.flatMap((a) => (a.status === "fulfilled" ? [a.value] : []));
+  if (!ok.length) throw (answers[0] as PromiseRejectedResult).reason;
+  // One list, each link once with its best score.
+  const best = new Map<string, SearchResult>();
+  for (const r of ok.flat()) {
+    const seen = best.get(r.url);
+    if (!seen || r.score > seen.score) best.set(r.url, r);
+  }
+  const ranked = rankResults([...best.values()], item);
   const tried = await Promise.all(
     ranked.slice(0, check).map((c) => checkCandidate(c, item.model, fetchImpl)),
   );
