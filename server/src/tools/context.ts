@@ -53,7 +53,11 @@ export const ITEM_COLUMNS =
  * "Graco"). Throws with the candidates when the name is ambiguous.
  */
 export async function findItem(db: Db, ref: string): Promise<ItemRow> {
-  const { data, error } = await db.from("items").select(ITEM_COLUMNS).order("created_at");
+  const { data, error } = await db
+    .from("items")
+    .select(ITEM_COLUMNS)
+    .is("archived_at", null)
+    .order("created_at");
   if (error) throw new Error(`Couldn't read your things: ${error.message}`);
   const items = (data ?? []) as ItemRow[];
   if (isUuid(ref)) {

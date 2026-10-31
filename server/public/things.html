@@ -12,7 +12,7 @@
     />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=auto_awesome,build,check,cleaning_services,delete,edit,event,fact_check,forum,health_and_safety,menu_book,more_horiz,palette,share,tune&display=block"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=archive,auto_awesome,build,check,cleaning_services,delete,edit,event,fact_check,forum,health_and_safety,menu_book,more_horiz,palette,share,tune,unarchive&display=block"
     />
     <link rel="stylesheet" href="/theme.css" />
     <script src="/theme.js"></script>
@@ -58,16 +58,82 @@
         return { late, text: parts.join(" · ") };
       }
 
-      async function list() {
-        const { data, error } = await (await db())
+      // --- Archive / restore / delete for good ---------------------------------
+      // Archiving hides a thing (sold, given away, thrown out) from lists,
+      // upcoming tasks and Muse, and keeps everything. Only deleting is final.
+      async function setArchived(item, on) {
+        const { error } = await (await db())
           .from("items")
-          .select("id, nickname, brand, model, kind, category, icon, tint, pinned, manuals(page_count), manual_facts(status), tasks(active, title, next_due_on)")
-          .order("created_at");
+          .update(on ? { archived_at: new Date().toISOString(), pinned: false } : { archived_at: null })
+          .eq("id", item.id);
         if (error) throw new Error(error.message);
-        drawList(data);
+        toast(on ? `Archived the ${item.nickname}. Find it under Manage things.` : `The ${item.nickname} is back.`);
       }
 
-      function drawList(items) {
+      /** Asks first; removes the stored PDFs, then the item (its manual, tasks, facts and history go with it). */
+      async function deleteForever(item) {
+        if (!confirm(`Delete the ${item.nickname} for good, with its manual, upkeep, facts and history? This can't be undone.`)) return false;
+        const supa = await db();
+        const { data: files } = await supa.from("manuals").select("storage_path").eq("item_id", item.id);
+        const paths = (files ?? []).map((f) => f.storage_path).filter(Boolean);
+        if (paths.length) await supa.storage.from("manuals").remove(paths);
+        const { error } = await supa.from("items").delete().eq("id", item.id);
+        if (error) throw new Error(error.message);
+        toast(`Deleted the ${item.nickname}.`);
+        return true;
+      }
+
+      function drawManage(items) {
+        const active = items.filter((i) => !i.archived_at);
+        const archived = items.filter((i) => i.archived_at);
+        const row = (i, buttons) => `<div class="manage-row">${itemIcon(i, 44)}<div class="manage-name"><strong>${esc(i.nickname)}</strong><span class="small muted">${esc([i.brand, i.model].filter(Boolean).join(" ")) || "No model saved"}</span></div><div class="row">${buttons}</div></div>`;
+        main.innerHTML = `
+          <section class="stack">
+            <a href="/things" style="font-weight:700;text-decoration:none">← Your things</a>
+            <h1 style="margin:0">Manage things</h1>
+            <p class="muted" style="margin:0">Sold it, gave it away or threw it out? Archive it: it leaves your list, your upcoming tasks and Muse, and you can bring it back any time.</p>
+          </section>
+          <section class="card lines">${active.map((i) => row(i, `<button type="button" class="quiet small" data-archive="${i.id}">${ic("archive")}Archive</button>`)).join("") || '<p class="muted small">Nothing here yet.</p>'}</section>
+          ${
+            archived.length
+              ? `<section class="stack"><h2 style="margin:0">Archived</h2><div class="card lines">${archived
+                  .map((i) => row(i, `<button type="button" class="quiet small" data-restore="${i.id}">${ic("unarchive")}Restore</button><button type="button" class="quiet small danger" data-delete="${i.id}">${ic("delete")}Delete for good</button>`))
+                  .join("")}</div></section>`
+              : ""
+          }`;
+        const byId = new Map(items.map((i) => [i.id, i]));
+        main.onclick = async (e) => {
+          const b = e.target.closest("[data-archive], [data-restore], [data-delete]");
+          if (!b) return;
+          const item = byId.get(b.dataset.archive || b.dataset.restore || b.dataset.delete);
+          b.disabled = true;
+          try {
+            if (b.dataset.archive) await setArchived(item, true);
+            else if (b.dataset.restore) await setArchived(item, false);
+            else if (!(await deleteForever(item))) {
+              b.disabled = false;
+              return;
+            }
+            await list();
+          } catch (err) {
+            b.disabled = false;
+            toast(err.message);
+          }
+        };
+      }
+
+      async function list() {
+        main.onclick = null;
+        const { data, error } = await (await db())
+          .from("items")
+          .select("id, nickname, brand, model, kind, category, icon, tint, pinned, archived_at, manuals(page_count), manual_facts(status), tasks(active, title, next_due_on)")
+          .order("created_at");
+        if (error) throw new Error(error.message);
+        if (params.get("manage")) return drawManage(data);
+        drawList(data.filter((i) => !i.archived_at), data.filter((i) => i.archived_at).length);
+      }
+
+      function drawList(items, archived = 0) {
         const kinds = Object.keys(GROUPS).filter((k) => items.some((i) => i.kind === k));
         if (filter !== "all" && !kinds.includes(filter)) filter = "all";
         const shown = items.filter((i) => filter === "all" || i.kind === filter);
@@ -76,7 +142,7 @@
           `<button type="button" class="pin" data-pin="${i.id}" aria-pressed="${i.pinned}" aria-label="${i.pinned ? "Unpin" : "Pin"} ${esc(i.nickname)}" title="${i.pinned ? "Unpin" : "Pin to the top"}">${PIN}</button>`;
         main.innerHTML = `
           <div class="section-head" style="margin:0;align-items:flex-end">
-            <div class="stack" style="gap:4px"><h1>Your things</h1><p class="muted" style="margin:0">Tap a thing for its tasks and manual. Pin the ones you check most.</p></div>
+            <div class="stack" style="gap:4px"><h1>Your things</h1><p class="muted" style="margin:0">Tap a thing for its tasks and manual. Pin the ones you check most. <a href="/things?manage=1">Manage things${archived ? ` (${archived} archived)` : ""}</a></p></div>
             ${kinds.length > 1 ? `<div class="filters" role="group" aria-label="Show">${["all", ...kinds].map((k) => `<button type="button" data-filter="${k}" aria-pressed="${filter === k}">${k === "all" ? "All" : GROUPS[k]}</button>`).join("")}</div>` : ""}
           </div>
           ${
@@ -121,7 +187,7 @@
         for (const b of main.querySelectorAll("[data-filter]")) {
           b.addEventListener("click", () => {
             filter = b.dataset.filter;
-            drawList(items);
+            drawList(items, archived);
           });
         }
         for (const b of main.querySelectorAll("[data-pin]")) {
@@ -176,7 +242,7 @@
         const { data: item, error } = await supa
           .from("items")
           .select(
-            "id, nickname, brand, model, serial, category, kind, icon, tint, pinned, uses_per_week, manuals(id, title, page_count, source_url, status, status_detail), manual_facts(id, kind, label, value, source_page, source, status), tasks(id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source, status, active), seat_modes(id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, source, status), item_readings(kind, value, measured_on)",
+            "id, nickname, brand, model, serial, category, kind, icon, tint, pinned, archived_at, uses_per_week, manuals(id, title, page_count, source_url, status, status_detail), manual_facts(id, kind, label, value, source_page, source, status), tasks(id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source, status, active), seat_modes(id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, source, status), item_readings(kind, value, measured_on)",
           )
           .eq("id", id)
           .maybeSingle();
@@ -206,9 +272,11 @@
         const source = (x) =>
           `<span class="row small muted" style="gap:6px"><span class="dot src-${x.source}"></span>${SOURCES[x.source]}${x.source_page ? ` · p. ${x.source_page}` : ""}</span>`;
 
+        main.onclick = null;
         main.innerHTML = `
           <section class="stack">
             <a href="/things" style="font-weight:700;text-decoration:none">← Your things</a>
+            ${item.archived_at ? `<div class="card flat archived-banner"><span>${ic("archive")}Archived. It's hidden from your list, your upcoming tasks and Muse.</span><div class="row"><button type="button" class="small" id="restore-item">${ic("unarchive")}Restore</button><button type="button" class="quiet small danger" id="delete-item">${ic("delete")}Delete for good</button></div></div>` : ""}
             <div class="row" style="gap:16px;align-items:center;flex-wrap:nowrap">
               <div class="icon-wrap">${itemIcon(item, 72)}<button type="button" class="corner-btn" id="look-btn" aria-label="Change icon or color" title="Change icon or color" aria-controls="look">${ic("palette")}</button></div>
               <div style="flex:1 1 auto;min-width:0">
@@ -239,7 +307,7 @@
                     .join("")}</div>
                 </div>
                 <div class="row" style="justify-content:flex-end;border-top:1px solid var(--line);padding-top:12px">
-                  <button type="button" class="quiet small danger" id="remove-item">${ic("delete")}Remove this thing</button>
+                  ${item.archived_at ? "" : `<button type="button" class="quiet small" id="archive-item">${ic("archive")}Sold it or got rid of it? Archive</button>`}
                 </div>
               </div>
             </details>
@@ -318,22 +386,28 @@
           if ("icon" in change || "tint" in change) $("#look").open = true;
         };
         $("#pin").addEventListener("click", () => saveLook({ pinned: !item.pinned }));
-        // Deleting the item cascades to its manuals, pages, tasks, facts and history;
-        // the stored PDFs are removed first, while their paths can still be read.
-        $("#remove-item").addEventListener("click", async (e) => {
-          const button = e.currentTarget;
-          if (!confirm(`Remove the ${item.nickname} and everything saved with it (manual, upkeep, facts, history)? This can't be undone.`)) return;
-          button.disabled = true;
-          const { data: files } = await supa.from("manuals").select("storage_path").eq("item_id", id);
-          const paths = (files ?? []).map((f) => f.storage_path).filter(Boolean);
-          if (paths.length) await supa.storage.from("manuals").remove(paths);
-          const { error: e2 } = await supa.from("items").delete().eq("id", id);
-          if (e2) {
-            button.disabled = false;
-            return toast(e2.message);
-          }
-          toast(`Removed the ${item.nickname}.`);
+        const act = (selector, run) =>
+          $(selector)?.addEventListener("click", async (e) => {
+            const button = e.currentTarget;
+            button.disabled = true;
+            try {
+              await run(button);
+            } catch (err) {
+              button.disabled = false;
+              toast(err.message);
+            }
+          });
+        act("#archive-item", async () => {
+          await setArchived(item, true);
           location.assign("/things");
+        });
+        act("#restore-item", async () => {
+          await setArchived(item, false);
+          detail(id);
+        });
+        act("#delete-item", async (button) => {
+          if (await deleteForever(item)) location.assign("/things?manage=1");
+          else button.disabled = false;
         });
         for (const [button, panel] of [["#look-btn", "#look"], ["#share-btn", "#share"]]) {
           $(button).addEventListener("click", () => {

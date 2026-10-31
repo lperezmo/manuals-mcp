@@ -1779,3 +1779,28 @@ button.danger {
   color: var(--coral);
   border-color: var(--coral);
 }
+
+/* Manage things */
+.manage-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.manage-row:first-child {
+  border-top: 0;
+}
+.manage-name {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 140px;
+  min-width: 0;
+}
+.archived-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--gold, var(--line));
+}

@@ -43,7 +43,7 @@
       } from "/app.js";
 
       const main = $("#main");
-      const ITEM = "items(id, nickname, brand, model, kind, category, icon, tint)";
+      const ITEM = "items!inner(id, nickname, brand, model, kind, category, icon, tint, archived_at)";
       const one = (x) => (Array.isArray(x) ? x[0] : x);
 
       async function load() {
@@ -56,29 +56,34 @@
             .select(
               "id, nickname, brand, model, category, child_id, uses_per_week, manuals(page_count), manual_facts(source, status), tasks(active, next_due_on), item_readings(kind, value, measured_on), seat_modes(mode, max_weight_kg, max_height_cm, source_page)",
             )
+            .is("archived_at", null)
             .order("created_at"),
           supa
             .from("tasks")
             .select(`id, title, interval_unit, interval_value, next_due_on, source_page, ${ITEM}`)
             .eq("active", true)
+            .is("items.archived_at", null)
             .lte("next_due_on", until)
             .order("next_due_on"),
           supa
             .from("manual_facts")
             .select(`id, label, value, source_page, manual_id, ${ITEM}`)
-            .eq("status", "needs_review"),
+            .eq("status", "needs_review")
+            .is("items.archived_at", null),
           supa
             .from("tasks")
             .select(
               `id, title, details, interval_unit, interval_value, source_page, source_manual_id, ${ITEM}`,
             )
-            .eq("status", "needs_review"),
+            .eq("status", "needs_review")
+            .is("items.archived_at", null),
           supa
             .from("seat_modes")
             .select(
               `id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, manual_id, ${ITEM}`,
             )
-            .eq("status", "needs_review"),
+            .eq("status", "needs_review")
+            .is("items.archived_at", null),
           supa
             .from("revisions")
             .select("target_table, before, after, source, reason, created_at")

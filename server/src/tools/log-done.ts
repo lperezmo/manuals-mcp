@@ -31,7 +31,11 @@ export function register(server: McpServer, env: Env) {
         let taskId = isUuid(task) ? task : null;
         let label = "";
         if (!taskId) {
-          let q = db.from("tasks").select("id, title, item_id").eq("active", true);
+          let q = db
+            .from("tasks")
+            .select("id, title, item_id, items!inner(archived_at)")
+            .eq("active", true)
+            .is("items.archived_at", null);
           if (item) {
             const it = await findItem(db, item);
             label = ` for ${itemLabel(it)}`;

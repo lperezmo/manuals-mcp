@@ -27,6 +27,7 @@ export function register(server: McpServer, env: Env) {
           .select(
             `${ITEM_COLUMNS}, manuals(id, status, page_count), tasks(title, next_due_on, active), manual_facts(status)`,
           )
+          .is("archived_at", null)
           .order("created_at");
         if (kind) query = query.eq("kind", kind);
         const { data, error } = await query;
