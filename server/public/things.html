@@ -264,7 +264,7 @@
                           ${t.details ? `<div>${esc(t.details)}</div>` : ""}
                           <div class="row" style="margin-top:4px">${source(t)}${badge(t)}${t.next_due_on ? `<span class="small ${t.next_due_on < today() ? "" : "muted"}" ${t.next_due_on < today() ? 'style="color:var(--coral);font-weight:700"' : ""}>Next ${esc(relDay(t.next_due_on))}</span>` : ""}</div>
                         </div>
-                        <div class="row" style="align-items:start">${t.active ? `<button type="button" class="quiet small" data-done="${t.id}">Done</button>` : ""}<button type="button" class="quiet small" data-fix="task:${t.id}">Fix</button></div>
+                        <div class="fact-actions">${t.active ? `<button type="button" class="quiet small" data-done="${t.id}">Done</button>` : ""}<button type="button" class="quiet small" data-fix="task:${t.id}">Fix</button></div>
                       </div>`,
                     )
                     .join("")}</div>
@@ -281,7 +281,7 @@
                         <div>${[s.max_weight_kg && `${s.min_weight_kg ?? 0} to ${s.max_weight_kg} kg`, s.max_height_cm && `${s.min_height_cm ?? 0} to ${s.max_height_cm} cm`, s.min_age_months && `at least ${s.min_age_months} months`].filter(Boolean).map(esc).join(" · ")}</div>
                         ${s.fit_note ? `<div class="muted">${esc(s.fit_note)}</div>` : ""}
                         <div class="row" style="margin-top:4px">${source(s)}${badge(s)}</div></div>
-                        <div><button type="button" class="quiet small" data-fix="seat_limit:${s.id}">Fix</button></div></div>`,
+                        <div class="fact-actions"><button type="button" class="quiet small" data-fix="seat_limit:${s.id}">Fix</button></div></div>`,
                     )
                     .join("")}
                     <p class="small muted">A certified child passenger safety technician can check the fit in person.</p>
@@ -296,7 +296,7 @@
                 <div class="card">${fs
                   .map(
                     (f) => `<div class="fact"><div><strong>${esc(f.label)}</strong><div>${esc(f.value)}</div><div class="row" style="margin-top:4px">${source(f)}${badge(f)}</div></div>
-                      <div><button type="button" class="quiet small" data-fix="fact:${f.id}">Fix</button></div></div>`,
+                      <div class="fact-actions"><button type="button" class="quiet small" data-fix="fact:${f.id}">Fix</button></div></div>`,
                   )
                   .join("")}</div></section>`,
             )

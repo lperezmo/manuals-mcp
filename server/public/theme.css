@@ -683,6 +683,17 @@ button:disabled {
 .fact:first-child {
   border-top: 0;
 }
+.fact > :first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* Done / Fix stack in one narrow column so they never push past the card. */
+.fact-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: stretch;
+}
 
 /* Chat drawer */
 .chat {
