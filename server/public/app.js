@@ -328,11 +328,12 @@ function renderChat(messages, busy) {
   const log = $(".chat-log", drawer);
   log.innerHTML =
     messages
-      .map((m) => {
+      .map((m, i) => {
         const tools = m.tools?.length
           ? `<div class="chips">${[...new Set(m.tools)].map((t) => `<span class="chip ${t === "revise_fact" ? "teal strong" : ""}">${esc(TOOL_NAMES[t] || t)}</span>`).join("")}</div>`
           : "";
-        return `<div class="msg ${m.role === "user" ? "user" : "muse"}">${esc(m.content)}${tools}</div>`;
+        const card = m.card && !m.answered ? cardForm(m.card, i) : "";
+        return `<div class="msg ${m.role === "user" ? "user" : "muse"}">${esc(m.content)}${tools}${card}</div>`;
       })
       .join("") + (busy ? '<div class="msg muse muted">Reading…</div>' : "");
   if (!messages.length && !busy) {
@@ -340,6 +341,62 @@ function renderChat(messages, busy) {
       '<p class="muted small">Ask about anything you own, or tell it something: "I just cleaned the dishwasher filter", "the washer is at 230 washes".</p>';
   }
   log.scrollTop = log.scrollHeight;
+}
+
+// Forms Muse attaches to a reply. Muse picks from these few shapes (checked
+// on the server); every string is escaped here, and a filled form goes back as
+// an ordinary message, so nothing is saved until Muse calls a tool.
+const UNIT_NAMES = { per_week: "a week", months: "months", years: "years" };
+
+function cardField(f, n) {
+  const id = `card-${n}-${f.key}`;
+  const label = `<label for="${id}">${esc(f.label)}</label>`;
+  if (f.type === "date") return `${label}<input id="${id}" name="${esc(f.key)}" type="date">`;
+  if (f.type === "text")
+    return `${label}<input id="${id}" name="${esc(f.key)}" maxlength="120" placeholder="${esc(f.placeholder || "")}">`;
+  if (f.type === "number") {
+    const units = f.units?.length
+      ? f.units.length === 1
+        ? `<span class="muted">${esc(UNIT_NAMES[f.units[0]] || f.units[0])}</span><input type="hidden" name="${esc(f.key)}__unit" value="${esc(f.units[0])}">`
+        : `<select name="${esc(f.key)}__unit" aria-label="Unit">${f.units.map((u) => `<option value="${esc(u)}">${esc(UNIT_NAMES[u] || u)}</option>`).join("")}</select>`
+      : "";
+    return `${label}<div class="row"><input id="${id}" name="${esc(f.key)}" type="number" step="any" min="0" inputmode="decimal" style="flex:1">${units}</div>`;
+  }
+  const multi = f.type === "checklist";
+  const options = f.options
+    .map((o) => {
+      const value = multi ? o.value : o;
+      const text = multi ? o.label : o;
+      return `<label class="pick"><input type="${multi ? "checkbox" : "radio"}" name="${esc(f.key)}" value="${esc(value)}" data-label="${esc(text)}"${multi && o.checked !== false ? " checked" : ""}> ${esc(text)}</label>`;
+    })
+    .join("");
+  return `<fieldset><legend>${esc(f.label)}</legend><div class="picks">${options}</div></fieldset>`;
+}
+
+function cardForm(card, n) {
+  return `<form class="card-form" data-card="${n}">
+    <strong>${esc(card.title)}</strong>
+    ${card.fields.map((f) => `<div class="card-field">${cardField(f, n)}</div>`).join("")}
+    <div class="row"><button type="submit" class="small">${esc(card.submit || "Send")}</button><button type="button" class="quiet small" data-skip>Skip</button></div>
+  </form>`;
+}
+
+/** Turns a filled form into the message Muse reads: one line per question. */
+function cardAnswer(card, form) {
+  const data = new FormData(form);
+  const lines = card.fields.map((f) => {
+    if (f.type === "checklist") {
+      const boxes = [...form.querySelectorAll(`input[name="${CSS.escape(f.key)}"]`)];
+      const kept = boxes.filter((b) => b.checked).map((b) => b.dataset.label);
+      const off = boxes.filter((b) => !b.checked).map((b) => `${b.dataset.label} [${b.value}]`);
+      return `- ${f.label}: keep ${kept.join(", ") || "none"}${off.length ? `; unticked: ${off.join(", ")}` : ""}`;
+    }
+    const value = String(data.get(f.key) ?? "").trim();
+    if (!value) return `- ${f.label}: (skipped)`;
+    const unit = data.get(`${f.key}__unit`);
+    return `- ${f.label}: ${value}${unit ? ` ${UNIT_NAMES[unit] || unit}` : ""}`;
+  });
+  return [card.title, ...lines].join("\n");
 }
 
 /** Opens the chat drawer, optionally sending a message right away. */
@@ -366,7 +423,18 @@ export function openChat(text, onChange) {
       saveChat([]);
       renderChat([]);
     });
-    $("form", drawer).addEventListener("submit", (e) => {
+    const log = $(".chat-log", drawer);
+    log.addEventListener("submit", (e) => {
+      const form = e.target.closest("form[data-card]");
+      if (!form) return;
+      e.preventDefault();
+      answerCard(Number(form.dataset.card), (card) => cardAnswer(card, form), onChange);
+    });
+    log.addEventListener("click", (e) => {
+      const form = e.target.closest("[data-skip]")?.closest("form[data-card]");
+      if (form) answerCard(Number(form.dataset.card), () => "Skip that for now.", onChange);
+    });
+    $("form.field", drawer).addEventListener("submit", (e) => {
       e.preventDefault();
       const input = $("#chat-input", drawer);
       const value = input.value.trim();
@@ -380,17 +448,41 @@ export function openChat(text, onChange) {
   else $("#chat-input", drawer).focus();
 }
 
-async function send(text, onChange) {
+function answerCard(index, toText, onChange) {
+  const messages = loadChat();
+  const m = messages[index];
+  if (!m?.card || m.answered) return;
+  const text = toText(m.card);
+  m.answered = true;
+  saveChat(messages);
+  send(text, onChange, "card");
+}
+
+async function send(text, onChange, via) {
   const messages = [...loadChat(), { role: "user", content: text }];
   saveChat(messages);
   renderChat(messages, true);
   try {
-    const history = messages.map(({ role, content }) => ({
+    const history = messages.map(({ role, content, history: remembered }) => ({
       role,
-      content: content.slice(0, 2000),
+      content: (remembered || content).slice(0, 2000),
     }));
-    const { reply, tools_used } = await api("/api/chat", { messages: history });
-    messages.push({ role: "assistant", content: reply, tools: tools_used });
+    const {
+      reply,
+      tools_used,
+      card,
+      history: remembered,
+    } = await api("/api/chat", {
+      messages: history,
+      ...(via ? { via } : {}),
+    });
+    messages.push({
+      role: "assistant",
+      content: reply,
+      tools: tools_used,
+      card,
+      history: remembered,
+    });
     if (
       tools_used.some(
         (t) => !["list_items", "ask_manual", "upcoming", "car_seat_status"].includes(t),
