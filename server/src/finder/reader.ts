@@ -1,5 +1,5 @@
 import type { Env } from "../env.js";
-import { type Knowledge, knowledgeSchema } from "./knowledge.js";
+import { type Knowledge, LIMITS, readKnowledge } from "./knowledge.js";
 import type { PageText } from "./pdf-text.js";
 
 // The server-side reader (D6): Muse Spark, or any OpenAI-compatible chat
@@ -18,6 +18,8 @@ Return JSON with three arrays:
 - "facts": things owners look up later. Each has "kind" (error_code|part|spec|safety|other), "label", "value", "source_page". One fact per error code (label is the code as displayed, e.g. "E4"), per replaceable part, per spec (capacity, detergent type, voltage), per safety warning.
 - "seat_modes": only for car seats: one entry per mode (rear_facing, forward_facing, booster_high_back, booster_backless) with min/max weight and height exactly as printed, "weight_unit" (lb|kg), "height_unit" (in|cm), "min_age_months" if stated, "fit_note" for non-numeric limits, "source_page".
 Any task, fact or seat mode may add "unsure": true when the manual is ambiguous, the text is garbled, or you had to interpret. Flag rather than guess; a person will check it.
+Keep text short: "title" at most ${LIMITS.task_title} characters, "details" at most ${LIMITS.task_details}, "label" at most ${LIMITS.fact_label}, "value" at most ${LIMITS.fact_value}, "fit_note" at most ${LIMITS.fit_note} (summarize; the page number points to the rest).
+At most ${LIMITS.tasks} tasks, ${LIMITS.facts} facts and ${LIMITS.seat_modes} seat modes; keep the most important.
 Return only JSON. Leave an array empty when the manual has nothing for it.`;
 
 /** Picks the pages most likely to hold upkeep and limits, within a size budget. */
@@ -65,11 +67,21 @@ export class ReaderError extends Error {
   }
 }
 
+export interface Distilled {
+  knowledge: Knowledge;
+  usage: ReaderUsage;
+  trace: ReaderTrace;
+  /** Entries whose text was cut to fit (flagged for review). */
+  trimmed: number;
+  /** Entries left out because they couldn't fit. */
+  dropped: number;
+}
+
 export async function distill(
   env: Env,
   args: { itemLabel: string; pages: PageText[] },
   fetchImpl: typeof fetch = fetch,
-): Promise<{ knowledge: Knowledge; usage: ReaderUsage; trace: ReaderTrace }> {
+): Promise<Distilled> {
   const reader = env.reader;
   if (!reader) throw new Error("No server reader is configured.");
   const chosen = selectPages(args.pages, reader.maxChars);
@@ -117,7 +129,7 @@ export async function distill(
   trace.usage = usage;
   try {
     const json = answer.replace(/^```(?:json)?\s*|\s*```$/g, "");
-    return { knowledge: knowledgeSchema.parse(JSON.parse(json)), usage, trace };
+    return { ...readKnowledge(JSON.parse(json)), usage, trace };
   } catch (err) {
     throw new ReaderError(
       `Reader's answer didn't fit: ${(err as Error).message.slice(0, 300)}`,
