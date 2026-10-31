@@ -7,7 +7,7 @@ import {
   withMcpAuth,
 } from "mcp-handler";
 import { bearer, supabaseVerifier, userFrom } from "./auth.js";
-import { type ChatUsage, callTool, messageSchema, runChat } from "./chat.js";
+import { type ChatUsage, callTool, messageSchema, runChat, withCard } from "./chat.js";
 import { householdId, userDb } from "./db.js";
 import { authIssuer, type Env } from "./env.js";
 import { processStoredManual } from "./finder/ingest.js";
@@ -20,6 +20,13 @@ import {
   reportsToday,
   saveReport,
 } from "./report.js";
+import {
+  OFF_TOPIC_CONFIDENCE,
+  OFF_TOPIC_REPLY,
+  type RouteDecision,
+  routeTurn,
+  toolsFor,
+} from "./router.js";
 import { BUDGET_USED, logRun, modelRunsTodayAll, runsToday } from "./runs.js";
 import { MAX_IMAGE_BYTES, readLabel } from "./snap.js";
 
@@ -142,8 +149,30 @@ export function chatHandler(
       tokens_out: 0,
     };
     const started = Date.now();
+    const { messages, via } = parsed.data;
+    const last = messages[messages.length - 1];
+    const previous = messages.slice(0, -1).findLast((m) => m.role === "assistant")?.content;
+    const decision: RouteDecision | null =
+      via === "card"
+        ? { route: "answer", confidence: 1, ms: 0, tokens_in: null }
+        : last?.role === "user"
+          ? await routeTurn(env, { previous, message: last.content }, fetchImpl)
+          : null;
+    const routeTag = decision ? [`route:${decision.route} ${decision.confidence.toFixed(2)}`] : [];
+    if (decision?.route === "off_topic" && decision.confidence >= OFF_TOPIC_CONFIDENCE) {
+      await logRun(db, {
+        kind: "chat",
+        ok: true,
+        model: env.router?.model ?? "router",
+        ms: Date.now() - started,
+        tokens_in: decision.tokens_in,
+        tokens_out: 0,
+        tools_used: routeTag,
+      });
+      return Response.json({ reply: OFF_TOPIC_REPLY, tools_used: [] });
+    }
     try {
-      const result = await runChat(env, auth, parsed.data.messages, fetchImpl, usage);
+      const result = await runChat(env, auth, messages, fetchImpl, usage, toolsFor(decision));
       await logRun(db, {
         kind: "chat",
         ok: true,
@@ -151,9 +180,11 @@ export function chatHandler(
         ms: Date.now() - started,
         tokens_in: usage.tokens_in,
         tokens_out: usage.tokens_out,
-        tools_used: result.tools_used,
+        tools_used: [...routeTag, ...result.tools_used],
       });
-      return Response.json(result);
+      return Response.json(
+        result.card ? { ...result, history: withCard(result.reply, result.card) } : result,
+      );
     } catch (err) {
       await logRun(db, {
         kind: "chat",

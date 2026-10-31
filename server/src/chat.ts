@@ -1,7 +1,9 @@
 import type { AuthInfo, CallToolResult, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { type Card, cardSchema, describeCard } from "./cards.js";
 import type { Env } from "./env.js";
 import { INSTRUCTIONS, registerTools } from "./mcp.js";
+import * as updateItem from "./tools/update-item.js";
 
 // The website's chat: Muse Spark (or any OpenAI-compatible model) with the
 // same 8 tools the MCP server exposes, run as the signed-in user so RLS
@@ -15,7 +17,11 @@ const MAX_TOOL_RESULT_CHARS = 12_000;
 
 const CHAT_INSTRUCTIONS = `${INSTRUCTIONS}
 
-You are Muse, answering inside the Manuals website. Answer in two to five short sentences, plain text, no markdown tables. Use the tools; never guess what a manual says. You can't browse the web here, so to add a manual the user pastes a PDF link or uploads one on the Things page.`;
+You are Muse, answering inside the Manuals website. Answer in two to five short sentences, plain text, no markdown tables. Use the tools; never guess what a manual says. You can't browse the web here, so to add a manual the user pastes a PDF link or uploads one on the Things page.
+
+Forms: when you need details from the user, call show_card instead of asking in prose. It shows a small form (date, number with units, choice, checklist, text) under your message and ends your turn; the answers come back as the user's next message, then save them with the tools.
+
+Setting up a thing (the user says "set up" or "tell you about" it): call list_items and upcoming for it, then ask at most 4 short questions that change its schedule or safety, one show_card at a time. Car seat: who it's for (offer the household's children, or ask the child's name, birth date, weight and height), and the date of manufacture from the seat's label. Appliance: when it was bought and roughly how often it's used a week. Save with update_item and record_measurement. Last, if it has many upkeep tasks, offer a checklist card of them (task ids as values, all checked) so the user can untick ones they don't need; turn unticked ones off with revise_fact (type task, active false). Then sum up in two sentences.`;
 
 type ToolHandler = (input: unknown, ctx: unknown) => Promise<CallToolResult>;
 
@@ -44,8 +50,24 @@ export function chatTools(env: Env): ChatTool[] {
     },
   };
   registerTools(collector as unknown as McpServer, env);
+  updateItem.register(collector as unknown as McpServer, env);
+  tools.push(SHOW_CARD);
   return tools;
 }
+
+const showCardSchema = z.object({
+  message: z.string().trim().min(1).max(600).describe("What you say above the form."),
+  card: cardSchema,
+});
+
+/** Chat-only: ends the turn with a form under Muse's message. Never writes anything. */
+const SHOW_CARD: ChatTool = {
+  name: "show_card",
+  description:
+    "Shows the user a small form under your message and ends your turn. Use it to ask for dates, numbers with units, a choice, or a checklist. Up to 4 fields.",
+  schema: showCardSchema,
+  handler: async () => ({ content: [{ type: "text", text: "Shown." }] }),
+};
 
 export const messageSchema = z.object({
   messages: z
@@ -57,6 +79,8 @@ export const messageSchema = z.object({
     )
     .min(1)
     .max(60),
+  /** "card" when the message is a filled form: it is answering Muse, no need to route it. */
+  via: z.enum(["card"]).optional(),
 });
 
 type Message =
@@ -79,6 +103,7 @@ export interface ChatUsage {
 export interface ChatReply {
   reply: string;
   tools_used: string[];
+  card?: Card;
 }
 
 export async function runChat(
@@ -88,10 +113,13 @@ export async function runChat(
   fetchImpl: typeof fetch = fetch,
   /** Filled in as the model answers, so the caller can log it even after a failure. */
   usage?: ChatUsage,
+  /** Tool names to offer (from the router), or null/undefined for all of them. */
+  only?: string[] | null,
 ): Promise<ChatReply> {
   const reader = env.reader;
   if (!reader) throw new Error("The chat model isn't configured (READER_* settings).");
-  const tools = chatTools(env);
+  const offered = only ? new Set(only.length ? [...only, SHOW_CARD.name] : []) : null;
+  const tools = chatTools(env).filter((t) => !offered || offered.has(t.name));
   const byName = new Map(tools.map((t) => [t.name, t]));
   const definitions = tools.map((t) => ({
     type: "function",
@@ -118,7 +146,7 @@ export async function runChat(
       body: JSON.stringify({
         model: env.chatModel ?? reader.model,
         messages,
-        tools: definitions,
+        ...(definitions.length ? { tools: definitions } : {}),
         max_tokens: 1200,
       }),
       signal: AbortSignal.timeout(45_000),
@@ -142,7 +170,21 @@ export async function runChat(
     }
 
     messages.push({ role: "assistant", content: message?.content ?? null, tool_calls: calls });
+    let card: { message: string; card: Card } | undefined;
     for (const call of calls) {
+      if (call.function.name === SHOW_CARD.name && byName.has(SHOW_CARD.name)) {
+        const parsed = parseCard(call.function.arguments);
+        messages.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: "error" in parsed ? `Invalid form: ${parsed.error}` : "Shown.",
+        });
+        if (!("error" in parsed)) {
+          card = parsed;
+          used.push(call.function.name);
+        }
+        continue;
+      }
       messages.push({
         role: "tool",
         tool_call_id: call.id,
@@ -150,11 +192,29 @@ export async function runChat(
       });
       used.push(call.function.name);
     }
+    if (card) return { reply: card.message, tools_used: used, card: card.card };
   }
   return {
     reply: "That took more steps than I can do at once. Could you ask a narrower question?",
     tools_used: used,
   };
+}
+
+function parseCard(args: string): { message: string; card: Card } | { error: string } {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(args || "{}");
+  } catch {
+    return { error: "the arguments weren't valid JSON." };
+  }
+  const parsed = showCardSchema.safeParse(raw);
+  if (!parsed.success) return { error: parsed.error.message.slice(0, 1_000) };
+  return parsed.data;
+}
+
+/** The history text for an assistant reply with a form, so Muse remembers what it asked. */
+export function withCard(reply: string, card?: Card): string {
+  return card ? `${reply}\n\n${describeCard(card)}` : reply;
 }
 
 async function runTool(tool: ChatTool | undefined, call: ToolCall, ctx: unknown): Promise<string> {
