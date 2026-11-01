@@ -90,7 +90,14 @@ function lane(over: { route?: string; safety?: number; thing?: SnapshotItem } = 
     reason: "photo",
     thing: over.thing ?? null,
     top: [],
-    scores: { row: 0, exists: 0, judgment: 0.2, safety: over.safety ?? 0.03, thing: 0, remember: 0 },
+    scores: {
+      row: 0,
+      exists: 0,
+      judgment: 0.2,
+      safety: over.safety ?? 0.03,
+      thing: 0,
+      remember: 0,
+    },
     ms: 5,
     tokens_in: 100,
   };
