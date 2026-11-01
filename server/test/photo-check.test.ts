@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readEnv } from "../src/env.js";
 import { receiptHandler, snapHandler } from "../src/http.js";
-import { BOX_AT, checkPhoto, checkRead, DOUBT_BELOW, PRESENT_AT } from "../src/photo-check.js";
+import {
+  BOX_AT,
+  checkPhoto,
+  checkRead,
+  DOUBT_BELOW,
+  PRESENT_AT,
+  RETRY_WAIT_MS,
+} from "../src/photo-check.js";
 import { testAuth } from "./helpers.js";
 
 const base = {
@@ -538,5 +545,80 @@ describe("snap and receipt answer with the box", () => {
       doubtful: ["purchased_on"],
       boxes: { purchased_on: BOX },
     });
+  });
+});
+
+describe("one quick retry when Jev's image endpoint answers 503", () => {
+  const unavailable = () =>
+    Response.json({ error: "Image processing is unavailable." }, { status: 503 });
+  /** Answers each call with the next reply in turn, and notes when it was called. */
+  const inTurn = (replies: Array<() => Response>, at: number[] = []) =>
+    (async () => {
+      at.push(Date.now());
+      const next = replies.shift();
+      if (!next) throw new Error("no more replies");
+      return next();
+    }) as unknown as typeof fetch;
+  const doubtsModel = () =>
+    Response.json({ answers: { brand: { noul: 0.97 }, model: { noul: 0.05 } } });
+  const READ = { brand: "Whirlpool", model: "WTW5OOODW1" };
+
+  test("the photo check tries once more after a short wait, and keeps the answer", async () => {
+    const at: number[] = [];
+    const check = await checkPhoto(env, PHOTO, inTurn([unavailable, () => jevBody(0.07, 0.9)], at));
+    expect(check?.retake).toBe("no_label");
+    expect(at).toHaveLength(2);
+    expect((at[1] ?? 0) - (at[0] ?? 0)).toBeGreaterThanOrEqual(RETRY_WAIT_MS - 20);
+  });
+
+  test("only once: a second 503 still lets the photo through", async () => {
+    const at: number[] = [];
+    const check = await checkPhoto(env, PHOTO, inTurn([unavailable, unavailable, unavailable], at));
+    expect(check).toBeNull();
+    expect(at).toHaveLength(2);
+  });
+
+  test("other failures are not retried", async () => {
+    for (const status of [500, 429, 400]) {
+      const at: number[] = [];
+      const reply = () => new Response("no", { status });
+      expect(await checkPhoto(env, PHOTO, inTurn([reply, reply], at))).toBeNull();
+      expect(at).toHaveLength(1);
+    }
+  });
+
+  test("the second check and the Box call each get their retry", async () => {
+    const box = { top: 0.4, bottom: 0.48, left: 0.2, right: 0.7 };
+    const where = () =>
+      Response.json({
+        answers: { box_model: { box, confidence: 0.8 }, present_model: { noul: 0.95 } },
+      });
+    const at: number[] = [];
+    const check = await checkRead(
+      env,
+      PHOTO,
+      READ,
+      "label",
+      inTurn([unavailable, doubtsModel, unavailable, where], at),
+    );
+    expect(at).toHaveLength(4);
+    expect(check?.doubtful).toEqual(["model"]);
+    expect(check?.boxes).toEqual({ model: box });
+  });
+
+  test("no Box retry when the time left would not cover it", async () => {
+    const at: number[] = [];
+    const check = await checkRead(
+      env,
+      PHOTO,
+      READ,
+      "label",
+      inTurn([doubtsModel, unavailable, () => Response.json({ answers: {} })], at),
+      // Enough for the Box call itself, not for a wait and a second try.
+      Date.now() + 1_200,
+    );
+    expect(at).toHaveLength(2);
+    expect(check?.doubtful).toEqual(["model"]);
+    expect(check?.boxes).toBeUndefined();
   });
 });

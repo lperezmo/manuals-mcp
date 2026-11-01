@@ -9,6 +9,45 @@ import type { Env } from "./env.js";
 /** Below this, the answer counts as a confident no. */
 export const RETAKE_BELOW = 0.12;
 
+// Jev's image endpoint now and then answers HTTP 503 "Image processing is
+// unavailable." in about 12 ms, and the same call works a moment later (seen
+// in the jev-live runs). So a 503 gets one more try after a short wait, inside
+// the call's own time cap, and only when at least a second of that cap is
+// left. Any other failure, or a second 503, fails open as before.
+
+/** The wait before the one retry of a 503. */
+export const RETRY_WAIT_MS = 300;
+/** The retry needs at least this much of the call's time cap left after the wait. */
+const RETRY_MIN_MS = 1_000;
+
+/** One Jev call with an image, capped at `ms` in all, with the one retry of a 503. */
+async function askJev(
+  router: NonNullable<Env["router"]>,
+  body: object,
+  ms: number,
+  fetchImpl: typeof fetch,
+): Promise<Response> {
+  const deadline = Date.now() + ms;
+  const call = (cap: number) =>
+    fetchImpl(`${router.baseUrl}/v1/systemone`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${router.apiKey}`,
+        "TypeSafe-Danger-Zone-Images": "true",
+      },
+      body: JSON.stringify({ model: router.model, ...body }),
+      signal: AbortSignal.timeout(cap),
+    });
+  const res = await call(ms);
+  if (res.status !== 503) return res;
+  const left = deadline - Date.now() - RETRY_WAIT_MS;
+  if (left < RETRY_MIN_MS) return res;
+  await res.body?.cancel().catch(() => {});
+  await new Promise((r) => setTimeout(r, RETRY_WAIT_MS));
+  return call(left);
+}
+
 export type Retake = "no_label" | "blurry";
 
 export interface PhotoCheck {
@@ -39,15 +78,9 @@ export async function checkPhoto(
   if (!router || !format) return null;
   const started = Date.now();
   try {
-    const res = await fetchImpl(`${router.baseUrl}/v1/systemone`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${router.apiKey}`,
-        "TypeSafe-Danger-Zone-Images": "true",
-      },
-      body: JSON.stringify({
-        model: router.model,
+    const res = await askJev(
+      router,
+      {
         state: { photo: `${what}-photo` },
         assets: { [`${what}-photo`]: { type: "image", format, data_base64: image.base64 } },
         questions: {
@@ -58,9 +91,10 @@ export async function checkPhoto(
               "Is the printed text in `photo` sharp, in focus and lit well enough to read?",
           },
         },
-      }),
-      signal: AbortSignal.timeout(5_000),
-    });
+      },
+      5_000,
+      fetchImpl,
+    );
     if (!res.ok) return null;
     const body = (await res.json()) as {
       answers?: { label?: { noul?: number }; sharp?: { noul?: number } };
@@ -232,21 +266,16 @@ export async function checkRead(
   if (!Object.keys(questions).length) return null;
   const started = Date.now();
   try {
-    const res = await fetchImpl(`${router.baseUrl}/v1/systemone`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${router.apiKey}`,
-        "TypeSafe-Danger-Zone-Images": "true",
-      },
-      body: JSON.stringify({
-        model: router.model,
+    const res = await askJev(
+      router,
+      {
         state: { photo: `${what}-read` },
         assets: { [`${what}-read`]: { type: "image", format, data_base64: image.base64 } },
         questions,
-      }),
-      signal: AbortSignal.timeout(5_000),
-    });
+      },
+      5_000,
+      fetchImpl,
+    );
     if (!res.ok) return null;
     const body = (await res.json()) as {
       answers?: Record<string, { noul?: number }>;
@@ -363,21 +392,16 @@ export async function locateDoubts(
   }
   if (!Object.keys(questions).length) return null;
   try {
-    const res = await fetchImpl(`${router.baseUrl}/v1/systemone`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${router.apiKey}`,
-        "TypeSafe-Danger-Zone-Images": "true",
-      },
-      body: JSON.stringify({
-        model: router.model,
+    const res = await askJev(
+      router,
+      {
         state: { photo: `${what}-where` },
         assets: { [`${what}-where`]: { type: "image", format, data_base64: image.base64 } },
         questions,
-      }),
-      signal: AbortSignal.timeout(ms),
-    });
+      },
+      ms,
+      fetchImpl,
+    );
     if (!res.ok) return null;
     const body = (await res.json()) as {
       answers?: Record<string, { noul?: number; box?: unknown; confidence?: number }>;
