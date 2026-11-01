@@ -348,23 +348,80 @@ const TOOL_NAMES = {
 };
 // Tools that are part of how Muse talks, not something it did for you.
 const QUIET_TOOLS = new Set(["show_card", "fast_lane"]);
+const HISTORY_ICON =
+  '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l3 2"></path></svg>';
 const CAMERA_ICON =
   '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg>';
 // The photo waiting to be sent: the full image for Muse and a small one for the bubble.
 let pendingPhoto = null;
 
-function loadChat() {
+// Chats live on this device (they survive closing the app): the newest 20,
+// 30 messages each. CURRENT_KEY says which one is open.
+const CHATS_KEY = "manuals-chats";
+const CURRENT_KEY = "manuals-chat-current";
+
+function loadChats() {
   try {
-    return JSON.parse(sessionStorage.getItem(CHAT_KEY) || "[]");
+    const chats = JSON.parse(localStorage.getItem(CHATS_KEY) || "null");
+    if (Array.isArray(chats)) return chats;
+    // Once: bring over the chat kept in this tab before chats were saved.
+    const old = JSON.parse(sessionStorage.getItem(CHAT_KEY) || "[]");
+    if (!old.length) return [];
+    const id = crypto.randomUUID();
+    localStorage.setItem(CURRENT_KEY, id);
+    return [{ id, updated: new Date().toISOString(), messages: old }];
   } catch {
     return [];
   }
 }
 
-function saveChat(messages) {
+function storeChats(chats) {
   try {
-    sessionStorage.setItem(CHAT_KEY, JSON.stringify(messages.slice(-30)));
+    localStorage.setItem(CHATS_KEY, JSON.stringify(chats.slice(0, 20)));
   } catch {}
+}
+
+function currentChat() {
+  try {
+    return localStorage.getItem(CURRENT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function openChatId(id) {
+  try {
+    if (id) localStorage.setItem(CURRENT_KEY, id);
+    else localStorage.removeItem(CURRENT_KEY);
+  } catch {}
+}
+
+function loadChat() {
+  const id = currentChat();
+  return (id && loadChats().find((c) => c.id === id)?.messages) || [];
+}
+
+/** Saves the open chat and moves it to the top of the list; an empty one isn't kept. */
+function saveChat(messages, id = currentChat()) {
+  if (!messages.length) return;
+  const chatId = id || crypto.randomUUID();
+  if (!id) openChatId(chatId);
+  const others = loadChats().filter((c) => c.id !== chatId);
+  storeChats([{ id: chatId, updated: new Date().toISOString(), messages: messages.slice(-30) }, ...others]);
+}
+
+/** The chat list: each chat by its first question, newest first. */
+function renderChatList() {
+  const log = $(".chat-log", drawer);
+  const chats = loadChats();
+  log.innerHTML = chats.length
+    ? `<p class="small muted" style="margin:0">Previous chats</p>${chats
+        .map((c) => {
+          const first = c.messages.find((m) => m.role === "user")?.content || "A chat";
+          return `<button type="button" class="chat-pick${c.id === currentChat() ? " open" : ""}" data-chat="${esc(c.id)}"><span>${esc(first.slice(0, 90))}</span><span class="small muted">${esc(ago(c.updated))}</span></button>`;
+        })
+        .join("")}`
+    : '<p class="muted small">No previous chats yet.</p>';
 }
 
 let drawer;
@@ -564,8 +621,9 @@ export function openChat(text, onChange, { once = false } = {}) {
     drawer.setAttribute("aria-label", "Chat with Muse");
     drawer.innerHTML = `
       <div class="chat-head">
+        <button type="button" class="quiet small chat-icon" data-history aria-label="Previous chats" title="Previous chats">${HISTORY_ICON}</button>
         <h2 style="font-size:20px;flex:1">Ask Muse</h2>
-        <button type="button" class="quiet small" data-clear>Clear</button>
+        <button type="button" class="quiet small" data-clear>New chat</button>
         <button type="button" class="quiet small" data-close aria-label="Close chat">Close</button>
       </div>
       <div class="chat-log" aria-live="polite"></div>
@@ -592,10 +650,13 @@ export function openChat(text, onChange, { once = false } = {}) {
       { above: true },
     );
     $("[data-close]", drawer).addEventListener("click", () => drawer.classList.add("hidden"));
+    // A new chat; the old one stays under Previous chats.
     $("[data-clear]", drawer).addEventListener("click", () => {
-      saveChat([]);
+      openChatId(null);
       renderChat([]);
+      $("#chat-input", drawer).focus();
     });
+    $("[data-history]", drawer).addEventListener("click", renderChatList);
     const log = $(".chat-log", drawer);
     log.addEventListener("submit", (e) => {
       const form = e.target.closest("form[data-card]");
@@ -612,6 +673,12 @@ export function openChat(text, onChange, { once = false } = {}) {
       if (!exact.hidden) exact.focus();
     });
     log.addEventListener("click", (e) => {
+      const pick = e.target.closest("[data-chat]");
+      if (pick) {
+        openChatId(pick.dataset.chat);
+        renderChat(loadChat());
+        return;
+      }
       if (e.target.closest("[data-more]")) {
         send("Tell me more.", onChange, "more");
         return;
@@ -768,12 +835,12 @@ async function recoverTurn(turn, onChange) {
 
 function settleTurn(turn, message) {
   recovering.delete(turn);
-  const messages = loadChat();
-  const i = messages.findIndex((m) => m.pending === turn);
-  if (i < 0) return;
-  messages[i] = message;
-  saveChat(messages);
-  if (drawer && !drawer.classList.contains("hidden")) renderChat(messages);
+  // The turn may belong to a chat that isn't the open one any more.
+  const chat = loadChats().find((c) => c.messages.some((m) => m.pending === turn));
+  if (!chat) return;
+  const messages = chat.messages.map((m) => (m.pending === turn ? message : m));
+  saveChat(messages, chat.id);
+  if (chat.id === currentChat() && drawer && !drawer.classList.contains("hidden")) renderChat(messages);
 }
 
 // Line icons for things, 24px grid, drawn with currentColor. Matched on the
