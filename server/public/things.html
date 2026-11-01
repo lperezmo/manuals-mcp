@@ -1151,7 +1151,13 @@
             msg.textContent = "Couldn't read a receipt in that one. Try a closer photo in good light, or type it in.";
             return null;
           }
-          toast(out.note || out.warranty?.summary.split(". ")[0] || "Saved.");
+          if (out.doubtful?.length) {
+            const names = { store: "store", purchased_on: "purchase date", price: "price", warranty_months: "warranty length" };
+            const list = out.doubtful.map((f) => names[f] || f).join(" and ");
+            toast(`Saved. Check the ${list} against the photo; ${out.doubtful.length > 1 ? "they" : "it"} didn't look right.`);
+          } else {
+            toast(out.note || out.warranty?.summary.split(". ")[0] || "Saved.");
+          }
           after();
         };
         $("#receipt-photo").addEventListener("change", async (e) => {
@@ -1368,7 +1374,7 @@
         function partial() {
           redraw = partial;
           const got = [thing.brand && `<strong>${esc(thing.brand)}</strong>`, thing.model && `model <strong>${esc(thing.model)}</strong>`].filter(Boolean).join(", ");
-          const missing = !thing.model ? "the model number" : "all of it clearly";
+          const missing = !thing.model ? "the model number" : thing.doubtful?.includes("model") ? "the model number for sure" : "all of it clearly";
           step(`<div class="stack">
             ${image ? `<img src="${image}" alt="Your label photo" class="wizard-photo">` : ""}
             <h2>Almost</h2>
@@ -1423,7 +1429,7 @@
         async function readImage(getImage, force = false) {
           // A closer photo after "Almost" adds to what we read; any other photo starts over.
           if (redraw !== partial) {
-            Object.assign(thing, { nickname: "", brand: "", model: "", serial: "", category: null, kind: "appliance" });
+            Object.assign(thing, { nickname: "", brand: "", model: "", serial: "", category: null, kind: "appliance", doubtful: [] });
           }
           try {
             image = await getImage();
@@ -1437,6 +1443,7 @@
             thing.brand = label.brand || thing.brand;
             thing.model = label.model || thing.model;
             thing.serial = label.serial || thing.serial;
+            thing.doubtful = label.doubtful || [];
             if (!thing.model || label.unsure) return partial();
             confirm();
           } catch (err) {

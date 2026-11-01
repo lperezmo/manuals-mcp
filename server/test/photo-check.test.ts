@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readEnv } from "../src/env.js";
 import { snapHandler } from "../src/http.js";
-import { checkPhoto } from "../src/photo-check.js";
+import { checkPhoto, checkRead, DOUBT_BELOW } from "../src/photo-check.js";
 import { testAuth } from "./helpers.js";
 
 const base = {
@@ -107,19 +107,103 @@ describe("snap with the photo check", () => {
     expect(logged[0]).toMatchObject({ kind: "snap", model: "jev-latest", tokens_in: 2128 });
   });
 
-  test("Read it anyway skips the check and asks Muse", async () => {
+  test("Read it anyway skips the photo check and asks Muse", async () => {
     const { verify, mint } = await testAuth();
     fakeSupabase([]);
-    let jevAsked = false;
-    const net = (async (url: string) => {
+    const asked: string[][] = [];
+    const net = (async (url: string, init: RequestInit) => {
       if (url.includes("typesafe")) {
-        jevAsked = true;
-        return jevBody(0, 0);
+        const sent = JSON.parse(String(init.body));
+        asked.push(Object.keys(sent.questions));
+        return Response.json({
+          answers: { brand: { noul: 0.97 }, model: { noul: 0.93 } },
+        });
       }
       return Response.json(MUSE_LABEL);
     }) as unknown as typeof fetch;
     const res = await snapHandler(env, verify, net)(snap(await mint(), { force: true }));
-    expect((await res.json()).model).toBe("WTW5000DW1");
-    expect(jevAsked).toBe(false);
+    const out = await res.json();
+    expect(out.model).toBe("WTW5000DW1");
+    expect(out.doubtful).toBeUndefined();
+    // Only the second look at what Muse read, not the label/sharp check.
+    expect(asked).toEqual([["brand", "model"]]);
+  });
+
+  test("a model number Jev doubts sends the wizard to check it", async () => {
+    const { verify, mint } = await testAuth();
+    const logged: any[] = [];
+    fakeSupabase(logged);
+    const net = (async (url: string, init: RequestInit) => {
+      if (!url.includes("typesafe")) return Response.json(MUSE_LABEL);
+      const sent = JSON.parse(String(init.body));
+      if ("sharp" in sent.questions) return jevBody(0.95, 0.9);
+      return Response.json({
+        answers: { brand: { noul: 0.96 }, model: { noul: 0.04 } },
+        usage: { input_tokens: 2200 },
+      });
+    }) as unknown as typeof fetch;
+    const res = await snapHandler(env, verify, net)(snap(await mint()));
+    const out = await res.json();
+    expect(out).toMatchObject({ model: "WTW5000DW1", unsure: true, doubtful: ["model"] });
+    expect(JSON.parse(logged.at(-1).raw_output).check.scores).toEqual({ brand: 0.96, model: 0.04 });
+  });
+});
+
+describe("checkRead", () => {
+  const answers = (scores: Record<string, number>) =>
+    (async () =>
+      Response.json({
+        answers: Object.fromEntries(Object.entries(scores).map(([k, v]) => [k, { noul: v }])),
+        usage: { input_tokens: 2300 },
+      })) as unknown as typeof fetch;
+
+  test("asks one question per value read, with the photo sent once", async () => {
+    let sent: any;
+    let headers: Headers | undefined;
+    await checkRead(
+      env,
+      PHOTO,
+      { found: true, brand: "GE", model: "GSWWD09S1A09B", serial: null, unsure: false },
+      "label",
+      (async (_u: string, init: RequestInit) => {
+        sent = JSON.parse(String(init.body));
+        headers = new Headers(init.headers);
+        return Response.json({ answers: {} });
+      }) as unknown as typeof fetch,
+    );
+    expect(headers?.get("TypeSafe-Danger-Zone-Images")).toBe("true");
+    expect(Object.keys(sent.assets)).toEqual(["label-read"]);
+    expect(Object.keys(sent.questions)).toEqual(["brand", "model"]);
+    expect(sent.questions.model.instructions).toContain('"GSWWD09S1A09B"');
+  });
+
+  test("marks only confident noes on a receipt as doubtful", async () => {
+    const read = {
+      found: true,
+      store: "Appliance Barn",
+      purchased_on: "2026-06-01",
+      price: 649,
+      warranty_months: 24,
+    };
+    const check = await checkRead(
+      env,
+      PHOTO,
+      read,
+      "receipt",
+      answers({ store: 0.9, purchased_on: 0.08, price: DOUBT_BELOW, warranty_months: 0.31 }),
+    );
+    expect(check?.doubtful).toEqual(["purchased_on"]);
+    expect(check?.tokens_in).toBe(2300);
+  });
+
+  test("leaves the read alone when Jev is unset, down, WebP or there's nothing to check", async () => {
+    const down = (async () => new Response("no", { status: 503 })) as unknown as typeof fetch;
+    const read = { model: "WTW5000DW1" };
+    expect(await checkRead(env, PHOTO, read, "label", down)).toBeNull();
+    expect(await checkRead(readEnv(base), PHOTO, read, "label", answers({ model: 0 }))).toBeNull();
+    expect(
+      await checkRead(env, { ...PHOTO, mime: "image/webp" }, read, "label", answers({ model: 0 })),
+    ).toBeNull();
+    expect(await checkRead(env, PHOTO, { model: " " }, "label", answers({ model: 0 }))).toBeNull();
   });
 });
