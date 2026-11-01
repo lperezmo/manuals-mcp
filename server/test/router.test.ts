@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { cardSchema, describeCard } from "../src/cards.js";
-import { runChat } from "../src/chat.js";
+import { ASK_NOW, runChat } from "../src/chat.js";
 import { readEnv } from "../src/env.js";
 import { chatHandler } from "../src/http.js";
 import { routeTurn, toolsFor } from "../src/router.js";
@@ -255,5 +255,93 @@ describe("cards", () => {
     expect(text).toContain("[Form: About the car seat]");
     expect(text).toContain("Who is it for? (Mia / Someone new)");
     expect(text).toContain("Their weight (lb or kg)");
+  });
+});
+
+describe("setting up a thing", () => {
+  const card = (message: string) =>
+    Response.json({
+      choices: [
+        {
+          message: {
+            content: null,
+            tool_calls: [
+              {
+                id: "c2",
+                type: "function",
+                function: {
+                  name: "show_card",
+                  arguments: JSON.stringify({ message, card: CARD }),
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+  test("Muse saying it will ask, then stopping, still ends with a form", async () => {
+    const { verify, mint } = await testAuth();
+    fakeSupabase([]);
+    let jevCalled = false;
+    const toMuse: any[] = [];
+    const net = (async (url: string, init: RequestInit) => {
+      if (url.includes("typesafe")) jevCalled = true;
+      toMuse.push(JSON.parse(String(init.body)));
+      if (toMuse.length === 1)
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content:
+                  "Got it, let's get your Galanz Microwave set up. I'll ask a few quick things to tune its upkeep schedule.",
+              },
+            },
+          ],
+        });
+      return card("When did you buy it?");
+    }) as unknown as typeof fetch;
+    const res = await chatHandler(
+      env,
+      verify,
+      net,
+    )(ask("Set up the Microwave with me: ask what you need to know.", await mint()));
+    const body = await res.json();
+    expect(jevCalled).toBe(false);
+    expect(body.card?.fields).toHaveLength(3);
+    expect(body.reply).toStartWith("Got it, let's get your Galanz Microwave set up.");
+    expect(body.reply).toEndWith("When did you buy it?");
+    expect(toMuse[0].tools.map((t: any) => t.function.name)).toContain("show_card");
+    expect(toMuse[1].messages.at(-1)).toEqual({ role: "user", content: ASK_NOW });
+  });
+
+  test("a question in prose is left alone, and other turns are never pushed", async () => {
+    const { mint, verify } = await testAuth();
+    const auth = await verify(await mint());
+    let calls = 0;
+    const says = (content: string) =>
+      (async () => {
+        calls++;
+        return Response.json({ choices: [{ message: { content } }] });
+      }) as unknown as typeof fetch;
+    const asked = await runChat(
+      env,
+      auth!,
+      [{ role: "user", content: "set up" }],
+      says("When did you buy it?"),
+      undefined,
+      null,
+      { mustAsk: true },
+    );
+    expect(asked.reply).toBe("When did you buy it?");
+    expect(calls).toBe(1);
+    const plain = await runChat(
+      env,
+      auth!,
+      [{ role: "user", content: "hi" }],
+      says("I'll check that."),
+    );
+    expect(plain.reply).toBe("I'll check that.");
+    expect(calls).toBe(2);
   });
 });

@@ -743,6 +743,51 @@ button:disabled {
 .chat form.field {
   padding: 12px;
   border-top: 1px solid var(--line);
+  flex-wrap: nowrap;
+}
+.chat form.field input {
+  flex: 1 1 auto;
+}
+/* Photos in the chat: the camera button, the one waiting to send, and in a bubble. */
+.chat-attach {
+  flex: none;
+  width: 48px;
+  min-height: 48px;
+  padding: 0;
+  cursor: pointer;
+}
+.chat-pending {
+  position: relative;
+  align-self: flex-start;
+  margin: 0 12px -4px;
+  padding-top: 8px;
+}
+.chat-pending[hidden] {
+  display: none;
+}
+.chat-pending img {
+  display: block;
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 12px;
+}
+.chat-pending button {
+  position: absolute;
+  top: 0;
+  right: -10px;
+  min-height: 28px;
+  width: 28px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--card);
+}
+.msg-photo {
+  display: block;
+  max-width: 100%;
+  max-height: 240px;
+  margin-bottom: 6px;
+  border-radius: 12px;
 }
 /* A form Muse attaches to a reply. */
 .card-form {
