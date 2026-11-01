@@ -518,8 +518,14 @@ export async function pickBest(
     const scored = named
       .map((c, i) => ({ c, p: body.answers?.[`m${i}`]?.noul ?? 0 }))
       .sort((a, b) => b.p - a.p);
-    const [top, next] = scored;
-    if (!top || top.p < PICK_FLOOR || (next && top.p - next.p < PICK_MARGIN)) return candidates;
+    let [top, next] = scored;
+    if (!top || top.p < PICK_FLOOR) return candidates;
+    if (next && top.p - next.p < PICK_MARGIN) {
+      // A tie between two right manuals: the one covering fewer models is the more specific.
+      const covers = (c: Candidate) => c.models?.length ?? 1;
+      if (next.p < PICK_FLOOR || covers(top.c) === covers(next.c)) return candidates;
+      if (covers(next.c) < covers(top.c)) [top, next] = [next, top];
+    }
     const winner = { ...top.c, best: true };
     return [winner, ...candidates.filter((c) => c !== top.c)];
   } catch {

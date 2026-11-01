@@ -37,6 +37,16 @@ console.log(
 );
 
 if (env.crawl) {
+  // Access only, no Crawl4AI token: /health needs no token, so this isolates Cloudflare.
+  const health = await fetch(`${env.crawl.baseUrl}/health`, {
+    headers: {
+      "CF-Access-Client-Id": env.crawl.accessId ?? "",
+      "CF-Access-Client-Secret": env.crawl.accessSecret ?? "",
+    },
+  });
+  console.log(
+    `cr /health with Access headers only: HTTP ${health.status}, server=${health.headers.get("server")}, cf-ray=${health.headers.has("cf-ray")}`,
+  );
   // Through the tunnel: Access lets the service token in, then Crawl4AI checks its own token.
   const links = await pdfLinksFromPages(
     env.crawl,

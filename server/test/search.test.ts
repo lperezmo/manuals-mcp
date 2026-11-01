@@ -215,6 +215,14 @@ describe("narrowing the options", () => {
     expect(out[1]?.best).toBeUndefined();
   });
 
+  test("a tie between two right manuals goes to the one covering fewer models", async () => {
+    const wide = { ...cand("P08", "x"), models: ["A1", "A2", "A3", "A4", "A5", "A6"] };
+    const narrow = { ...cand("RT", "y"), models: ["A1", "A2", "A3", "A4", "A5"] };
+    const out = await pickBest(jevEnv, item, [wide, narrow], jev([0.9, 0.9]));
+    expect(out[0]?.title).toBe("RT");
+    expect(out[0]?.best).toBe(true);
+  });
+
   test("a close call leaves the order alone", async () => {
     const list = [cand("A", "a"), cand("B", "b")];
     const out = await pickBest(jevEnv, item, list, jev([0.7, 0.65]));
