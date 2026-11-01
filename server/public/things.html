@@ -424,7 +424,7 @@
             </div>
             <div class="row">
               <button type="button" id="ask">${ic("forum")}Ask about the ${esc(item.nickname.toLowerCase())}</button>
-              ${manual ? `<button type="button" class="quiet" id="setup">${ic("auto_awesome")}Set it up with Muse</button>` : ""}
+              ${manual && !(item.purchased_on && item.uses_per_week) ? `<button type="button" class="quiet" id="setup">${ic("auto_awesome")}Set it up with Muse</button>` : ""}
               ${item.archived_at ? "" : `<button type="button" class="quiet" id="catchup-btn" aria-controls="catchup">${ic("history")}${past && past.condition !== "new" ? "Catch it up again" : "Not new? Catch it up"}</button>`}
               ${manual?.source_url && !isExample(manual.source_url) ? `<a class="button quiet" href="${esc(manual.source_url)}" rel="noopener noreferrer" target="_blank">${ic("menu_book")}Open the manual</a>` : manual?.source_url ? '<span class="small muted">Example manual, no PDF to open</span>' : ""}
             </div>
@@ -575,7 +575,7 @@
         $("#ask").addEventListener("click", () => openChat(undefined, () => detail(id)));
         // Muse asks a few questions with small forms (who it's for, when it was bought) and trims the task list.
         $("#setup")?.addEventListener("click", () =>
-          openChat(`Set up the ${item.nickname} with me: ask what you need to know.`, () => detail(id)),
+          openChat(`Set up the ${item.nickname} with me: ask what you need to know.`, () => detail(id), { once: true }),
         );
         const saveLook = async (change) => {
           const { error } = await supa.from("items").update(change).eq("id", id);

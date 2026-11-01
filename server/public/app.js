@@ -375,8 +375,9 @@ function renderChat(messages, busy) {
     messages
       .map((m, i) => {
         const shown = [...new Set(m.tools ?? [])].filter((t) => !QUIET_TOOLS.has(t));
+        // One quiet line above the answer: what Muse looked at or did, not part of what it said.
         const tools = shown.length
-          ? `<div class="chips">${shown.map((t) => `<span class="chip ${t === "revise_fact" ? "teal strong" : ""}">${esc(TOOL_NAMES[t] || t)}</span>`).join("")}</div>`
+          ? `<div class="msg-tools">${shown.map((t) => `<span${t === "revise_fact" ? ' class="changed"' : ""}>${esc(TOOL_NAMES[t] || t)}</span>`).join(" · ")}</div>`
           : "";
         const card = m.card && !m.answered ? cardForm(m.card, i) : "";
         const photo = m.photo?.startsWith("data:image/")
@@ -387,7 +388,7 @@ function renderChat(messages, busy) {
           m.fast && i === messages.length - 1 && !busy
             ? '<div class="row" style="margin-top:8px"><button type="button" class="quiet small" data-more>Tell me more</button></div>'
             : "";
-        return `<div class="msg ${m.role === "user" ? "user" : "muse"}">${photo}${esc(m.content)}${tools}${card}${more}</div>`;
+        return `<div class="msg ${m.role === "user" ? "user" : "muse"}">${tools}${photo}${esc(m.content)}${card}${more}</div>`;
       })
       .join("") + (busy ? '<div class="msg muse muted">Reading…</div>' : "");
   if (!messages.length && !busy) {
@@ -552,7 +553,11 @@ export function typeAhead(input, onPick, { above = false } = {}) {
 }
 
 /** Opens the chat drawer, optionally sending a message right away. */
-export function openChat(text, onChange) {
+/**
+ * Opens the chat drawer and sends `text` if given. With `once`, a message
+ * already in this chat (a setup button tapped again) just opens the chat.
+ */
+export function openChat(text, onChange, { once = false } = {}) {
   if (!drawer) {
     drawer = document.createElement("section");
     drawer.className = "chat";
@@ -643,8 +648,11 @@ export function openChat(text, onChange) {
     });
   }
   drawer.classList.remove("hidden");
-  renderChat(loadChat());
-  if (text) send(text, onChange);
+  const past = loadChat();
+  renderChat(past);
+  const sent = once && past.some((m) => m.role === "user" && m.content === text);
+  if (text && !sent) send(text, onChange);
+  else if (sent) $(".chat-log", drawer).lastElementChild?.scrollIntoView({ block: "end" });
   else $("#chat-input", drawer).focus();
 }
 

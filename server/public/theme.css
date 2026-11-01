@@ -355,6 +355,29 @@ textarea {
   min-height: 90px;
   resize: vertical;
 }
+/* Ticks and dots stay their own size, not stretched like a text box */
+input[type="radio"],
+input[type="checkbox"] {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  accent-color: var(--accent);
+}
+/* What Muse did for an answer, set apart from what it said */
+.msg-tools {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-style: italic;
+  color: var(--ink2);
+}
+.msg-tools .changed {
+  color: var(--accent);
+  font-style: normal;
+  font-weight: 600;
+}
 :focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 2px;
