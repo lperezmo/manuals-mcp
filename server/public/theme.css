@@ -311,18 +311,6 @@ mark {
 .chip.strong {
   font-weight: 700;
 }
-/* House Atlas views saved by the household, as chips on the home page */
-.view-chips {
-  gap: 6px;
-  margin-bottom: 12px;
-}
-.view-chips .chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 36px;
-  text-decoration: none;
-  font-weight: 600;
-}
 /* Manual atlas: jump links to the manual's pages by kind */
 .page-strip {
   display: flex;
@@ -337,7 +325,7 @@ mark {
   color: inherit;
   font-weight: 600;
   display: inline-block;
-  padding: 4px 2px;
+  padding: 10px 6px;
 }
 button.chip {
   font-weight: 600;
@@ -2050,10 +2038,26 @@ button.danger {
   font-size: 14px;
   box-shadow: 0 4px 16px rgb(0 0 0 / 0.18);
 }
-body:has(.nav) .jobs-pill {
-  bottom: calc(84px + env(safe-area-inset-bottom));
+/* Room under the last row, so the pill never covers it */
+body:has(.jobs-pill) {
+  padding-bottom: 76px;
+}
+@media (max-width: 720px) {
+  body:has(.nav) .jobs-pill {
+    bottom: calc(84px + env(safe-area-inset-bottom));
+  }
+  body:has(.nav):has(.jobs-pill) {
+    padding-bottom: calc(136px + env(safe-area-inset-bottom));
+  }
+}
+.jobs-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .jobs-dot {
+  flex: none;
   width: 8px;
   height: 8px;
   border-radius: 50%;

@@ -87,7 +87,7 @@ export const messageSchema = z.object({
     .max(60),
   /**
    * "card" when the message is a filled form: it is answering Muse, no need to route it.
-   * "more" when the person tapped "Ask Muse for more" under an instant answer: Muse answers.
+   * "more" when the person tapped "Tell me more" under an instant answer: Muse answers.
    */
   via: z.enum(["card", "more"]).optional(),
   /** A photo (data URL) for the last message only; earlier turns keep "[photo]" as text. */

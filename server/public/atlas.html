@@ -14,7 +14,7 @@
     <script src="/theme.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
     <style>
-      /* House Atlas: lens chips regroup the same house; a view filters it by meaning. */
+      /* House Atlas: grouping chips regroup the same house; a few words filter it by meaning. */
       .viewbar {
         display: grid;
         gap: 12px;
@@ -58,18 +58,6 @@
       .saved .view-chip .x {
         padding: 0 10px 0 4px;
         color: var(--ink2);
-      }
-      .bar-row {
-        display: flex;
-        gap: 10px;
-        align-items: center;
-        flex-wrap: wrap;
-        font-size: 14px;
-        color: var(--ink2);
-      }
-      .bar-row input {
-        accent-color: var(--accent);
-        width: 160px;
       }
       .atlas-grid {
         display: grid;
@@ -126,18 +114,6 @@
       .entry.maybe {
         opacity: 0.55;
       }
-      .entry .sure {
-        grid-column: 1 / -1;
-        height: 5px;
-        border-radius: 999px;
-        background: var(--line);
-        overflow: hidden;
-      }
-      .entry .sure i {
-        display: block;
-        height: 100%;
-        background: var(--accent);
-      }
       .pill {
         font-size: 12px;
         font-weight: 700;
@@ -153,14 +129,6 @@
         background: var(--gold-soft);
         color: var(--gold);
       }
-      .pill.ok {
-        background: var(--sage-soft);
-        color: var(--sage);
-      }
-      .pill.none {
-        background: var(--card);
-        color: var(--ink2);
-      }
     </style>
   </head>
   <body>
@@ -173,12 +141,12 @@
       import { $, boot, esc, relDay, toast, tool } from "/app.js";
 
       const main = $("#main");
-      const STATE = { late: "Late", soon: "Soon", ok: "Fine", none: "No date" };
+      // Only late and soon get a pill; the rest need no word.
+      const STATE = { late: "Late", soon: "Soon" };
       let lens = "room";
       try {
         lens = localStorage.getItem("atlas-lens") || "room";
       } catch {}
-      let bar = 0.6;
       let phrase = null;
       let data = null;
       let busy = false;
@@ -195,52 +163,40 @@
           <text x="24" y="28" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ink)">${total}</text></svg>`;
       }
 
-      function entryHtml(e, viewOn) {
-        // The server sends everything a view is at least 0.3 sure of; the bar here decides what fades and what hides.
-        if (viewOn && (e.view_p ?? 0) < Math.min(0.4, bar)) return "";
-        const maybe = viewOn && (e.view_p ?? 0) < bar;
+      function entryHtml(e) {
+        // The server keeps what fits and marks the unsure ones maybe (its fixed cut); those fade.
         const when = e.due_on ? ` · ${relDay(e.due_on)}` : "";
-        const sure = viewOn ? e.view_p : e.p;
-        const showBar = viewOn || (sure !== undefined && sure < 0.9 && !e.guess);
-        const label = `${e.name}${e.task ? `: ${e.task}` : ""}, ${STATE[e.state]}`;
-        return `<a class="entry${maybe ? " maybe" : ""}" href="/things?id=${encodeURIComponent(e.item_id)}" aria-label="${esc(label)}">
-          <span class="name">${esc(e.name)}</span><span class="pill ${e.state}">${STATE[e.state]}</span>
+        const state = STATE[e.state];
+        const label = `${e.name}${e.task ? `: ${e.task}` : ""}${state ? `, ${state}` : ""}${e.maybe ? ", might not belong" : ""}`;
+        return `<a class="entry${e.maybe ? " maybe" : ""}" href="/things?id=${encodeURIComponent(e.item_id)}" aria-label="${esc(label)}">
+          <span class="name">${esc(e.name)}</span>${state ? `<span class="pill ${e.state}">${state}</span>` : ""}
           ${e.task ? `<span class="why">${esc(e.task)}${esc(when)}</span>` : ""}
-          ${showBar ? `<span class="sure" title="Jev: ${Math.round(sure * 100)}% sure"><i style="width:${Math.round(sure * 100)}%"></i></span>` : ""}
         </a>`;
       }
 
       function grid() {
         const groups = data.by_lens?.[lens] ?? [];
-        const viewOn = !!data.view;
         const tiles = groups
-          .map((g) => {
-            const items = g.entries.map((e) => entryHtml(e, viewOn)).filter(Boolean);
-            if (!items.length) return "";
-            const shown = g.entries.filter((e) => !viewOn || (e.view_p ?? 0) >= Math.min(0.4, bar));
-            const late = shown.filter((e) => e.state === "late").length;
-            const soon = shown.filter((e) => e.state === "soon").length;
-            return `<article class="card atlas-tile"><div class="atlas-head">${ring(late, soon, shown.length)}
-              <div><h3>${esc(g.label)}</h3><p class="small muted">${late ? `${late} late` : "Nothing late"}${soon ? ` · ${soon} due soon` : ""}</p></div></div>
-              <div class="entries">${items.join("")}</div></article>`;
-          })
-          .filter(Boolean);
+          .filter((g) => g.entries.length)
+          .map(
+            (g) => `<article class="card atlas-tile"><div class="atlas-head">${ring(g.late, g.soon, g.entries.length)}
+              <div><h3>${esc(g.label)}</h3><p class="small muted">${g.late ? `${g.late} late` : "Nothing late"}${g.soon ? ` · ${g.soon} due soon` : ""}</p></div></div>
+              <div class="entries">${g.entries.map(entryHtml).join("")}</div></article>`,
+          );
         return tiles.length
           ? tiles.join("")
-          : `<p class="card muted">${viewOn ? "Nothing clears that bar. Lower it, or try other words." : "Nothing to show here yet."}</p>`;
+          : `<p class="card muted">${data.view ? "Nothing matched. Try other words." : "Nothing to show here yet."}</p>`;
       }
 
       function note() {
         if (data.view) {
           const how =
-            data.view.mode === "text"
-              ? "Jev is away right now, so this is a plain word match."
-              : "Jev was asked one yes or no per thing. Bars show how sure it is.";
-          return `<strong>${esc(data.view.phrase)}</strong>: ${how}${data.view.saved_id ? " Saved views refresh when your things change." : ""}`;
+            data.view.mode === "text" ? "Muse is away right now, so this is a plain word match." : "Faded ones might not belong.";
+          return `<strong>${esc(data.view.phrase)}</strong>: ${how}`;
         }
-        if (data.sorted_by === "guess") return "Jev hasn't sorted your things yet, so these groups are a guess from their names.";
-        if (data.sorted_by === "mixed") return "A few things are placed by a guess from their names until Jev sorts them.";
-        return "Jev sorted each thing once when you added it. A thing likely to be in two places shows in both.";
+        if (data.sorted_by === "guess") return "Muse hasn't sorted your things yet, so these groups are a guess from their names.";
+        if (data.sorted_by === "mixed") return "A few things are placed by a guess from their names until Muse sorts them.";
+        return "Muse sorted each thing once when you added it. A thing likely to be in two places shows in both.";
       }
 
       function render() {
@@ -249,33 +205,26 @@
           .join("");
         const saved = data.views
           .map(
-            (v) => `<span class="view-chip"><button type="button" data-view="${esc(v.phrase)}" aria-pressed="${data.view?.phrase === v.phrase}">${esc(v.phrase)}</button><button type="button" class="x" data-forget="${esc(v.phrase)}" aria-label="Remove the ${esc(v.phrase)} view">×</button></span>`,
+            (v) => `<span class="view-chip"><button type="button" data-view="${esc(v.phrase)}" aria-pressed="${data.view?.phrase === v.phrase}">${esc(v.phrase)}</button><button type="button" class="x" data-forget="${esc(v.phrase)}" aria-label="Forget ${esc(v.phrase)}">×</button></span>`,
           )
           .join("");
         const canSave = data.view && !data.view.saved_id;
         main.innerHTML = `
           <section class="stack">
             <h1>House Atlas</h1>
-            <p class="muted">Every thing and upkeep task in the house, sorted by Jev a few ways at once. Pick a lens to regroup it, or describe a view in your own words.</p>
+            <p class="muted">Everything in the house, grouped a few ways. Pick a grouping, or describe what you're looking for in your own words.</p>
           </section>
-          <div class="filters" role="group" aria-label="Lens">${lensChips}</div>
+          <div class="filters" role="group" aria-label="Group by">${lensChips}</div>
           <section class="card viewbar" aria-labelledby="vb-h">
-            <h2 id="vb-h" style="font-size:19px">Make a view</h2>
+            <h2 id="vb-h" style="font-size:19px">Find things that…</h2>
             <form id="view-form">
-              <label class="sr-only" for="phrase">Describe a view</label>
-              <input type="text" id="phrase" maxlength="120" placeholder="e.g. things that could flood the floor" value="${esc(phrase ?? "")}">
+              <label class="sr-only" for="phrase">Find things that</label>
+              <input type="text" id="phrase" maxlength="120" placeholder="e.g. could flood the floor" value="${esc(phrase ?? "")}">
               <button type="submit" ${busy ? "disabled" : ""}>Show</button>
               ${data.view ? '<button type="button" class="quiet" id="clear">Clear</button>' : ""}
-              ${canSave ? '<button type="button" class="quiet" id="save">Save this view</button>' : ""}
+              ${canSave ? '<button type="button" class="quiet" id="save">Keep this</button>' : ""}
             </form>
-            ${saved ? `<div class="saved" role="group" aria-label="Saved views">${saved}</div>` : ""}
-            ${
-              data.view
-                ? `<div class="bar-row"><label for="bar">Show things Jev is at least</label>
-                    <input type="range" id="bar" min="40" max="95" step="5" value="${Math.round(bar * 100)}">
-                    <output id="bar-out" for="bar">${Math.round(bar * 100)}%</output><span>sure fit. Faded ones are maybes.</span></div>`
-                : ""
-            }
+            ${saved ? `<div class="saved" role="group" aria-label="Groups you kept">${saved}</div>` : ""}
             <p class="small muted" id="atlas-note">${note()}</p>
           </section>
           <section class="atlas-grid" id="grid" aria-live="polite">${grid()}</section>`;
@@ -295,7 +244,7 @@
         $("#view-form").addEventListener("submit", (e) => {
           e.preventDefault();
           const words = $("#phrase").value.trim();
-          if (words.length < 2) return toast("Say a little more, like things that use water.");
+          if (words.length < 2) return toast("Say a little more, like: use water.");
           load(words);
         });
         $("#clear")?.addEventListener("click", () => load(null));
@@ -321,11 +270,6 @@
             }
           });
         }
-        $("#bar")?.addEventListener("input", (e) => {
-          bar = Number(e.target.value) / 100;
-          $("#bar-out").textContent = `${e.target.value}%`;
-          $("#grid").innerHTML = grid();
-        });
       }
 
       async function load(words) {
@@ -337,7 +281,7 @@
         }
         try {
           const args = { lens, all_lenses: true };
-          if (words) Object.assign(args, { view: words, bar: 0.3 });
+          if (words) args.view = words;
           const res = await tool("house_atlas", args);
           if (!res.data) {
             main.innerHTML = `<section class="stack"><h1>House Atlas</h1><p class="card muted">${esc(res.summary)} <a href="/things?add=1">Add your first thing</a>.</p></section>`;
@@ -357,7 +301,7 @@
 
       async function start() {
         if (!(await boot("/atlas"))) return;
-        // The home page's view chips land here with ?view=<the saved phrase>.
+        // A link can open a kept group here with ?view=<its words>.
         const asked = new URLSearchParams(location.search).get("view");
         await load(asked && asked.trim().length >= 2 ? asked.trim().slice(0, 120) : null);
       }
