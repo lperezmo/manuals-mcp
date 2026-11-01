@@ -5,6 +5,9 @@ import { itemLabel } from "../tools/context.js";
 import { saveKnowledge } from "./knowledge.js";
 import { type PageText, pdfPages } from "./pdf-text.js";
 import { distill, ReaderError } from "./reader.js";
+import { trimTrivia } from "./trim.js";
+import { verifyKnowledge } from "./verify.js";
+import { englishPages, MAX_VISION_PAGES, renderPages, transcribePages } from "./vision.js";
 
 // Turns a manual PDF into raw pages (searchable) and, when a server reader
 // is configured, distilled tasks and facts. Without a reader the manual is
@@ -30,9 +33,7 @@ export interface IngestOutcome {
   note?: string;
 }
 
-/** Creates a manual for an item from PDF bytes, then processes it. */
-export async function ingestPdf(args: {
-  env: Env;
+interface StoreArgs {
   db: Db;
   householdId: string;
   item: ItemRow;
@@ -41,7 +42,27 @@ export async function ingestPdf(args: {
   sourceUrl?: string;
   official?: boolean;
   title?: string;
-}): Promise<IngestOutcome> {
+}
+
+/** Creates a manual for an item from PDF bytes, then processes it. */
+export async function ingestPdf(args: StoreArgs & { env: Env }): Promise<IngestOutcome> {
+  const manualId = await storeManual(args);
+  return processPdf({
+    env: args.env,
+    db: args.db,
+    householdId: args.householdId,
+    item: args.item,
+    manualId,
+    bytes: args.bytes,
+  });
+}
+
+/**
+ * Saves the PDF and its manual row, without reading it. The website attaches
+ * a manual in two calls (store, then /api/ingest), so a slow maker's site and
+ * Muse's read each get their own time limit.
+ */
+export async function storeManual(args: StoreArgs): Promise<string> {
   const { db, householdId, item } = args;
   const { data: manual, error } = await db
     .from("manuals")
@@ -64,15 +85,7 @@ export async function ingestPdf(args: {
     .upload(path, args.bytes, { contentType: "application/pdf", upsert: true });
   if (upload.error) throw new Error(`Couldn't store the PDF: ${upload.error.message}`);
   await db.from("manuals").update({ storage_path: path }).eq("id", manual.id);
-
-  return processPdf({
-    env: args.env,
-    db,
-    householdId,
-    item,
-    manualId: manual.id,
-    bytes: args.bytes,
-  });
+  return manual.id as string;
 }
 
 /** Processes a manual whose PDF is already in storage (the app's upload path). */
@@ -100,6 +113,18 @@ export async function processStoredManual(args: {
   return processPdf({ ...args, item, bytes });
 }
 
+/** Whether the household's daily manual reads and the site's model budget both have room. */
+async function readsLeft(env: Env, db: Db): Promise<boolean> {
+  if (!env.reader) return false;
+  const since = new Date(Date.now() - 86_400_000).toISOString();
+  const { count } = await db
+    .from("manuals")
+    .select("id", { count: "exact", head: true })
+    .gte("reader_at", since);
+  if ((count ?? 0) >= env.reader.dailyLimit) return false;
+  return (await modelRunsTodayAll(db)) < env.globalDailyLimit;
+}
+
 async function processPdf(args: {
   env: Env;
   db: Db;
@@ -124,13 +149,59 @@ async function processPdf(args: {
     throw new Error("Couldn't open that PDF.");
   }
 
+  // No text layer on most pages (a scan, or text drawn as outlines): render
+  // them and let Muse transcribe the English ones, when there's budget for it.
+  const visionPages = new Set<number>();
+  const textless = pages.length < Math.max(1, pageCount * 0.2);
+  if (textless && env.reader && (await readsLeft(env, db))) {
+    const started = Date.now();
+    const have = new Set(pages.map((p) => p.page_number));
+    const missing = Array.from({ length: pageCount }, (_, i) => i + 1).filter((n) => !have.has(n));
+    try {
+      const images = await renderPages(args.bytes, missing);
+      const { english, tokens_in: jevTokens } = await englishPages(env, images);
+      const { pages: read, usage } = await transcribePages(env, english.slice(0, MAX_VISION_PAGES));
+      for (const p of read) visionPages.add(p.page_number);
+      pages = [...pages, ...read].sort((a, b) => a.page_number - b.page_number);
+      await logRun(db, {
+        kind: "read",
+        ok: read.length > 0,
+        model: env.chatModel ?? env.reader.model,
+        ms: Date.now() - started,
+        tokens_in: usage.tokens_in,
+        tokens_out: usage.tokens_out,
+        item_id: item.id,
+        manual_id: manualId,
+        pages_sent: read.map((p) => p.page_number),
+        raw_output: JSON.stringify({
+          step: "transcribe page images",
+          rendered: images.length,
+          english: english.length,
+          calls: usage.calls,
+          failed_calls: usage.failed,
+          jev_tokens: jevTokens,
+        }),
+      });
+    } catch (err) {
+      await logRun(db, {
+        kind: "read",
+        ok: false,
+        model: env.chatModel ?? env.reader.model,
+        error: `Couldn't transcribe the page images: ${(err as Error).message}`,
+        ms: Date.now() - started,
+        item_id: item.id,
+        manual_id: manualId,
+      });
+    }
+  }
+
   for (let i = 0; i < pages.length; i += PAGE_BATCH) {
     const rows = pages.slice(i, i + PAGE_BATCH).map((p) => ({
       household_id: householdId,
       manual_id: manualId,
       page_number: p.page_number,
       content: p.content,
-      extracted_by: "pdf_text",
+      extracted_by: visionPages.has(p.page_number) ? "server_model" : "pdf_text",
     }));
     const { error } = await db
       .from("manual_pages")
@@ -139,6 +210,7 @@ async function processPdf(args: {
   }
 
   const scanned = pages.length < Math.max(1, pageCount * 0.2);
+  const transcribed = visionPages.size;
   await db
     .from("manuals")
     .update({
@@ -146,7 +218,9 @@ async function processPdf(args: {
       status: "text_ready",
       status_detail: scanned
         ? "Mostly scanned pages with no text layer; a model needs to read the images."
-        : null,
+        : transcribed
+          ? `No text layer, so Muse read ${transcribed} page ${transcribed === 1 ? "image" : "images"}.`
+          : null,
     })
     .eq("id", manualId);
 
@@ -209,17 +283,41 @@ async function processPdf(args: {
         reader_tokens_out: usage.tokens_out,
       })
       .eq("id", manualId);
+    // Each entry checked against its own page; misses are flagged, never dropped.
+    const lean = await trimTrivia(env, knowledge, { label: itemLabel(item), kind: item.kind });
+    const verified = await verifyKnowledge(env, lean.knowledge, pages);
+    if (env.router) {
+      await logRun(db, {
+        kind: "read",
+        ok: true,
+        model: env.router.model,
+        ms: verified.ms,
+        tokens_in: verified.tokens_in + lean.tokens_in,
+        tokens_out: 0,
+        item_id: item.id,
+        manual_id: manualId,
+        raw_output: JSON.stringify({
+          checked: verified.checked,
+          flagged: verified.flagged,
+          dropped_as_common_sense: lean.dropped,
+        }),
+      });
+    }
     outcome.distilled = await saveKnowledge({
       db,
       householdId,
       itemId: item.id,
       manualId,
-      knowledge,
+      knowledge: verified.knowledge,
       replace: true,
     });
     outcome.status = "distilled";
-    if (trimmed || dropped) {
+    if (trimmed || dropped || verified.flagged.length) {
+      const doubted = verified.flagged.length;
       outcome.note = [
+        doubted
+          ? `${doubted} ${doubted === 1 ? "entry didn't" : "entries didn't"} match ${doubted === 1 ? "its" : "their"} page and ${doubted === 1 ? "is" : "are"} flagged for you to check`
+          : "",
         trimmed
           ? `${trimmed} long ${trimmed === 1 ? "entry was" : "entries were"} shortened and flagged for you to check`
           : "",

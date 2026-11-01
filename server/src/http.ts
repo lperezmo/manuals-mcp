@@ -7,12 +7,14 @@ import {
   withMcpAuth,
 } from "mcp-handler";
 import { bearer, supabaseVerifier, userFrom } from "./auth.js";
-import { type ChatUsage, callTool, messageSchema, runChat } from "./chat.js";
-import { householdId, userDb } from "./db.js";
+import { type ChatUsage, callTool, messageSchema, runChat, withCard } from "./chat.js";
+import { householdId, type ItemRow, userDb } from "./db.js";
 import { authIssuer, type Env } from "./env.js";
-import { processStoredManual } from "./finder/ingest.js";
+import { ATTACH_DOWNLOAD_MS, FetchPdfError, fetchPdf } from "./finder/fetch-pdf.js";
+import { processStoredManual, storeManual } from "./finder/ingest.js";
 import { findManual } from "./finder/search.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
+import { checkPhoto } from "./photo-check.js";
 import {
   pushReport,
   REPORT_DAILY_LIMIT,
@@ -20,8 +22,17 @@ import {
   reportsToday,
   saveReport,
 } from "./report.js";
+import {
+  OFF_TOPIC_CONFIDENCE,
+  OFF_TOPIC_REPLY,
+  type RouteDecision,
+  routeTurn,
+  toolsFor,
+} from "./router.js";
 import { BUDGET_USED, logRun, modelRunsTodayAll, runsToday } from "./runs.js";
 import { MAX_IMAGE_BYTES, readLabel } from "./snap.js";
+import { ITEM_COLUMNS, itemLabel } from "./tools/context.js";
+import { groupTasks } from "./upkeep.js";
 
 // HTTP entry points, shared by the Vercel functions in api/ and the local
 // dev server. All of them are Web-standard (Request) => Response.
@@ -101,6 +112,100 @@ export function ingestHandler(env: Env, verify: Verify = supabaseVerifier(env)) 
   };
 }
 
+/**
+ * "Use this" on a found manual: downloads the PDF and stores it, nothing more.
+ * The page then calls /api/ingest for Muse's read. A slow maker's site gets
+ * this whole call; it doesn't eat into the read's time.
+ */
+export function attachHandler(
+  env: Env,
+  verify: Verify = supabaseVerifier(env),
+  fetchImpl: typeof fetch = fetch,
+) {
+  return async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    const auth = await verify(bearer(req));
+    if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
+    let body: { item_id?: unknown; url?: unknown; official?: unknown };
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return Response.json({ error: "Send JSON with item_id and url." }, { status: 400 });
+    }
+    if (typeof body.item_id !== "string" || typeof body.url !== "string")
+      return Response.json({ error: "item_id and url are required." }, { status: 400 });
+    const db = userDb(env, auth.token);
+    try {
+      const { data: item, error } = await db
+        .from("items")
+        .select(ITEM_COLUMNS)
+        .eq("id", body.item_id)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!item)
+        return Response.json({ error: "That thing isn't in your household." }, { status: 404 });
+      let fetched: Awaited<ReturnType<typeof fetchPdf>>;
+      try {
+        fetched = await fetchPdf(body.url, fetchImpl, ATTACH_DOWNLOAD_MS);
+      } catch (err) {
+        const message =
+          err instanceof FetchPdfError
+            ? err.message
+            : "The maker's site is too slow right now. Try again in a bit, or open the PDF, save it and upload it.";
+        return Response.json({ error: message }, { status: 422 });
+      }
+      const manualId = await storeManual({
+        db,
+        householdId: await householdId(db),
+        item: item as ItemRow,
+        bytes: fetched.bytes,
+        source: "url",
+        sourceUrl: fetched.finalUrl,
+        official: body.official === true,
+      });
+      return Response.json({ manual_id: manualId });
+    } catch (err) {
+      return Response.json({ error: (err as Error).message }, { status: 502 });
+    }
+  };
+}
+
+/** Sorts a thing's upkeep tasks into the page's tiles. Reads the tasks as the user (RLS). */
+export function upkeepGroupsHandler(
+  env: Env,
+  verify: Verify = supabaseVerifier(env),
+  fetchImpl: typeof fetch = fetch,
+) {
+  return async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    const auth = await verify(bearer(req));
+    if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
+    let itemId: unknown;
+    try {
+      itemId = ((await req.json()) as { item_id?: unknown }).item_id;
+    } catch {}
+    if (typeof itemId !== "string")
+      return Response.json({ error: "item_id is required." }, { status: 400 });
+    if (!env.router) return Response.json({ groups: {} });
+    const db = userDb(env, auth.token);
+    try {
+      const { data: item, error } = await db
+        .from("items")
+        .select("nickname, brand, model, tasks(id, title, details)")
+        .eq("id", itemId)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!item)
+        return Response.json({ error: "That thing isn't in your household." }, { status: 404 });
+      const tasks = (item.tasks ?? []) as { id: string; title: string; details: string | null }[];
+      const groups = await groupTasks(env, itemLabel(item as never), tasks.slice(0, 80), fetchImpl);
+      return Response.json({ groups });
+    } catch (err) {
+      return Response.json({ error: (err as Error).message }, { status: 502 });
+    }
+  };
+}
+
 /** The website's chat with Muse: same tools as /mcp, as the signed-in user. */
 export function chatHandler(
   env: Env,
@@ -142,8 +247,30 @@ export function chatHandler(
       tokens_out: 0,
     };
     const started = Date.now();
+    const { messages, via } = parsed.data;
+    const last = messages[messages.length - 1];
+    const previous = messages.slice(0, -1).findLast((m) => m.role === "assistant")?.content;
+    const decision: RouteDecision | null =
+      via === "card"
+        ? { route: "answer", confidence: 1, ms: 0, tokens_in: null }
+        : last?.role === "user"
+          ? await routeTurn(env, { previous, message: last.content }, fetchImpl)
+          : null;
+    const routeTag = decision ? [`route:${decision.route} ${decision.confidence.toFixed(2)}`] : [];
+    if (decision?.route === "off_topic" && decision.confidence >= OFF_TOPIC_CONFIDENCE) {
+      await logRun(db, {
+        kind: "chat",
+        ok: true,
+        model: env.router?.model ?? "router",
+        ms: Date.now() - started,
+        tokens_in: decision.tokens_in,
+        tokens_out: 0,
+        tools_used: routeTag,
+      });
+      return Response.json({ reply: OFF_TOPIC_REPLY, tools_used: [] });
+    }
     try {
-      const result = await runChat(env, auth, parsed.data.messages, fetchImpl, usage);
+      const result = await runChat(env, auth, messages, fetchImpl, usage, toolsFor(decision));
       await logRun(db, {
         kind: "chat",
         ok: true,
@@ -151,9 +278,11 @@ export function chatHandler(
         ms: Date.now() - started,
         tokens_in: usage.tokens_in,
         tokens_out: usage.tokens_out,
-        tools_used: result.tools_used,
+        tools_used: [...routeTag, ...result.tools_used],
       });
-      return Response.json(result);
+      return Response.json(
+        result.card ? { ...result, history: withCard(result.reply, result.card) } : result,
+      );
     } catch (err) {
       await logRun(db, {
         kind: "chat",
@@ -206,8 +335,11 @@ export function snapHandler(
     const auth = await verify(bearer(req));
     if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
     let image: unknown;
+    let force = false;
     try {
-      image = ((await req.json()) as { image?: unknown }).image;
+      const body = (await req.json()) as { image?: unknown; force?: unknown };
+      image = body.image;
+      force = body.force === true;
     } catch {
       return Response.json({ error: "Send JSON with an image data URL." }, { status: 400 });
     }
@@ -236,8 +368,28 @@ export function snapHandler(
     }
     const model = env.chatModel ?? env.reader?.model ?? null;
     const started = Date.now();
+    const photo = { mime: match[1], base64: match[2] };
+    // Jev's quick look: a photo with no label or unreadable text is sent back
+    // before Muse spends a read on it. "Read it anyway" skips this.
+    const check = force ? null : await checkPhoto(env, photo, fetchImpl);
+    if (check?.retake) {
+      await logRun(db, {
+        kind: "snap",
+        ok: true,
+        model: env.router?.model ?? null,
+        ms: check.ms,
+        tokens_in: check.tokens_in,
+        tokens_out: 0,
+        raw_output: JSON.stringify({
+          retake: check.retake,
+          label: check.label,
+          sharp: check.sharp,
+        }),
+      });
+      return Response.json({ found: false, retake: check.retake });
+    }
     try {
-      const label = await readLabel(env, { mime: match[1], base64: match[2] }, fetchImpl);
+      const label = await readLabel(env, photo, fetchImpl);
       await logRun(db, { kind: "snap", ok: true, model, ms: Date.now() - started });
       return Response.json(label);
     } catch (err) {

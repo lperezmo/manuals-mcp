@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { ItemRow } from "../db.js";
 import type { Env } from "../env.js";
-import { FetchPdfError, fetchPdf } from "../finder/fetch-pdf.js";
+import { ATTACH_TIMEOUT_MS, FetchPdfError, fetchPdf } from "../finder/fetch-pdf.js";
 import { ingestPdf } from "../finder/ingest.js";
 import { findItem, guarded, ITEM_COLUMNS, itemLabel, reply, session } from "./context.js";
 
@@ -99,7 +99,7 @@ export function register(server: McpServer, env: Env) {
 
         let fetched: Awaited<ReturnType<typeof fetchPdf>>;
         try {
-          fetched = await fetchPdf(pdf_url);
+          fetched = await fetchPdf(pdf_url, fetch, ATTACH_TIMEOUT_MS);
         } catch (err) {
           if (err instanceof FetchPdfError) {
             return reply(

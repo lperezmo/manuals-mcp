@@ -32,23 +32,27 @@ export function register(server: McpServer, env: Env) {
           db
             .from("tasks")
             .select(
-              "id, title, interval_unit, interval_value, next_due_on, source_page, items(id, nickname)",
+              "id, title, interval_unit, interval_value, next_due_on, source_page, items!inner(id, nickname, archived_at)",
             )
             .eq("active", true)
+            .is("items.archived_at", null)
             .lte("next_due_on", until)
             .order("next_due_on"),
           db
             .from("manual_facts")
-            .select("id, kind, label, value, source_page, items(id, nickname)")
-            .eq("status", "needs_review"),
+            .select("id, kind, label, value, source_page, items!inner(id, nickname, archived_at)")
+            .eq("status", "needs_review")
+            .is("items.archived_at", null),
           db
             .from("tasks")
-            .select("id, title, details, source_page, items(id, nickname)")
-            .eq("status", "needs_review"),
+            .select("id, title, details, source_page, items!inner(id, nickname, archived_at)")
+            .eq("status", "needs_review")
+            .is("items.archived_at", null),
           db
             .from("seat_modes")
-            .select("id, mode, fit_note, source_page, items(id, nickname)")
-            .eq("status", "needs_review"),
+            .select("id, mode, fit_note, source_page, items!inner(id, nickname, archived_at)")
+            .eq("status", "needs_review")
+            .is("items.archived_at", null),
         ]);
         for (const r of [tasks, facts, taskReview, seats]) {
           if (r.error) throw new Error(r.error.message);

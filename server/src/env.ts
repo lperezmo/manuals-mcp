@@ -29,6 +29,8 @@ export interface Env {
   search?: { provider: "tavily"; apiKey: string; dailyLimit: number };
   /** Where issue reports are pushed (an ntfy.sh topic); reports are saved either way. */
   notify?: { url: string; topic: string };
+  /** Jev (TypeSafe AI) sorts each chat message so Muse only gets the tools it needs. */
+  router?: { baseUrl: string; model: string; apiKey: string };
 }
 
 function positive(value: string | undefined, fallback: number): number {
@@ -75,6 +77,13 @@ export function readEnv(source: Record<string, string | undefined> = process.env
       : undefined,
     notify: source.NTFY_TOPIC
       ? { url: trimSlash(source.NTFY_URL || "https://ntfy.sh"), topic: source.NTFY_TOPIC }
+      : undefined,
+    router: source.JEV_API_KEY
+      ? {
+          baseUrl: trimSlash(source.JEV_BASE_URL || "https://api.typesafe.ai"),
+          model: source.JEV_MODEL || "jev-latest",
+          apiKey: source.JEV_API_KEY,
+        }
       : undefined,
   };
 }

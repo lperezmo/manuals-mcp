@@ -37,7 +37,11 @@ export function register(server: McpServer, env: Env) {
         if (seat) {
           item = await findItem(db, seat);
         } else {
-          const { data } = await db.from("items").select(ITEM_COLUMNS).eq("category", "car_seat");
+          const { data } = await db
+            .from("items")
+            .select(ITEM_COLUMNS)
+            .eq("category", "car_seat")
+            .is("archived_at", null);
           const seats = (data ?? []) as ItemRow[];
           if (seats.length !== 1) {
             throw new Error(

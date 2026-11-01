@@ -10,6 +10,10 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap"
     />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=archive,auto_awesome,build,check,cleaning_services,content_copy,delete,edit,event,fact_check,forum,health_and_safety,menu_book,more_horiz,palette,settings,share,tune,unarchive&display=block"
+    />
     <link rel="stylesheet" href="/theme.css" />
     <script src="/theme.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
@@ -21,7 +25,7 @@
     </main>
 
     <script type="module">
-      import { $, ago, api, boot, db, esc, howOften, ICONS, iconKey, iconSvg, itemIcon, openChat, relDay, shareLink, shrink, TINTS, takePendingPhoto, tintKey, toast, today, tool } from "/app.js";
+      import { $, ago, api, boot, daysBetween, db, esc, howOften, ICONS, iconKey, iconSvg, itemIcon, openChat, relDay, shareLink, shrink, TINTS, takePendingPhoto, tintKey, toast, today, tool } from "/app.js";
 
       const main = $("#main");
       const params = new URLSearchParams(location.search);
@@ -54,16 +58,82 @@
         return { late, text: parts.join(" · ") };
       }
 
-      async function list() {
-        const { data, error } = await (await db())
+      // --- Archive / restore / delete for good ---------------------------------
+      // Archiving hides a thing (sold, given away, thrown out) from lists,
+      // upcoming tasks and Muse, and keeps everything. Only deleting is final.
+      async function setArchived(item, on) {
+        const { error } = await (await db())
           .from("items")
-          .select("id, nickname, brand, model, kind, category, icon, tint, pinned, manuals(page_count), manual_facts(status), tasks(active, title, next_due_on)")
-          .order("created_at");
+          .update(on ? { archived_at: new Date().toISOString(), pinned: false } : { archived_at: null })
+          .eq("id", item.id);
         if (error) throw new Error(error.message);
-        drawList(data);
+        toast(on ? `Archived the ${item.nickname}. Find it under Manage things.` : `The ${item.nickname} is back.`);
       }
 
-      function drawList(items) {
+      /** Asks first; removes the stored PDFs, then the item (its manual, tasks, facts and history go with it). */
+      async function deleteForever(item) {
+        if (!confirm(`Delete the ${item.nickname} for good, with its manual, upkeep, facts and history? This can't be undone.`)) return false;
+        const supa = await db();
+        const { data: files } = await supa.from("manuals").select("storage_path").eq("item_id", item.id);
+        const paths = (files ?? []).map((f) => f.storage_path).filter(Boolean);
+        if (paths.length) await supa.storage.from("manuals").remove(paths);
+        const { error } = await supa.from("items").delete().eq("id", item.id);
+        if (error) throw new Error(error.message);
+        toast(`Deleted the ${item.nickname}.`);
+        return true;
+      }
+
+      function drawManage(items) {
+        const active = items.filter((i) => !i.archived_at);
+        const archived = items.filter((i) => i.archived_at);
+        const row = (i, buttons) => `<div class="manage-row">${itemIcon(i, 44)}<div class="manage-name"><strong>${esc(i.nickname)}</strong><span class="small muted">${esc([i.brand, i.model].filter(Boolean).join(" ")) || "No model saved"}</span></div><div class="row">${buttons}</div></div>`;
+        main.innerHTML = `
+          <section class="stack">
+            <a href="/things" style="font-weight:700;text-decoration:none">← Your things</a>
+            <h1 style="margin:0">Manage things</h1>
+            <p class="muted" style="margin:0">Sold it, gave it away or threw it out? Archive it: it leaves your list, your upcoming tasks and Muse, and you can bring it back any time.</p>
+          </section>
+          <section class="card lines">${active.map((i) => row(i, `<button type="button" class="quiet small" data-archive="${i.id}">${ic("archive")}Archive</button>`)).join("") || '<p class="muted small">Nothing here yet.</p>'}</section>
+          ${
+            archived.length
+              ? `<section class="stack"><h2 style="margin:0">Archived</h2><div class="card lines">${archived
+                  .map((i) => row(i, `<button type="button" class="quiet small" data-restore="${i.id}">${ic("unarchive")}Restore</button><button type="button" class="quiet small danger" data-delete="${i.id}">${ic("delete")}Delete for good</button>`))
+                  .join("")}</div></section>`
+              : ""
+          }`;
+        const byId = new Map(items.map((i) => [i.id, i]));
+        main.onclick = async (e) => {
+          const b = e.target.closest("[data-archive], [data-restore], [data-delete]");
+          if (!b) return;
+          const item = byId.get(b.dataset.archive || b.dataset.restore || b.dataset.delete);
+          b.disabled = true;
+          try {
+            if (b.dataset.archive) await setArchived(item, true);
+            else if (b.dataset.restore) await setArchived(item, false);
+            else if (!(await deleteForever(item))) {
+              b.disabled = false;
+              return;
+            }
+            await list();
+          } catch (err) {
+            b.disabled = false;
+            toast(err.message);
+          }
+        };
+      }
+
+      async function list() {
+        main.onclick = null;
+        const { data, error } = await (await db())
+          .from("items")
+          .select("id, nickname, brand, model, kind, category, icon, tint, pinned, archived_at, manuals(page_count), manual_facts(status), tasks(active, title, next_due_on)")
+          .order("created_at");
+        if (error) throw new Error(error.message);
+        if (params.get("manage")) return drawManage(data);
+        drawList(data.filter((i) => !i.archived_at), data.filter((i) => i.archived_at).length);
+      }
+
+      function drawList(items, archived = 0) {
         const kinds = Object.keys(GROUPS).filter((k) => items.some((i) => i.kind === k));
         if (filter !== "all" && !kinds.includes(filter)) filter = "all";
         const shown = items.filter((i) => filter === "all" || i.kind === filter);
@@ -72,7 +142,7 @@
           `<button type="button" class="pin" data-pin="${i.id}" aria-pressed="${i.pinned}" aria-label="${i.pinned ? "Unpin" : "Pin"} ${esc(i.nickname)}" title="${i.pinned ? "Unpin" : "Pin to the top"}">${PIN}</button>`;
         main.innerHTML = `
           <div class="section-head" style="margin:0;align-items:flex-end">
-            <div class="stack" style="gap:4px"><h1>Your things</h1><p class="muted" style="margin:0">Tap a thing for its tasks and manual. Pin the ones you check most.</p></div>
+            <div class="stack" style="gap:4px"><div class="row" style="align-items:center;justify-content:space-between;flex-wrap:nowrap"><h1>Your things</h1><a class="button quiet small" href="/things?manage=1" title="Manage things: archive, restore or delete">${ic("settings")}Manage${archived ? ` (${archived})` : ""}</a></div><p class="muted" style="margin:0">Tap a thing for its tasks and manual. Pin the ones you check most.</p></div>
             ${kinds.length > 1 ? `<div class="filters" role="group" aria-label="Show">${["all", ...kinds].map((k) => `<button type="button" data-filter="${k}" aria-pressed="${filter === k}">${k === "all" ? "All" : GROUPS[k]}</button>`).join("")}</div>` : ""}
           </div>
           ${
@@ -117,7 +187,7 @@
         for (const b of main.querySelectorAll("[data-filter]")) {
           b.addEventListener("click", () => {
             filter = b.dataset.filter;
-            drawList(items);
+            drawList(items, archived);
           });
         }
         for (const b of main.querySelectorAll("[data-pin]")) {
@@ -172,7 +242,7 @@
         const { data: item, error } = await supa
           .from("items")
           .select(
-            "id, nickname, brand, model, serial, category, kind, icon, tint, pinned, uses_per_week, manuals(id, title, page_count, source_url, status, status_detail), manual_facts(id, kind, label, value, source_page, source, status), tasks(id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source, status, active), seat_modes(id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, source, status), item_readings(kind, value, measured_on)",
+            "id, nickname, brand, model, serial, category, kind, icon, tint, pinned, archived_at, uses_per_week, manuals(id, title, page_count, source_url, status, status_detail), manual_facts(id, kind, label, value, source_page, source, status), tasks(id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source, status, active), seat_modes(id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, source, status), item_readings(kind, value, measured_on)",
           )
           .eq("id", id)
           .maybeSingle();
@@ -197,30 +267,31 @@
         const manual = item.manuals?.[0];
         const readings = [...item.item_readings].sort((a, b) => b.measured_on.localeCompare(a.measured_on));
         const cycles = readings.find((r) => r.kind === "cycles");
-        const byKind = Object.keys(KINDS)
-          .map((k) => [k, item.manual_facts.filter((f) => f.kind === k)])
-          .filter(([, fs]) => fs.length);
         const badge = (x) =>
           STATUS[x.status] ? `<span class="chip ${STATUS[x.status][1]} strong">${STATUS[x.status][0]}</span>` : "";
         const source = (x) =>
           `<span class="row small muted" style="gap:6px"><span class="dot src-${x.source}"></span>${SOURCES[x.source]}${x.source_page ? ` · p. ${x.source_page}` : ""}</span>`;
 
+        main.onclick = null;
         main.innerHTML = `
           <section class="stack">
             <a href="/things" style="font-weight:700;text-decoration:none">← Your things</a>
+            ${item.archived_at ? `<div class="card flat archived-banner"><span>${ic("archive")}Archived. It's hidden from your list, your upcoming tasks and Muse.</span><div class="row"><button type="button" class="small" id="restore-item">${ic("unarchive")}Restore</button><button type="button" class="quiet small danger" id="delete-item">${ic("delete")}Delete for good</button></div></div>` : ""}
             <div class="row" style="gap:16px;align-items:center;flex-wrap:nowrap">
-              ${itemIcon(item, 72)}
+              <div class="icon-wrap">${itemIcon(item, 72)}<button type="button" class="corner-btn" id="look-btn" aria-label="Change icon or color" title="Change icon or color" aria-controls="look">${ic("palette")}</button></div>
               <div style="flex:1 1 auto;min-width:0">
                 <h1 style="margin:0">${esc(item.nickname)}</h1>
                 <p class="muted" style="margin:0">${esc([item.brand, item.model, item.serial && `serial ${item.serial}`].filter(Boolean).join(" · "))}</p>
               </div>
+              <button type="button" class="pin" id="share-btn" aria-label="Share this manual" title="Share this manual" aria-controls="share">${ic("share")}</button>
               <button type="button" class="pin" id="pin" aria-pressed="${!!item.pinned}" aria-label="${item.pinned ? "Unpin" : "Pin"} ${esc(item.nickname)}" title="${item.pinned ? "Unpin" : "Pin to the top"}">${PIN}</button>
             </div>
             <div class="row">
-              <button type="button" id="ask">Ask about the ${esc(item.nickname.toLowerCase())}</button>
-              ${manual?.source_url && !isExample(manual.source_url) ? `<a class="button quiet" href="${esc(manual.source_url)}" rel="noopener noreferrer" target="_blank">Open the manual</a>` : manual?.source_url ? '<span class="small muted">Example manual, no PDF to open</span>' : ""}
+              <button type="button" id="ask">${ic("forum")}Ask about the ${esc(item.nickname.toLowerCase())}</button>
+              ${manual ? `<button type="button" class="quiet" id="setup">${ic("auto_awesome")}Set it up with Muse</button>` : ""}
+              ${manual?.source_url && !isExample(manual.source_url) ? `<a class="button quiet" href="${esc(manual.source_url)}" rel="noopener noreferrer" target="_blank">${ic("menu_book")}Open the manual</a>` : manual?.source_url ? '<span class="small muted">Example manual, no PDF to open</span>' : ""}
             </div>
-            <details class="card" id="look">
+            <details class="card panel" id="look">
               <summary style="font-weight:700;cursor:pointer">Change icon or color</summary>
               <div class="stack" style="margin-top:14px">
                 <div class="stack" style="gap:8px">
@@ -235,9 +306,12 @@
                     .map((k) => `<button type="button" class="swatch ${k}" data-tint="${k}" aria-pressed="${tintKey(item) === k}" aria-label="${TINTS[k]}" title="${TINTS[k]}"></button>`)
                     .join("")}</div>
                 </div>
+                <div class="row" style="justify-content:flex-end;border-top:1px solid var(--line);padding-top:12px">
+                  ${item.archived_at ? "" : `<button type="button" class="quiet small" id="archive-item">${ic("archive")}Sold it or got rid of it? Archive</button>`}
+                </div>
               </div>
             </details>
-            <details class="card" id="share">
+            <details class="card panel" id="share">
               <summary style="font-weight:700;cursor:pointer">Share this manual</summary>
               <div class="stack" id="share-body" style="margin-top:14px"><p class="muted small">One moment…</p></div>
             </details>
@@ -248,26 +322,16 @@
               ? manualLine(manual)
               : `<section class="card">
                   <h2>Add its manual</h2>
-                  <p class="muted">Paste a link to the PDF on the maker's site, or upload the PDF. Muse reads it into tasks and facts, each with its page.</p>
-                  ${manualForm()}
+                  <p class="muted">${item.brand || item.model ? "Looking for it online first. Pick the right PDF and Muse reads it into tasks and facts, each with its page." : "Add the brand and model in the details above and Muse can look for it online, or upload the PDF yourself."}</p>
+                  ${manualForm(!!(item.brand || item.model))}
                 </section>`
           }
 
           ${
             item.tasks.length
-              ? `<section aria-labelledby="sched-h">
+              ? `<section aria-labelledby="sched-h" id="upkeep">
                   <div class="section-head"><h2 id="sched-h">Upkeep</h2>${cycles ? `<span class="small muted">${Number(cycles.value)} uses so far${item.uses_per_week ? `, about ${Number(item.uses_per_week)} a week` : ""}</span>` : ""}</div>
-                  <div class="card">${item.tasks
-                    .map(
-                      (t) => `<div class="fact">
-                        <div><strong>${esc(t.title)}</strong> <span class="muted">${esc(howOften(t.interval_unit, t.interval_value))}</span>
-                          ${t.details ? `<div>${esc(t.details)}</div>` : ""}
-                          <div class="row" style="margin-top:4px">${source(t)}${badge(t)}${t.next_due_on ? `<span class="small ${t.next_due_on < today() ? "" : "muted"}" ${t.next_due_on < today() ? 'style="color:var(--coral);font-weight:700"' : ""}>Next ${esc(relDay(t.next_due_on))}</span>` : ""}</div>
-                        </div>
-                        <div class="row" style="align-items:start">${t.active ? `<button type="button" class="quiet small" data-done="${t.id}">Done</button>` : ""}<button type="button" class="quiet small" data-fix="task:${t.id}">Fix</button></div>
-                      </div>`,
-                    )
-                    .join("")}</div>
+                  <div id="upkeep-body"></div>
                 </section>`
               : ""
           }
@@ -281,7 +345,7 @@
                         <div>${[s.max_weight_kg && `${s.min_weight_kg ?? 0} to ${s.max_weight_kg} kg`, s.max_height_cm && `${s.min_height_cm ?? 0} to ${s.max_height_cm} cm`, s.min_age_months && `at least ${s.min_age_months} months`].filter(Boolean).map(esc).join(" · ")}</div>
                         ${s.fit_note ? `<div class="muted">${esc(s.fit_note)}</div>` : ""}
                         <div class="row" style="margin-top:4px">${source(s)}${badge(s)}</div></div>
-                        <div><button type="button" class="quiet small" data-fix="seat_limit:${s.id}">Fix</button></div></div>`,
+                        <div class="fact-actions"><button type="button" class="quiet small" data-fix="seat_limit:${s.id}">Fix</button></div></div>`,
                     )
                     .join("")}
                     <p class="small muted">A certified child passenger safety technician can check the fit in person.</p>
@@ -289,21 +353,10 @@
               : ""
           }
 
-          ${byKind
-            .map(
-              ([k, fs]) => `<section aria-label="${KINDS[k]}">
-                <div class="section-head"><h2>${KINDS[k]}</h2></div>
-                <div class="card">${fs
-                  .map(
-                    (f) => `<div class="fact"><div><strong>${esc(f.label)}</strong><div>${esc(f.value)}</div><div class="row" style="margin-top:4px">${source(f)}${badge(f)}</div></div>
-                      <div><button type="button" class="quiet small" data-fix="fact:${f.id}">Fix</button></div></div>`,
-                  )
-                  .join("")}</div></section>`,
-            )
-            .join("")}
+          ${item.manual_facts.length ? '<div id="facts" class="stack"></div>' : ""}
 
           ${
-            item.kind === "appliance"
+            item.tasks.some((t) => t.interval_unit === "cycles")
               ? `<section class="card flat"><h2 style="font-size:22px">Log a reading</h2>
                   <p class="muted small">The cycle count from its display keeps "every 30 washes" tasks on real dates.</p>
                   <form class="field" id="reading"><label class="sr-only" for="cycles">Cycle count</label>
@@ -322,6 +375,10 @@
           }`;
 
         $("#ask").addEventListener("click", () => openChat(undefined, () => detail(id)));
+        // Muse asks a few questions with small forms (who it's for, when it was bought) and trims the task list.
+        $("#setup")?.addEventListener("click", () =>
+          openChat(`Set up the ${item.nickname} with me: ask what you need to know.`, () => detail(id)),
+        );
         const saveLook = async (change) => {
           const { error } = await supa.from("items").update(change).eq("id", id);
           if (error) return toast(error.message);
@@ -329,6 +386,36 @@
           if ("icon" in change || "tint" in change) $("#look").open = true;
         };
         $("#pin").addEventListener("click", () => saveLook({ pinned: !item.pinned }));
+        const act = (selector, run) =>
+          $(selector)?.addEventListener("click", async (e) => {
+            const button = e.currentTarget;
+            button.disabled = true;
+            try {
+              await run(button);
+            } catch (err) {
+              button.disabled = false;
+              toast(err.message);
+            }
+          });
+        act("#archive-item", async () => {
+          await setArchived(item, true);
+          location.assign("/things");
+        });
+        act("#restore-item", async () => {
+          await setArchived(item, false);
+          detail(id);
+        });
+        act("#delete-item", async (button) => {
+          if (await deleteForever(item)) location.assign("/things?manage=1");
+          else button.disabled = false;
+        });
+        for (const [button, panel] of [["#look-btn", "#look"], ["#share-btn", "#share"]]) {
+          $(button).addEventListener("click", () => {
+            const d = $(panel);
+            d.open = !d.open;
+            if (d.open) d.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          });
+        }
         $("#share").addEventListener("toggle", (e) => {
           if (e.target.open) shareCard(item);
         });
@@ -339,14 +426,12 @@
           b.addEventListener("click", () => saveLook({ tint: b.dataset.tint }));
         }
         wireManualForm(item, () => detail(id));
-        for (const b of main.querySelectorAll("[data-done]")) {
-          b.addEventListener("click", async () => {
-            const { error: e } = await supa.rpc("log_task_done", { p_task: b.dataset.done });
-            if (e) return toast(e.message);
-            toast("Done. The next one is scheduled.");
-            detail(id);
-          });
-        }
+        const markDone = async (taskId) => {
+          const { error: e } = await supa.rpc("log_task_done", { p_task: taskId });
+          if (e) return toast(e.message);
+          toast("Done. The next one is scheduled.");
+          detail(id);
+        };
         for (const b of main.querySelectorAll("[data-reread]")) {
           b.addEventListener("click", async () => {
             b.disabled = true;
@@ -360,20 +445,95 @@
             detail(id);
           });
         }
+        const fixIt = (fix) => {
+          const [type, target] = fix.split(":");
+          const field = { fact: "value", task: "details", seat_limit: "fit_note" }[type];
+          const value = prompt("What should it say? Your version wins, and the old one is kept.");
+          if (!value?.trim()) return;
+          tool("revise_fact", { id: target, type, source: "user", changes: { [field]: value.trim() }, reason: "Set by you." })
+            .then(() => {
+              toast("Saved.");
+              detail(id);
+            })
+            .catch((err) => toast(err.message));
+        };
+        // Car seat limits are drawn with the page; upkeep and facts are redrawn on taps, so they delegate.
         for (const b of main.querySelectorAll("[data-fix]")) {
-          b.addEventListener("click", () => {
-            const [type, target] = b.dataset.fix.split(":");
-            const field = { fact: "value", task: "details", seat_limit: "fit_note" }[type];
-            const value = prompt("What should it say? Your version wins, and the old one is kept.");
-            if (!value?.trim()) return;
-            tool("revise_fact", { id: target, type, source: "user", changes: { [field]: value.trim() }, reason: "Set by you." })
-              .then(() => {
-                toast("Saved.");
-                detail(id);
-              })
-              .catch((err) => toast(err.message));
-          });
+          if (!b.closest("#upkeep, #facts")) b.addEventListener("click", () => fixIt(b.dataset.fix));
         }
+        const remember = (key, value) => {
+          try {
+            sessionStorage.setItem(key, value ?? "");
+          } catch {}
+        };
+        const recall = (key) => {
+          try {
+            return sessionStorage.getItem(key) || null;
+          } catch {
+            return null;
+          }
+        };
+
+        const upkeep = $("#upkeep");
+        let groups = guessGroups(item.tasks);
+        const drawUpkeep = () => {
+          $("#upkeep-body").innerHTML = upkeepBody(item.tasks, groups, recall(`manuals-upkeep-${id}`), { source, badge });
+        };
+        upkeep?.addEventListener("click", (e) => {
+          const done = e.target.closest("[data-done]");
+          const fix = e.target.closest("[data-fix]");
+          const tile = e.target.closest("[data-group]");
+          if (done) markDone(done.dataset.done);
+          else if (fix) fixIt(fix.dataset.fix);
+          else if (tile) {
+            remember(`manuals-upkeep-${id}`, tile.getAttribute("aria-pressed") === "true" ? null : tile.dataset.group);
+            drawUpkeep();
+          }
+        });
+        if (upkeep) {
+          drawUpkeep();
+          // Jev's grouping replaces the keyword guess when it's back; remembered for this visit.
+          const key = `manuals-groups-${id}-${item.tasks.length}`;
+          let cached = null;
+          try {
+            cached = JSON.parse(recall(key) || "null");
+          } catch {}
+          (cached ? Promise.resolve(cached) : api("/api/upkeep-groups", { item_id: id }).then((r) => r.groups))
+            .then((jev) => {
+              remember(key, JSON.stringify(jev));
+              groups = { ...groups, ...jev };
+              if (document.body.contains(upkeep)) drawUpkeep();
+            })
+            .catch(() => {});
+        }
+
+        const facts = $("#facts");
+        let openCode = null;
+        const drawFacts = () => {
+          facts.innerHTML = factsBody(item.manual_facts, openCode, { source, badge });
+        };
+        facts?.addEventListener("click", (e) => {
+          const fix = e.target.closest("[data-fix]");
+          const code = e.target.closest("[data-code]");
+          if (fix) fixIt(fix.dataset.fix);
+          else if (e.target.closest("[data-ask-facts]")) openChat(undefined, () => detail(id));
+          else if (e.target.closest("[data-copy-specs]")) {
+            // Plain "Label: value" lines, ready to paste into a parts order or a support chat.
+            const text = [
+              [item.nickname, item.brand, item.model].filter(Boolean).join(" "),
+              ...item.manual_facts.filter((f) => f.kind === "spec").map((f) => `${f.label}: ${f.value}`),
+            ].join("\n");
+            navigator.clipboard
+              .writeText(text)
+              .then(() => toast("Specs copied."))
+              .catch(() => toast("Couldn't copy here; select the text instead."));
+          }
+          else if (code) {
+            openCode = openCode === code.dataset.code ? null : code.dataset.code;
+            drawFacts();
+          }
+        });
+        if (facts) drawFacts();
         $("#reading")?.addEventListener("submit", async (e) => {
           e.preventDefault();
           try {
@@ -386,27 +546,160 @@
         });
       }
 
+      // --- Upkeep tiles -------------------------------------------------------
+      // "What do you want to work on?": tasks sorted into a few groups, one
+      // tile each; a tile opens its tasks as one line each, details on tap.
+      /** A Material Symbols icon; decorative, the text next to it says what it does. */
+      const ic = (name) => `<span class="msi" aria-hidden="true">${name}</span>`;
+      const UPKEEP_ICONS = { due: "event", cleaning: "cleaning_services", parts: "build", checks: "fact_check", setup: "tune", safety: "health_and_safety", other: "more_horiz" };
+      const UPKEEP = [
+        ["due", "Due soon"],
+        ["cleaning", "Cleaning", /clean|wash|wipe|descal|rinse|deodor|soak|scrub|dust|stain|odor/i],
+        ["parts", "Filters & parts", /filter|replac|bulb|lamp|batter|seal|gasket|accessor|turntable|rack|\bparts?\b/i],
+        ["checks", "Checks", /inspect|check|test|look for|examine|wear|damage|leak|loose|tighten/i],
+        ["setup", "Setup & use", /install|set ?up|setting|program|mode|how to|adjust|level/i],
+        ["safety", "Safety", /safety|warn|unplug|disconnect|power|child|expir|recall|discard|never|do not/i],
+        ["other", "Other"],
+      ];
+
+      /** Instant keyword guess per task; Jev's answer replaces it when it arrives. */
+      function guessGroups(tasks) {
+        const out = {};
+        for (const t of tasks) {
+          const text = `${t.title} ${t.details ?? ""}`;
+          out[t.id] = UPKEEP.find(([, , re]) => re?.test(text))?.[0] ?? "other";
+        }
+        return out;
+      }
+
+      const dueSoon = (t) => t.active && t.next_due_on && daysBetween(today(), t.next_due_on) <= 14;
+      const late = (t) => t.active && t.next_due_on && t.next_due_on < today();
+
+      function upkeepBody(tasks, groups, open, { source, badge }) {
+        const members = (key) =>
+          key === "due"
+            ? tasks.filter(dueSoon).sort((a, b) => a.next_due_on.localeCompare(b.next_due_on))
+            : tasks.filter((t) => groups[t.id] === key);
+        const tiles = UPKEEP.map(([key, label]) => {
+          const list = members(key);
+          if (!list.length) return "";
+          const overdue = list.filter(late).length;
+          return `<button type="button" class="uk-tile${key === "due" ? " due" : ""}" data-group="${key}" aria-pressed="${open === key}">
+            <span class="msi uk-icon" aria-hidden="true">${UPKEEP_ICONS[key]}</span>
+            <strong>${esc(label)}</strong>
+            <span class="small muted">${list.length} ${list.length === 1 ? "task" : "tasks"}</span>
+            ${overdue ? `<span class="small late">${overdue} late</span>` : ""}
+          </button>`;
+        }).join("");
+        const when = (t) =>
+          t.next_due_on
+            ? `<span class="small ${late(t) ? "late" : "muted"}">${esc(relDay(t.next_due_on))}</span>`
+            : `<span class="small muted">${esc(howOften(t.interval_unit, t.interval_value))}</span>`;
+        const rows = (open ? members(open) : [])
+          .map(
+            (t) => `<details class="line">
+              <summary><span class="line-title">${esc(t.title)}</span>${when(t)}</summary>
+              <div class="stack line-body">
+                ${t.details ? `<div>${esc(t.details)}</div>` : ""}
+                <div class="row">${source(t)}${badge(t)}<span class="small muted">${esc(howOften(t.interval_unit, t.interval_value))}</span></div>
+                <div class="row">${t.active ? `<button type="button" class="small" data-done="${t.id}">${ic("check")}Done</button>` : ""}<button type="button" class="quiet small" data-fix="task:${t.id}">${ic("edit")}Fix</button></div>
+              </div>
+            </details>`,
+          )
+          .join("");
+        return `<p class="muted" style="margin:0 0 10px">What do you want to work on?</p>
+          <div class="uk-tiles" role="group" aria-label="Kinds of upkeep">${tiles}</div>
+          ${open && members(open).length ? `<div class="card lines">${rows}</div>` : ""}`;
+      }
+
+      // --- Facts overview -----------------------------------------------------
+      // Specs as one compact table, error codes as chips you tap, the rest
+      // folded away with a count. Fix lives inside an opened entry, not on every row.
+      /** The specs' one-line summary: up to three short values, numbers first. */
+      function glanceLine(specs) {
+        const short = specs.filter((f) => f.value.length <= 20);
+        const picked = [...short.filter((f) => /\d/.test(f.value)), ...short.filter((f) => !/\d/.test(f.value))].slice(0, 3);
+        return (picked.length ? picked : specs.slice(0, 2)).map((f) => (f.value.length > 24 ? `${f.value.slice(0, 24)}…` : f.value)).join(" · ");
+      }
+
+      function factsBody(facts, openCode, { source, badge }) {
+        const of = (kind) => facts.filter((f) => f.kind === kind);
+        const page = (f) => (f.source_page ? `<span class="small muted"> p. ${f.source_page}</span>` : "");
+        const check = (f) => (f.status === "needs_review" ? ' <span class="chip gold strong">To check</span>' : "");
+        const specs = of("spec");
+        const codes = of("error_code");
+        const glance = specs.length
+          ? `<section aria-labelledby="glance-h"><div class="section-head"><h2 id="glance-h">At a glance</h2></div>
+              <div class="card glance-card"><button type="button" class="corner-copy" data-copy-specs aria-label="Copy all specs" title="Copy all specs">${ic("content_copy")}</button>
+                <details class="glance-more"><summary><span class="glance-line">${esc(glanceLine(specs))}</span><span class="glance-all"><span class="when-closed">All ${specs.length}</span><span class="when-open">Less</span></span></summary>
+                  <dl class="glance">${specs
+                    .map((f) => `<dt>${esc(f.label)}</dt><dd>${esc(f.value)}${page(f)}${check(f)}</dd>`)
+                    .join("")}</dl>
+                  <button type="button" class="link small" data-ask-facts>Something off? Ask Muse</button>
+                </details></div></section>`
+          : "";
+        const open = codes.find((f) => f.id === openCode);
+        const codeCard = codes.length
+          ? `<section aria-labelledby="codes-h"><div class="section-head"><h2 id="codes-h">Error codes</h2></div>
+              <div class="card"><p class="muted" style="margin:0 0 10px">Seeing a code on the display?</p>
+                <div class="codes" role="group" aria-label="Error codes">${codes
+                  .map((f) => `<button type="button" class="code" data-code="${f.id}" aria-pressed="${f.id === openCode}">${esc(f.label)}</button>`)
+                  .join("")}</div>
+                ${open ? `<div class="stack line-body" style="margin-top:12px"><div><strong>${esc(open.label)}</strong>: ${esc(open.value)}</div><div class="row">${source(open)}${badge(open)}<button type="button" class="quiet small" data-fix="fact:${open.id}">${ic("edit")}Fix</button></div></div>` : ""}
+              </div></section>`
+          : "";
+        const folded = ["part", "safety", "other"]
+          .map((kind) => {
+            const list = of(kind);
+            if (!list.length) return "";
+            return `<details class="card fold"><summary><strong>${KINDS[kind]}</strong> <span class="muted small">${list.length}</span></summary>
+              <div class="lines">${list
+                .map(
+                  (f) => `<details class="line"><summary><span class="line-title">${esc(f.label)}</span>${f.status === "needs_review" ? '<span class="chip gold strong">To check</span>' : ""}</summary>
+                    <div class="stack line-body"><div>${esc(f.value)}</div><div class="row">${source(f)}${badge(f)}<button type="button" class="quiet small" data-fix="fact:${f.id}">${ic("edit")}Fix</button></div></div></details>`,
+                )
+                .join("")}</div></details>`;
+          })
+          .join("");
+        return glance + codeCard + folded;
+      }
+
       // --- Adding --------------------------------------------------------------
 
-      function manualForm() {
-        return `<div class="row"><button type="button" id="find-manual">Find it online</button><span class="small muted">Searches the web for the PDF; nothing is read until you pick one.</span></div>
-          <div class="stack" id="found" aria-live="polite"></div>
-          <form class="field" data-link><label class="sr-only" for="pdf-url">Link to the manual PDF</label>
-            <input id="pdf-url" type="url" placeholder="https://maker.example/manual.pdf"><button type="submit">Read it</button></form>
-          <div class="row"><label class="button quiet" for="pdf-file" style="cursor:pointer">Upload a PDF</label>
-            <input id="pdf-file" type="file" accept="application/pdf" class="sr-only"><span class="small muted" data-progress role="status"></span></div>`;
+      // Searching is the default; a link or an upload is the fallback, opened when the search comes up empty.
+      function manualForm(searchable) {
+        return `<div class="stack" id="found" aria-live="polite"></div>
+          ${searchable ? '<div class="row"><button type="button" class="quiet small hidden" id="find-manual">Search again</button></div>' : ""}
+          <details id="own-pdf"${searchable ? "" : " open"}>
+            <summary>Have the PDF or a link?</summary>
+            <div class="stack" style="margin-top:10px">
+              <form class="field" data-link><label class="sr-only" for="pdf-url">Link to the manual PDF</label>
+                <input id="pdf-url" type="url" placeholder="https://maker.example/manual.pdf"><button type="submit">Read it</button></form>
+              <div class="row"><label class="button quiet" for="pdf-file" style="cursor:pointer">Upload a PDF</label>
+                <input id="pdf-file" type="file" accept="application/pdf" class="sr-only"><span class="small muted" data-progress role="status"></span></div>
+            </div>
+          </details>`;
       }
+
+      const FOUND_KEY = (id) => `manuals-found-${id}`;
 
       function candidateCard(c) {
         const tags = [
           c.official ? '<span class="chip teal strong">From the maker</span>' : "",
-          c.has_model ? '<span class="chip teal">Names your model</span>' : '<span class="chip gold">Model not found in the text</span>',
+          c.unchecked
+            ? `<span class="chip gold">Couldn't open it to check; the link names your model</span>`
+            : c.has_model
+              ? c.match === "lookalike"
+                ? '<span class="chip gold">Nearly your model number; check the label</span>'
+                : `<span class="chip teal">${c.match === "family" ? "Same model family" : "Names your model"}</span>`
+              : '<span class="chip gold">Model not found in the text</span>',
         ].join("");
         return `<div class="card found-card">
           <div class="stack" style="gap:4px;min-width:0">
             <strong style="overflow-wrap:anywhere">${esc(c.title || c.url.split("/").pop())}</strong>
             <span class="small muted" style="overflow-wrap:anywhere">${esc(c.host)}${c.page_count ? ` · ${c.page_count} pages` : ""}</span>
             <div class="row" style="gap:6px">${tags}</div>
+            ${c.model_hint ? `<p class="small" style="margin:4px 0 0">This manual spells it <strong>${esc(c.model_hint)}</strong>; the label photo may have been misread. <button type="button" class="quiet small" data-fix-model="${esc(c.model_hint)}">Fix the model</button></p>` : ""}
           </div>
           <div class="row">
             <button type="button" data-use="${esc(c.url)}" data-official="${c.official}">Use this</button>
@@ -415,47 +708,92 @@
         </div>`;
       }
 
-      async function findOnline(item, after) {
+      async function findOnline(item, after, fresh = false) {
         const found = $("#found");
         const button = $("#find-manual");
-        button.disabled = true;
-        found.innerHTML = '<p class="muted small">Searching the web and opening the best PDFs. About 10 seconds…</p>';
+        const fallback = () => {
+          const own = $("#own-pdf");
+          if (own) own.open = true;
+        };
+        if (button) button.disabled = true;
+        found.innerHTML = '<p class="muted small" role="status">Searching the web for the manual and opening the best PDFs. About 10 seconds…</p>';
         try {
-          const out = await api("/api/find-manual", { item_id: item.id });
+          // One search per thing per visit; going back and forth reuses it.
+          let out;
+          try {
+            out = fresh ? null : JSON.parse(sessionStorage.getItem(FOUND_KEY(item.id)) || "null");
+          } catch {}
+          if (!out) {
+            out = await api("/api/find-manual", { item_id: item.id });
+            // Only a search that found something is remembered; an empty one is tried again next visit.
+            try {
+              if (out.candidates.length) sessionStorage.setItem(FOUND_KEY(item.id), JSON.stringify(out));
+              else sessionStorage.removeItem(FOUND_KEY(item.id));
+            } catch {}
+          }
           if (!out.candidates.length) {
-            found.innerHTML = `<p class="muted small">No PDF that looks like this one turned up for “${esc(out.query)}”. Paste a link or upload it below.</p>`;
+            found.innerHTML = `<p class="muted small">Couldn't find a PDF that looks like this one for “${esc(out.query)}”. If you have the paper manual, the maker's site often has it under Support; paste that link or upload the PDF below.</p>`;
+            fallback();
             return;
           }
           found.innerHTML = `<h3>Is this yours?</h3>${out.candidates.map(candidateCard).join("")}`;
+          // The maker's PDF prints the real number; one tap saves it on the thing.
+          for (const b of found.querySelectorAll("[data-fix-model]")) {
+            b.addEventListener("click", async () => {
+              b.disabled = true;
+              const { error } = await (await db()).from("items").update({ model: b.dataset.fixModel }).eq("id", item.id);
+              if (error) {
+                b.disabled = false;
+                return toast(error.message);
+              }
+              item.model = b.dataset.fixModel;
+              for (const other of found.querySelectorAll("[data-fix-model]")) other.closest("p")?.remove();
+              toast(`Model saved as ${item.model}.`);
+            });
+          }
+          // Two calls: download and store (a maker's site can be slow), then Muse's read.
+          // Progress and errors stay on the card, not in a toast that disappears.
           for (const b of found.querySelectorAll("[data-use]")) {
             b.addEventListener("click", async () => {
-              for (const other of found.querySelectorAll("[data-use]")) other.disabled = true;
-              found.insertAdjacentHTML("beforeend", '<p class="muted small" role="status">Muse is reading the manual. This takes up to a minute.</p>');
+              const uses = found.querySelectorAll("[data-use]");
+              for (const other of uses) other.disabled = true;
+              let status = found.querySelector("[data-attach-status]");
+              if (!status) {
+                found.insertAdjacentHTML("beforeend", '<p class="small" role="status" data-attach-status></p>');
+                status = found.querySelector("[data-attach-status]");
+              }
+              status.style.color = "";
+              status.textContent = "Downloading the manual from the maker's site. Some are slow; this can take a minute or two.";
               try {
-                const res = await tool("add_item", { attach_to: item.id, pdf_url: b.dataset.use, official: b.dataset.official === "true" });
-                toast(res.summary);
+                const { manual_id } = await api("/api/attach", { item_id: item.id, url: b.dataset.use, official: b.dataset.official === "true" });
+                status.textContent = "Got it. Muse is reading the manual now, about a minute.";
+                const out = await api("/api/ingest", { manual_id });
+                toast(out.distilled ? `Read it: ${out.distilled.tasks} tasks, ${out.distilled.facts} facts.` : out.note || "Saved.");
                 after();
               } catch (err) {
-                toast(err.message);
-                for (const other of found.querySelectorAll("[data-use]")) other.disabled = false;
+                status.style.color = "var(--coral)";
+                status.textContent = err.message;
+                for (const other of uses) other.disabled = false;
               }
             });
           }
         } catch (err) {
           found.innerHTML = `<p class="small" style="color:var(--coral)">${esc(err.message)}</p>`;
+          fallback();
         } finally {
-          button.disabled = false;
+          if (button) {
+            button.disabled = false;
+            button.classList.remove("hidden");
+          }
         }
       }
 
       function wireManualForm(item, after) {
         const link = main.querySelector("[data-link]");
         if (!link) return;
-        $("#find-manual")?.addEventListener("click", () => findOnline(item, after));
-        if (params.get("find") === "1" && (item.brand || item.model)) {
-          history.replaceState(null, "", `/things?id=${item.id}`);
-          findOnline(item, after);
-        }
+        $("#find-manual")?.addEventListener("click", () => findOnline(item, after, true));
+        if (params.get("find") === "1") history.replaceState(null, "", `/things?id=${item.id}`);
+        if (item.brand || item.model) findOnline(item, after);
         const progress = $("[data-progress]");
         link.addEventListener("submit", async (e) => {
           e.preventDefault();
@@ -486,11 +824,16 @@
       // A failed read used to save the reader's raw error here; show those as one plain sentence.
       const READ_FAILED = "Muse couldn't turn it into a schedule this time. The text is still searchable, and you can read it again.";
       const canReread = (m) =>
-        m.status === "text_ready" && /couldn't distill|couldn't turn it into|wasn't read yet|not read yet/.test(m.status_detail || "");
+        m.status === "text_ready" && /couldn't distill|couldn't turn it into|wasn't read yet|not read yet|scanned pages/.test(m.status_detail || "");
 
       function manualLine(manual) {
         const detail = /couldn't distill/.test(manual.status_detail || "") ? READ_FAILED : manual.status_detail;
-        const button = canReread(manual) ? ` <button type="button" class="small" data-reread="${esc(manual.id)}">Read it again</button>` : "";
+        // A failed or unread manual gets the button up front; a read one gets a quiet one (your fixes are kept).
+        const button = canReread(manual)
+          ? ` <button type="button" class="small" data-reread="${esc(manual.id)}">Read it again</button>`
+          : manual.status === "distilled"
+            ? ` <button type="button" class="link small" data-reread="${esc(manual.id)}">Read it again</button>`
+            : "";
         return `<p class="small muted">${esc(manual.title || "Manual")}${manual.page_count ? `, ${manual.page_count} pages` : ""}${detail ? `. ${esc(detail)}` : ""}${button}</p>`;
       }
 
@@ -610,6 +953,7 @@
             $("#f-nick").focus();
           });
           $("[data-continue]")?.addEventListener("click", () => save(main.querySelector("[data-continue]")));
+          $("[data-anyway]")?.addEventListener("click", () => readImage(async () => image, true));
           $("#add-form").addEventListener("submit", (e) => {
             e.preventDefault();
             thing.nickname = $("#f-nick").value.trim();
@@ -655,6 +999,17 @@
           </div>`);
         }
 
+        // Jev's quick look found no label, or text too blurry to read; Muse wasn't asked yet.
+        function retake(reason) {
+          redraw = () => retake(reason);
+          step(`<div class="stack">
+            ${image ? `<img src="${image}" alt="Your label photo" class="wizard-photo">` : ""}
+            <h2>${reason === "blurry" ? "That one's a little blurry" : "I don't see a label in that one"}</h2>
+            <p class="muted">${reason === "blurry" ? "Hold steady a moment, tap to focus, and avoid glare on the sticker." : "Look for a sticker with the model number, usually inside the door, on the back or under the base."} A close photo of just the label works best.</p>
+            <div class="row">${photoButton("Take another photo")}<button type="button" class="quiet" data-anyway>Read it anyway</button><button type="button" class="quiet" data-type>Type it in</button></div>
+          </div>`);
+        }
+
         function partial() {
           redraw = partial;
           const got = [thing.brand && `<strong>${esc(thing.brand)}</strong>`, thing.model && `model <strong>${esc(thing.model)}</strong>`].filter(Boolean).join(", ");
@@ -692,7 +1047,7 @@
           return readImage(() => shrink(file));
         }
 
-        async function readImage(getImage) {
+        async function readImage(getImage, force = false) {
           // A closer photo after "Almost" adds to what we read; any other photo starts over.
           if (redraw !== partial) {
             Object.assign(thing, { nickname: "", brand: "", model: "", serial: "", category: null, kind: "appliance" });
@@ -700,7 +1055,8 @@
           try {
             image = await getImage();
             reading();
-            const label = await api("/api/snap", { image });
+            const label = await api("/api/snap", force ? { image, force: true } : { image });
+            if (label.retake) return retake(label.retake);
             if (label.category) thing.category = label.category;
             if (label.kind) thing.kind = label.kind;
             if (!label.found && !label.brand && !label.model) return notFound();
