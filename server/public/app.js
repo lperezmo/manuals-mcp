@@ -71,15 +71,29 @@ async function token() {
   return data.session?.access_token;
 }
 
-/** POST to one of the server's endpoints as the signed-in user. */
+/**
+ * POST to one of the server's endpoints as the signed-in user. A dropped
+ * connection (the phone switched apps, the network blinked) throws with
+ * `dropped` set: the server may still be finishing the work.
+ */
 export async function api(path, body) {
-  const res = await fetch(path, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${await token()}` },
-    body: JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await fetch(path, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${await token()}` },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw Object.assign(new Error("The connection dropped."), { dropped: true });
+  }
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json.error || json.summary || `Request failed (${res.status})`);
+  if (!res.ok) {
+    throw Object.assign(new Error(json.error || json.summary || `Request failed (${res.status})`), {
+      status: res.status,
+      busy: json.busy === true,
+    });
+  }
   return json;
 }
 
