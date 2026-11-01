@@ -236,6 +236,8 @@ export async function boot(current, { open = false } = {}) {
     location.assign("/");
     return null;
   }
+  // Pick up anything still reading or searching from an earlier page.
+  if (data.session) startWatching();
   return data.session;
 }
 
@@ -875,4 +877,135 @@ export function openSettings() {
   const button = $("#account");
   if (button && $("#account-menu")?.hidden) button.click();
   button?.scrollIntoView({ block: "nearest" });
+}
+
+// --- Background work ------------------------------------------------------
+// Reading a manual or searching for one keeps running on the server when the
+// page is left. This browser remembers what it's waiting for, shows a small
+// pill on every page, and says when each one is done.
+
+const JOBS_KEY = "manuals-jobs";
+const JOB_MAX_MS = 8 * 60_000;
+let watching = false;
+
+function loadJobs() {
+  try {
+    return JSON.parse(localStorage.getItem(JOBS_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveJobs(jobs) {
+  try {
+    localStorage.setItem(JOBS_KEY, JSON.stringify(jobs));
+  } catch {}
+  drawJobs();
+}
+
+/** Waits for a read ({ kind: "read", item, label }) or a search ({ kind: "search", ... }) in the background. */
+export function watchJob(job) {
+  const jobs = loadJobs().filter((j) => !(j.kind === job.kind && j.item === job.item));
+  // A few seconds back, so a read that started a moment ago still counts.
+  jobs.push({ ...job, since: new Date(Date.now() - 10_000).toISOString() });
+  saveJobs(jobs);
+  startWatching();
+}
+
+/** Stops waiting, when the page already has the answer. */
+export function forgetJob(kind, item) {
+  saveJobs(loadJobs().filter((j) => !(j.kind === kind && j.item === item)));
+}
+
+function drawJobs() {
+  const jobs = loadJobs();
+  let pill = document.querySelector(".jobs-pill");
+  if (!jobs.length) {
+    pill?.remove();
+    return;
+  }
+  if (!pill) {
+    pill = document.createElement("div");
+    pill.className = "jobs-pill";
+    pill.setAttribute("role", "status");
+    document.body.append(pill);
+  }
+  const what = jobs.map((j) =>
+    j.kind === "read" ? `reading the ${j.label} manual` : `looking for the ${j.label} manual`,
+  );
+  pill.innerHTML = `<span class="jobs-dot" aria-hidden="true"></span>Muse is ${esc(what.length > 2 ? `working on ${what.length} things` : what.join(" and "))}…`;
+}
+
+/** Is it done? A read is done when its manual is no longer pending or being read; a search when its log entry is in. */
+async function checkJob(supa, job) {
+  if (job.kind === "read") {
+    const { data: m } = await supa
+      .from("manuals")
+      .select("status, status_detail, reading_since")
+      .eq("item_id", job.item)
+      .gte("updated_at", job.since)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!m || m.reading_since || m.status === "pending") return null;
+    if (m.status === "distilled") return { text: `Muse finished reading the ${job.label} manual.` };
+    return { text: m.status_detail || `Muse couldn't finish the ${job.label} manual.` };
+  }
+  const { data: run } = await supa
+    .from("model_runs")
+    .select("ok, raw_output, error")
+    .eq("kind", "search")
+    .eq("item_id", job.item)
+    .gte("created_at", job.since)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!run) return null;
+  if (!run.ok) return { text: run.error || `The search for the ${job.label} manual didn't work.` };
+  let n = 0;
+  try {
+    n = JSON.parse(run.raw_output).candidates.length;
+  } catch {}
+  return {
+    text: n
+      ? `Found ${n} manual${n === 1 ? "" : "s"} for the ${job.label}.`
+      : `Couldn't find the ${job.label} manual online.`,
+  };
+}
+
+async function startWatching() {
+  drawJobs();
+  if (watching || !loadJobs().length) return;
+  watching = true;
+  const supa = await db();
+  while (loadJobs().length) {
+    await new Promise((r) => setTimeout(r, 4000));
+    for (const job of loadJobs()) {
+      let done = null;
+      try {
+        done = await checkJob(supa, job);
+      } catch {}
+      if (!done && Date.now() - Date.parse(job.since) > JOB_MAX_MS) {
+        done = { text: `Muse is still on the ${job.label}. Check back in a bit.` };
+      }
+      if (!done) continue;
+      forgetJob(job.kind, job.item);
+      const here =
+        location.pathname === "/things" &&
+        new URLSearchParams(location.search).get("id") === job.item;
+      notify(done.text, here ? null : `/things?id=${job.item}`);
+      window.dispatchEvent(new CustomEvent("manuals:job-done", { detail: job }));
+    }
+  }
+  watching = false;
+}
+
+/** A toast that stays a little longer, with a link to the thing. */
+function notify(text, href) {
+  const t = document.createElement("div");
+  t.className = "toast";
+  t.setAttribute("role", "status");
+  t.innerHTML = `${esc(text)}${href ? ` <a href="${esc(href)}" style="color:inherit;font-weight:700;margin-left:8px">Open</a>` : ""}`;
+  document.body.append(t);
+  setTimeout(() => t.remove(), href ? 8000 : 4000);
 }
