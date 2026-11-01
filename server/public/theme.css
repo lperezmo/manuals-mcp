@@ -1959,3 +1959,15 @@ button.danger {
   top: 6px;
   right: 6px;
 }
+
+/* Needs your eyes, folded into one line on the home page */
+.review-fold summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+}
+.review-fold summary::-webkit-details-marker {
+  display: none;
+}

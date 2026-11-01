@@ -87,6 +87,26 @@ describe("verifyKnowledge", () => {
     expect(v.tokens_in).toBe(200);
   });
 
+  test("a part name Jev can't find on the page isn't sent to a person", async () => {
+    const k = knowledge();
+    k.facts.push({
+      kind: "part",
+      label: "Roller ring",
+      value: "Holds the turntable",
+      source_page: 30,
+    });
+    const doubt = (async (_u: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      const answers = Object.fromEntries(
+        Object.keys(body.questions).map((key) => [key, { type: "noul", noul: 0.01 }]),
+      );
+      return Response.json({ answers });
+    }) as unknown as typeof fetch;
+    const v = await verifyKnowledge(withJev, k, PAGES, doubt);
+    expect(v.knowledge.facts[2]?.unsure).toBeUndefined();
+    expect(v.knowledge.facts[1]?.unsure).toBe(true);
+  });
+
   test("car seat limits fail closed when Jev is down", async () => {
     const down = (async () => new Response("no", { status: 503 })) as unknown as typeof fetch;
     const v = await verifyKnowledge(withJev, knowledge(), PAGES, down);
