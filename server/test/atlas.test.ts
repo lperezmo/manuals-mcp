@@ -520,12 +520,87 @@ describe("views in a home shared with another", () => {
       mode: "jev" as const,
       computed_at: "2026-10-31T00:00:00Z",
     };
+    resumeSorting();
     const { db, writes } = fakeDb({});
-    const { fetchImpl } = fakeJev(() => ({ noul: 0.8 }));
+    const { calls, fetchImpl } = fakeJev(() => ({ noul: 0.8 }));
     const loaded = { input, views: [view], sorted_now: 0, guessed: 2, latest_change: null };
     const out = await resolveView(env, db, loaded, { id: "v1" }, fetchImpl);
-    expect(out.scores).toEqual({ w: 0.8, c: 0.8 });
+    // Only its own things are scored, and it shows the same things it saves.
+    expect(Object.keys(calls[0].state.things)).toHaveLength(1);
+    expect(out.scores).toEqual({ w: 0.8 });
     const update = writes.find((w) => w.op === "update");
     expect((update?.rows as any)?.scores).toEqual({ w: 0.8 });
+  });
+
+  test("a change to the other household's things doesn't rescore the view", () => {
+    const view = {
+      id: "v1",
+      household_id: "h1",
+      phrase: "Uses water",
+      scores: { w: 0.99 },
+      mode: "jev" as const,
+      computed_at: "2026-10-31T00:00:00Z",
+    };
+    const dated: AtlasInput = {
+      ...input,
+      items: [
+        { ...input.items[0]!, updated_at: "2026-10-30T00:00:00Z" },
+        { ...input.items[1]!, updated_at: "2026-11-01T00:00:00Z" },
+      ],
+    };
+    expect(viewIsStale(view, dated, "2026-11-01T00:00:00Z", true)).toBe(false);
+    const mineChanged: AtlasInput = {
+      ...dated,
+      items: [{ ...dated.items[0]!, updated_at: "2026-11-01T00:00:00Z" }, dated.items[1]!],
+    };
+    expect(viewIsStale(view, mineChanged, "2026-11-01T00:00:00Z", true)).toBe(true);
+  });
+});
+
+describe("saved views and Jev's cost", () => {
+  const items = ["a", "b", "c"].map((id) => ({
+    ...item(id, `Thing ${id}`),
+    household_id: "h",
+    facets: {},
+    guess: true,
+  }));
+  const input: AtlasInput = { today: "2026-11-01", children: [], items, tasks: [] };
+  const view = () => ({
+    id: "v1",
+    household_id: "h",
+    phrase: "Uses water",
+    scores: {} as Record<string, number>,
+    mode: "jev" as const,
+    computed_at: "2026-10-31T00:00:00Z",
+  });
+
+  test("a thing Jev skipped doesn't make the view rescore on every visit", async () => {
+    resumeSorting();
+    const { calls, fetchImpl } = fakeJev((key) => (key === "i2" ? undefined : { noul: 0.9 }));
+    const saved = view();
+    const loaded = { input, views: [saved], sorted_now: 0, guessed: 3, latest_change: null };
+    const first = await resolveView(env, fakeDb({}).db, loaded, { id: "v1" }, fetchImpl);
+    expect(calls).toHaveLength(1);
+    expect(Object.keys(first.scores).sort()).toEqual(["a", "b", "c"]);
+    const next = { ...loaded, views: [first.saved!] };
+    await resolveView(env, fakeDb({}).db, next, { id: "v1" }, fetchImpl);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("when Jev is down, opening a view again doesn't wait on it", async () => {
+    resumeSorting();
+    let calls = 0;
+    const down = (async () => {
+      calls++;
+      return new Response("busy", { status: 503 });
+    }) as unknown as typeof fetch;
+    const loaded = { input, views: [view()], sorted_now: 0, guessed: 3, latest_change: null };
+    const first = await resolveView(env, fakeDb({}).db, loaded, { id: "v1" }, down);
+    expect(first.mode).toBe("text");
+    const next = { ...loaded, views: [first.saved!] };
+    await resolveView(env, fakeDb({}).db, next, { id: "v1" }, down);
+    await resolveView(env, fakeDb({}).db, loaded, { phrase: "things near the sink" }, down);
+    expect(calls).toBe(1);
+    resumeSorting();
   });
 });

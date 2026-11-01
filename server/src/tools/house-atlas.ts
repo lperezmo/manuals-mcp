@@ -17,6 +17,7 @@ import {
   type Lens,
   scoreView,
   sortFacets,
+  textScores,
   VIEW_BAR,
 } from "../atlas.js";
 import type { Db } from "../db.js";
@@ -265,10 +266,19 @@ export function viewIsStale(
   jevOn: boolean,
 ): boolean {
   if (jevOn && view.mode === "text") return true;
-  if (ownItems(input.items, view.household_id).some((i) => !(i.id in (view.scores ?? {})))) {
-    return true;
-  }
-  return !!latestChange && Date.parse(latestChange) > Date.parse(view.computed_at);
+  const own = ownItems(input.items, view.household_id);
+  if (own.some((i) => !(i.id in (view.scores ?? {})))) return true;
+  // Only a change to the view's own household's things makes it stale.
+  const latest = view.household_id ? (latestOf(own) ?? latestChange) : latestChange;
+  return !!latest && Date.parse(latest) > Date.parse(view.computed_at);
+}
+
+/** The newest updated_at among things that carry one. */
+function latestOf(items: { updated_at?: string }[]): string | null {
+  return items.reduce<string | null>(
+    (m, i) => (i.updated_at && (!m || i.updated_at > m) ? i.updated_at : m),
+    null,
+  );
 }
 
 /** The things of one household (all of them when it isn't known). */
@@ -314,20 +324,33 @@ export async function resolveView(
     null;
   const phrase = saved?.phrase ?? ref.phrase?.trim() ?? "";
   if (!phrase) throw new Error("Say what the view should show, like things that use water.");
-  if (saved && !viewIsStale(saved, loaded.input, loaded.latest_change, !!env.router)) {
+  // While Jev is known to be down, a view doesn't wait on it either: a saved
+  // view keeps its last scores, a new phrase gets a word match.
+  const paused = Date.now() < sortPausedUntil;
+  if (saved && (paused || !viewIsStale(saved, loaded.input, loaded.latest_change, !!env.router))) {
     return { phrase, scores: saved.scores, mode: saved.mode, saved };
   }
-  const scored = await scoreView(env, phrase, loaded.input.items, loaded.input.tasks, fetchImpl);
+  // A saved view only scores (and pays for) its own household's things, so it
+  // shows the same things whether it was just rescored or read back.
+  const items = saved ? ownItems(loaded.input.items, saved.household_id) : loaded.input.items;
+  const ids = new Set(items.map((i) => i.id));
+  const tasks = loaded.input.tasks.filter((t) => ids.has(t.item_id));
+  const scored = paused
+    ? { scores: textScores(phrase, items, tasks), mode: "text" as const }
+    : await scoreView(env, phrase, items, tasks, fetchImpl);
+  if (!paused && env.router && items.length && scored.mode === "text") {
+    sortPausedUntil = Date.now() + SORT_PAUSE_MS;
+  }
   if (saved) {
     const computed_at = new Date().toISOString();
-    const kept = scoresFor(scored.scores, loaded.input.items, saved.household_id);
+    const kept = scoresFor(scored.scores, items, saved.household_id);
     await db
       .from("saved_views")
       .update({ scores: kept, mode: scored.mode, computed_at })
       .eq("id", saved.id);
     return {
       phrase,
-      scores: scored.scores,
+      scores: kept,
       mode: scored.mode,
       saved: { ...saved, scores: kept, mode: scored.mode, computed_at },
     };

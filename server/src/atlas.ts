@@ -122,6 +122,7 @@ export interface AtlasItem {
   icon?: string | null;
   tint?: string | null;
   household_id?: string;
+  updated_at?: string;
 }
 
 export interface AtlasTask {
@@ -583,6 +584,10 @@ export async function scoreView(
     }
     // A reply missing most answers is no better than a word match.
     if (Object.keys(scores).length < items.length / 2) return fallback();
+    // The few Jev skipped get a word match, so a saved view covers every thing
+    // and doesn't look stale (and get rescored) on every visit.
+    const missing = items.filter((i) => !(i.id in scores));
+    if (missing.length) Object.assign(scores, textScores(phrase, missing, tasks));
     return { scores, mode: "jev", tokens_in: tokens };
   } catch {
     return fallback();
