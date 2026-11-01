@@ -1046,7 +1046,11 @@ function drawJobs() {
     jobs.length > 1
       ? `Working on ${jobs.length} manuals`
       : `${j.kind === "read" ? "Reading" : "Finding"} the ${j.label} manual`;
-  pill.innerHTML = `<span class="jobs-dot" aria-hidden="true"></span><span class="jobs-text">${esc(what)}…</span>`;
+  pill.innerHTML = `<span class="jobs-dot" aria-hidden="true"></span><span class="jobs-text">${esc(what)}…</span><button type="button" class="jobs-close" aria-label="Stop showing this">×</button>`;
+  // Stops watching, nothing more: work already on the server finishes or fails on its own.
+  pill.querySelector(".jobs-close").addEventListener("click", () => {
+    saveJobs([]);
+  });
 }
 
 /** Is it done? A read is done when its manual is no longer pending or being read; a search when its log entry is in. */

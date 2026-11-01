@@ -2050,6 +2050,19 @@ body:has(.jobs-pill) {
     padding-bottom: calc(136px + env(safe-area-inset-bottom));
   }
 }
+.jobs-close {
+  margin: -6px -8px -6px 0;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink2);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
 .jobs-text {
   min-width: 0;
   white-space: nowrap;
