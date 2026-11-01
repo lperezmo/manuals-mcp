@@ -147,6 +147,8 @@ describe("keyword guesses", () => {
       whose: { "child:k1": 0.5 },
     });
     expect(guessItem(CRIB, KIDS).whose).toEqual({ "child:k1": 0.5 });
+    expect(guessItem(item("s", "Smoke alarms")).room).toEqual({ whole_house: 0.5 });
+    expect(guessItem(item("l", "Water leak detector")).room).not.toEqual({ whole_house: 0.5 });
   });
 
   test("tasks get an effort and a season from their words", () => {
