@@ -34,7 +34,7 @@ import { ATTACH_DOWNLOAD_MS, FetchPdfError, fetchPdf } from "./finder/fetch-pdf.
 import { processStoredManual, ReadingBusyError, storeManual } from "./finder/ingest.js";
 import { findManual } from "./finder/search.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
-import { memoryTag, noteFrom, notesForMuse, saveNote } from "./memory.js";
+import { isSafetyTurn, memoryTag, noteFrom, notesForMuse, saveNote } from "./memory.js";
 import { checkPhoto, checkRead, lookAtPhoto } from "./photo-check.js";
 import { readReceipt, saveReceipt, warrantyStatus } from "./receipt.js";
 import {
@@ -439,7 +439,8 @@ export function chatHandler(
     // Skipped when Jev just failed to answer the fast lane.
     let turn = messages;
     // What the household told Muse before, read while Jev looks at any photo.
-    const notes = notesForMuse(db);
+    // A car seat or safety turn gets none.
+    const notes = isSafetyTurn(lane, question) ? null : notesForMuse(db);
     const look = image && !jevDown ? await lookAtPhoto(env, image, question, fetchImpl) : null;
     if (image && look?.finding) {
       turn = [...messages.slice(0, -1), { role: "user", content: `${question}\n${look.finding}` }];
