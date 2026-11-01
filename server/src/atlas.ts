@@ -100,6 +100,8 @@ export const VIEW_BAR = 0.6;
 export const MAYBE_P = 0.4;
 /** Questions per Jev call; bigger households are split into a few calls sent together. */
 const QUESTIONS_PER_CALL = 60;
+/** The sort runs while the Atlas page waits, so a slow Jev gives up and the page shows guesses. */
+const SORT_TIMEOUT_MS = 6_000;
 /** Due within this many days counts as soon. */
 export const SOON_DAYS = 7;
 
@@ -119,6 +121,7 @@ export interface AtlasItem {
   notes: string | null;
   icon?: string | null;
   tint?: string | null;
+  household_id?: string;
 }
 
 export interface AtlasTask {
@@ -251,6 +254,9 @@ export interface SortResult {
   /** Subjects Jev answered for, so the rest can fall back to a guess. */
   sorted: Set<string>;
   tokens_in: number;
+  /** Calls sent, and how many of them failed (an error, a timeout or a non-2xx). */
+  calls: number;
+  failed: number;
 }
 
 /**
@@ -264,7 +270,7 @@ export async function sortFacets(
   fetchImpl: typeof fetch = fetch,
 ): Promise<SortResult> {
   const router = env.router;
-  const out: SortResult = { rows: [], sorted: new Set(), tokens_in: 0 };
+  const out: SortResult = { rows: [], sorted: new Set(), tokens_in: 0, calls: 0, failed: 0 };
   if (!router) return out;
   const byId = new Map(input.all.map((i) => [i.id, i]));
   const asks: Ask[] = [
@@ -303,6 +309,7 @@ export async function sortFacets(
     LENS_KEYS.map((l) => [l, lensOptions(l, input.children)]),
   ) as Record<Lens, Record<string, string>>;
 
+  out.calls = chunks.length;
   await Promise.all(
     chunks.map(async (chunk) => {
       try {
@@ -336,9 +343,12 @@ export async function sortFacets(
               ),
             ),
           }),
-          signal: AbortSignal.timeout(10_000),
+          signal: AbortSignal.timeout(SORT_TIMEOUT_MS),
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+          out.failed++;
+          return;
+        }
         const body = (await res.json()) as {
           answers?: Record<string, unknown>;
           usage?: { input_tokens?: number };
@@ -359,7 +369,9 @@ export async function sortFacets(
             out.sorted.add(a.id);
           }
         }
-      } catch {}
+      } catch {
+        out.failed++;
+      }
     }),
   );
   return out;
@@ -548,7 +560,7 @@ export async function scoreView(
               ]),
             ),
           }),
-          signal: AbortSignal.timeout(8_000),
+          signal: AbortSignal.timeout(SORT_TIMEOUT_MS),
         });
         if (!res.ok) throw new Error(`Jev answered ${res.status}.`);
         const body = (await res.json()) as {

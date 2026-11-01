@@ -31,12 +31,22 @@ import { guarded, reply, session } from "./context.js";
 
 /** Most things or tasks sorted in one go, so a first visit stays quick; the rest wait for the next. */
 const SORT_PER_LOAD = 150;
+/** After every sort call failed, pages skip Jev for this long and show guesses right away. */
+const SORT_PAUSE_MS = 5 * 60_000;
+let sortPausedUntil = 0;
+
+/** Lets sorting run again at once (tests, or after Jev is known to be back). */
+export function resumeSorting(): void {
+  sortPausedUntil = 0;
+}
 
 type ItemRowA = AtlasItem & { household_id: string; updated_at: string };
 type TaskRowA = AtlasTask & { household_id: string };
 
 export interface SavedView {
   id: string;
+  /** The household the view belongs to; its scores only cover that household's things. */
+  household_id?: string;
   phrase: string;
   scores: Record<string, number>;
   mode: "jev" | "text";
@@ -49,6 +59,30 @@ export interface Loaded {
   sorted_now: number;
   guessed: number;
   latest_change: string | null;
+}
+
+/** PostgREST hands back at most this many rows per request (Supabase's default max_rows). */
+const ROWS_PER_READ = 1000;
+
+/**
+ * Every row of a query, a page at a time. A household with many upkeep tasks
+ * has more facet rows than one read returns, and a cut-off read would look
+ * unsorted and send those tasks to Jev again on every visit.
+ */
+async function allRows<T>(
+  page: (
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<{ data: T[]; error: { message: string } | null }> {
+  const out: T[] = [];
+  for (let from = 0; from < 50 * ROWS_PER_READ; from += ROWS_PER_READ) {
+    const { data, error } = await page(from, from + ROWS_PER_READ - 1);
+    if (error) return { data: out, error };
+    out.push(...(data ?? []));
+    if ((data ?? []).length < ROWS_PER_READ) break;
+  }
+  return { data: out, error: null };
 }
 
 /** Reads the household, sorts whatever hasn't been sorted yet, and saves those sorts. */
@@ -66,9 +100,28 @@ export async function loadAtlas(
       .is("archived_at", null)
       .order("created_at"),
     db.from("children").select("id, nickname").order("created_at"),
-    db.from("item_facets").select("item_id, lens, value, p"),
-    db.from("task_facets").select("task_id, lens, value, p"),
-    db.from("saved_views").select("id, phrase, scores, mode, computed_at").order("created_at"),
+    allRows((from, to) =>
+      db
+        .from("item_facets")
+        .select("item_id, lens, value, p")
+        .order("item_id")
+        .order("lens")
+        .order("value")
+        .range(from, to),
+    ),
+    allRows((from, to) =>
+      db
+        .from("task_facets")
+        .select("task_id, lens, value, p")
+        .order("task_id")
+        .order("lens")
+        .order("value")
+        .range(from, to),
+    ),
+    db
+      .from("saved_views")
+      .select("id, household_id, phrase, scores, mode, computed_at")
+      .order("created_at"),
   ]);
   for (const r of [itemsRes, childrenRes, itemFacetsRes, taskFacetsRes, viewsRes]) {
     if (r.error) throw new Error(`Couldn't read the atlas: ${r.error.message}`);
@@ -101,7 +154,11 @@ export async function loadAtlas(
   const unsortedItems = items.filter((i) => !complete(itemFacets.get(i.id), "item"));
   const unsortedTasks = tasks.filter((t) => !complete(taskFacets.get(t.id), "task"));
   let sortedNow = 0;
-  if (env.router && (unsortedItems.length || unsortedTasks.length)) {
+  if (
+    env.router &&
+    Date.now() >= sortPausedUntil &&
+    (unsortedItems.length || unsortedTasks.length)
+  ) {
     const pickItems = unsortedItems.slice(0, SORT_PER_LOAD);
     const pickTasks = unsortedTasks.slice(0, Math.max(0, SORT_PER_LOAD - pickItems.length));
     const result = await sortFacets(
@@ -110,6 +167,10 @@ export async function loadAtlas(
       fetchImpl,
     );
     sortedNow = result.sorted.size;
+    // Jev is down or timing out: don't make every page load wait for it again.
+    if (result.calls && result.failed === result.calls) {
+      sortPausedUntil = Date.now() + SORT_PAUSE_MS;
+    }
     // Fresh answers replace whatever partial sort was there.
     for (const id of result.sorted) {
       itemFacets.delete(id);
@@ -204,8 +265,30 @@ export function viewIsStale(
   jevOn: boolean,
 ): boolean {
   if (jevOn && view.mode === "text") return true;
-  if (input.items.some((i) => !(i.id in (view.scores ?? {})))) return true;
+  if (ownItems(input.items, view.household_id).some((i) => !(i.id in (view.scores ?? {})))) {
+    return true;
+  }
   return !!latestChange && Date.parse(latestChange) > Date.parse(view.computed_at);
+}
+
+/** The things of one household (all of them when it isn't known). */
+function ownItems<T extends { household_id?: string }>(items: T[], householdId?: string): T[] {
+  return householdId
+    ? items.filter((i) => !i.household_id || i.household_id === householdId)
+    : items;
+}
+
+/**
+ * The scores a saved view keeps: only its own household's things, so a person
+ * in two homes never writes one home's things into the other's view.
+ */
+export function scoresFor(
+  scores: Record<string, number>,
+  items: { id: string; household_id?: string }[],
+  householdId?: string,
+): Record<string, number> {
+  const keep = new Set(ownItems(items, householdId).map((i) => i.id));
+  return Object.fromEntries(Object.entries(scores).filter(([id]) => keep.has(id)));
 }
 
 export interface ViewResult {
@@ -237,15 +320,16 @@ export async function resolveView(
   const scored = await scoreView(env, phrase, loaded.input.items, loaded.input.tasks, fetchImpl);
   if (saved) {
     const computed_at = new Date().toISOString();
+    const kept = scoresFor(scored.scores, loaded.input.items, saved.household_id);
     await db
       .from("saved_views")
-      .update({ scores: scored.scores, mode: scored.mode, computed_at })
+      .update({ scores: kept, mode: scored.mode, computed_at })
       .eq("id", saved.id);
     return {
       phrase,
       scores: scored.scores,
       mode: scored.mode,
-      saved: { ...saved, scores: scored.scores, mode: scored.mode, computed_at },
+      saved: { ...saved, scores: kept, mode: scored.mode, computed_at },
     };
   }
   return { phrase, scores: scored.scores, mode: scored.mode, saved: null };

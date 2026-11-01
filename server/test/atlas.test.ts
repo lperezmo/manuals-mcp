@@ -14,7 +14,13 @@ import {
   textScores,
 } from "../src/atlas.js";
 import { readEnv } from "../src/env.js";
-import { loadAtlas, resolveView, viewIsStale } from "../src/tools/house-atlas.js";
+import {
+  loadAtlas,
+  resolveView,
+  resumeSorting,
+  scoresFor,
+  viewIsStale,
+} from "../src/tools/house-atlas.js";
 
 const base = {
   SUPABASE_URL: "https://example-ref.supabase.co",
@@ -267,12 +273,18 @@ describe("the map", () => {
 /** Just enough of the Supabase client for loadAtlas: canned reads, recorded writes. */
 function fakeDb(tables: Record<string, unknown[]>) {
   const writes: { table: string; op: string; rows?: unknown; filter?: unknown }[] = [];
+  const reads: Record<string, number> = {};
   const from = (table: string) => {
     const result = { data: tables[table] ?? [], error: null };
     const chain: any = {
       select: () => chain,
       is: () => chain,
       order: () => chain,
+      range: (a: number, b: number) => {
+        result.data = (tables[table] ?? []).slice(a, b + 1);
+        reads[table] = (reads[table] ?? 0) + 1;
+        return chain;
+      },
       eq: (col: string, v: unknown) => {
         if (chain.op) writes.push({ table, op: chain.op, rows: chain.rows, filter: [col, v] });
         return chain;
@@ -296,7 +308,7 @@ function fakeDb(tables: Record<string, unknown[]>) {
     };
     return chain;
   };
-  return { db: { from } as any, writes };
+  return { db: { from } as any, writes, reads };
 }
 
 describe("loading the atlas", () => {
@@ -401,5 +413,119 @@ describe("loading the atlas", () => {
       table: "saved_views",
       filter: ["id", "v1"],
     });
+  });
+});
+
+describe("cost and failure", () => {
+  const items = [
+    { ...WASHER, household_id: "h", icon: null, tint: null, updated_at: "2026-10-30T00:00:00Z" },
+  ];
+  const tables = () => ({
+    items,
+    children: [],
+    item_facets: [],
+    task_facets: [],
+    saved_views: [],
+  });
+
+  test("when Jev is down, the next page loads show guesses without calling it again", async () => {
+    resumeSorting();
+    let calls = 0;
+    const down = (async () => {
+      calls++;
+      return new Response("busy", { status: 503 });
+    }) as unknown as typeof fetch;
+    const first = await loadAtlas(env, fakeDb(tables()).db, down);
+    expect(calls).toBe(1);
+    expect(first.guessed).toBe(1);
+    const second = await loadAtlas(env, fakeDb(tables()).db, down);
+    expect(calls).toBe(1);
+    expect(second.guessed).toBe(1);
+    expect(buildAtlas("room", second.input).map((g) => g.value)).toEqual(["laundry"]);
+    resumeSorting();
+  });
+
+  test("a big household's sorts are read in full, so none look unsorted", async () => {
+    resumeSorting();
+    const many = Array.from({ length: 700 }, (_, n) => ({
+      ...item(`x${n}`, `Thing ${n}`),
+      household_id: "h",
+      updated_at: "2026-10-30T00:00:00Z",
+      tasks: [],
+    }));
+    const facets = many.flatMap((i) => [
+      { item_id: i.id, lens: "room", value: "garage", p: 0.9 },
+      { item_id: i.id, lens: "system", value: "power", p: 0.9 },
+      { item_id: i.id, lens: "whose", value: "anyone", p: 0.9 },
+    ]);
+    const { calls, fetchImpl } = fakeJev(() => ({ noul: 0.5 }));
+    const { db, reads } = fakeDb({ ...tables(), items: many, item_facets: facets });
+    const loaded = await loadAtlas(env, db, fetchImpl);
+    expect(reads.item_facets).toBe(3);
+    expect(loaded.guessed).toBe(0);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("a sorted household costs no Jev call on the next visit", async () => {
+    resumeSorting();
+    const { calls, fetchImpl } = fakeJev(() => ({ noul: 0.5 }));
+    const { db } = fakeDb({
+      ...tables(),
+      item_facets: [
+        { item_id: "w", lens: "room", value: "laundry", p: 0.9 },
+        { item_id: "w", lens: "system", value: "water", p: 0.9 },
+        { item_id: "w", lens: "whose", value: "anyone", p: 0.9 },
+      ],
+    });
+    const loaded = await loadAtlas(env, db, fetchImpl);
+    expect(calls).toHaveLength(0);
+    expect(loaded.guessed).toBe(0);
+  });
+});
+
+describe("views in a home shared with another", () => {
+  const mine = { ...WASHER, household_id: "h1" };
+  const theirs = { ...CRIB, household_id: "h2" };
+  const input: AtlasInput = {
+    today: "2026-11-01",
+    children: [],
+    items: [mine, theirs].map((i) => ({ ...i, facets: {}, guess: true })),
+    tasks: [],
+  };
+
+  test("a saved view keeps only its own household's things", () => {
+    expect(scoresFor({ w: 0.9, c: 0.2 }, input.items, "h1")).toEqual({ w: 0.9 });
+    expect(scoresFor({ w: 0.9, c: 0.2 }, input.items)).toEqual({ w: 0.9, c: 0.2 });
+  });
+
+  test("the other household's things don't make a saved view stale", () => {
+    const view = {
+      id: "v1",
+      household_id: "h1",
+      phrase: "Uses water",
+      scores: { w: 0.99 },
+      mode: "jev" as const,
+      computed_at: "2026-10-31T00:00:00Z",
+    };
+    expect(viewIsStale(view, input, "2026-10-30T00:00:00Z", true)).toBe(false);
+    expect(viewIsStale({ ...view, household_id: undefined }, input, null, true)).toBe(true);
+  });
+
+  test("rescoring a saved view writes back only its own household's scores", async () => {
+    const view = {
+      id: "v1",
+      household_id: "h1",
+      phrase: "Uses water",
+      scores: {},
+      mode: "jev" as const,
+      computed_at: "2026-10-31T00:00:00Z",
+    };
+    const { db, writes } = fakeDb({});
+    const { fetchImpl } = fakeJev(() => ({ noul: 0.8 }));
+    const loaded = { input, views: [view], sorted_now: 0, guessed: 2, latest_change: null };
+    const out = await resolveView(env, db, loaded, { id: "v1" }, fetchImpl);
+    expect(out.scores).toEqual({ w: 0.8, c: 0.8 });
+    const update = writes.find((w) => w.op === "update");
+    expect((update?.rows as any)?.scores).toEqual({ w: 0.8 });
   });
 });
