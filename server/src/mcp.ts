@@ -8,6 +8,7 @@ import type { Surface } from "./tools/context.js";
 import * as houseAtlas from "./tools/house-atlas.js";
 import * as listItems from "./tools/list-items.js";
 import * as logDone from "./tools/log-done.js";
+import * as pulse from "./tools/pulse.js";
 import * as recordMeasurement from "./tools/record-measurement.js";
 import * as requestUpload from "./tools/request-upload.js";
 import * as reviseFact from "./tools/revise-fact.js";
@@ -28,6 +29,7 @@ export const INSTRUCTIONS = `Manuals keeps the user's household manuals and upke
 - For car seats, compare the child's latest measurements with the seat's limits and cite the page. Don't predict growth or give health advice; suggest measuring again, and mention a certified child passenger safety technician can check the fit.
 - For a thing that isn't new (used for years, never maintained, or out of storage), ask what has been done to it and call catch_up once its manual is read.
 - For questions across the house ("what's in the nursery", "what uses water", "what can I do in five minutes", "what's due before winter"), use house_atlas with a lens, and a view in the user's words when the lenses don't cover it.
+- For "anything I should know about the house?", use pulse: the few things worth doing now. upcoming has the full list.
 - For calendar reminders, use your own calendar tools.`;
 
 interface ToolModule {
@@ -40,6 +42,7 @@ export const TOOL_MODULES: ToolModule[] = [
   listItems,
   askManual,
   upcoming,
+  pulse,
   reviseFact,
   logDone,
   recordMeasurement,

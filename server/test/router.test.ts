@@ -71,6 +71,7 @@ describe("routeTurn", () => {
       "ask_manual",
       "car_seat_status",
       "upcoming",
+      "pulse",
       "warranty_status",
       "house_atlas",
     ]);

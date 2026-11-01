@@ -24,7 +24,15 @@ export type Route = keyof typeof ROUTES;
 const LOOKUP = ["list_items"];
 /** Tools offered per route. show_card is offered on every route that has tools. */
 export const ROUTE_TOOLS: Record<Route, string[]> = {
-  ask: [...LOOKUP, "ask_manual", "car_seat_status", "upcoming", "warranty_status", "house_atlas"],
+  ask: [
+    ...LOOKUP,
+    "ask_manual",
+    "car_seat_status",
+    "upcoming",
+    "pulse",
+    "warranty_status",
+    "house_atlas",
+  ],
   log: [...LOOKUP, "log_done", "record_measurement", "upcoming"],
   fix: [...LOOKUP, "revise_fact", "ask_manual", "catch_up"],
   add: [...LOOKUP, "add_item", "update_item"],
