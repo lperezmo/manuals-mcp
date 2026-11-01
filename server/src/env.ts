@@ -95,7 +95,7 @@ export function readEnv(source: Record<string, string | undefined> = process.env
             provider: [source.SEARXNG_URL && "searxng", source.SEARCH_API_KEY && "tavily"]
               .filter(Boolean)
               .join("+"),
-            dailyLimit: positive(source.SEARCH_DAILY_LIMIT, 20),
+            dailyLimit: positive(source.SEARCH_DAILY_LIMIT, 80),
             ...(source.SEARXNG_URL
               ? {
                   searxng: {
