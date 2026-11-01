@@ -7,6 +7,7 @@ import {
   withMcpAuth,
 } from "mcp-handler";
 import { bearer, supabaseVerifier, userFrom } from "./auth.js";
+import { background, quickOrBackground } from "./background.js";
 import {
   type ChatImage,
   type ChatUsage,
@@ -105,6 +106,12 @@ export function publicConfigHandler(env: Env) {
  * The app uploads a PDF to storage, then calls this to extract its text and,
  * when a server reader is configured, distill its schedule.
  */
+/**
+ * How long a read may take before the page is told "started, it keeps going".
+ * An answer that needs no read (already read, busy, a bad id) is quicker.
+ */
+export const READ_QUICK_MS = 2_500;
+
 export function ingestHandler(env: Env, verify: Verify = supabaseVerifier(env)) {
   return async (req: Request) => {
     if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
@@ -120,14 +127,19 @@ export function ingestHandler(env: Env, verify: Verify = supabaseVerifier(env)) 
       return Response.json({ error: "manual_id is required." }, { status: 400 });
     try {
       const db = userDb(env, auth.token);
-      const outcome = await processStoredManual({
-        env,
-        db,
-        householdId: await householdId(db),
-        manualId: body.manual_id,
-        reread: body.reread === true,
-      });
-      return Response.json(outcome);
+      const read = await quickOrBackground(
+        processStoredManual({
+          env,
+          db,
+          householdId: await householdId(db),
+          manualId: body.manual_id,
+          reread: body.reread === true,
+        }),
+        READ_QUICK_MS,
+      );
+      if (!read.done)
+        return Response.json({ reading: true, manual_id: body.manual_id }, { status: 202 });
+      return Response.json(read.value);
     } catch (err) {
       if (err instanceof ReadingBusyError)
         return Response.json({ error: err.message, busy: true }, { status: 409 });
@@ -150,7 +162,7 @@ export function attachHandler(
     if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
     const auth = await verify(bearer(req));
     if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
-    let body: { item_id?: unknown; url?: unknown; official?: unknown };
+    let body: { item_id?: unknown; url?: unknown; official?: unknown; read?: unknown };
     try {
       body = (await req.json()) as typeof body;
     } catch {
@@ -158,55 +170,76 @@ export function attachHandler(
     }
     if (typeof body.item_id !== "string" || typeof body.url !== "string")
       return Response.json({ error: "item_id and url are required." }, { status: 400 });
+    const pdfUrl = body.url;
     const db = userDb(env, auth.token);
-    try {
-      const { data: item, error } = await db
-        .from("items")
-        .select(ITEM_COLUMNS)
-        .eq("id", body.item_id)
-        .maybeSingle();
-      if (error) throw new Error(error.message);
-      if (!item)
-        return Response.json({ error: "That thing isn't in your household." }, { status: 404 });
-      // A second tap, or a retry after a dropped connection, reuses the stored copy.
-      const stored = async (url: string) => {
-        const { data } = await db
-          .from("manuals")
-          .select("id")
-          .eq("item_id", body.item_id as string)
-          .eq("source_url", url)
-          .not("storage_path", "is", null)
-          .limit(1)
-          .maybeSingle();
-        return (data?.id as string | undefined) ?? null;
-      };
-      const before = await stored(body.url);
-      if (before) return Response.json({ manual_id: before, existing: true });
-      let fetched: Awaited<ReturnType<typeof fetchPdf>>;
+    // With read: true, Muse's read starts here and keeps going if the page is left.
+    const answer = async (manualId: string, existing: boolean) => {
+      const base = { manual_id: manualId, ...(existing ? { existing: true } : {}) };
+      if (body.read !== true) return Response.json(base);
       try {
-        fetched = await fetchPdf(body.url, fetchImpl, ATTACH_DOWNLOAD_MS);
+        const read = await quickOrBackground(
+          processStoredManual({ env, db, householdId: await householdId(db), manualId }),
+          READ_QUICK_MS,
+        );
+        return Response.json(read.done ? { ...base, ...read.value } : { ...base, reading: true });
       } catch (err) {
-        const message =
-          err instanceof FetchPdfError
-            ? err.message
-            : "The maker's site is too slow right now. Try again in a bit, or open the PDF, save it and upload it.";
-        return Response.json({ error: message }, { status: 422 });
+        if (err instanceof ReadingBusyError) return Response.json({ ...base, reading: true });
+        return Response.json({ ...base, error: (err as Error).message }, { status: 422 });
       }
-      const after = fetched.finalUrl === body.url ? null : await stored(fetched.finalUrl);
-      if (after) return Response.json({ manual_id: after, existing: true });
-      const manualId = await storeManual({
-        db,
-        householdId: await householdId(db),
-        item: item as ItemRow,
-        bytes: fetched.bytes,
-        source: "url",
-        sourceUrl: fetched.finalUrl,
-        official: body.official === true,
-      });
-      return Response.json({ manual_id: manualId });
-    } catch (err) {
-      return Response.json({ error: (err as Error).message }, { status: 502 });
-    }
+    };
+    const run = (async () => {
+      try {
+        const { data: item, error } = await db
+          .from("items")
+          .select(ITEM_COLUMNS)
+          .eq("id", body.item_id)
+          .maybeSingle();
+        if (error) throw new Error(error.message);
+        if (!item)
+          return Response.json({ error: "That thing isn't in your household." }, { status: 404 });
+        // A second tap, or a retry after a dropped connection, reuses the stored copy.
+        const stored = async (url: string) => {
+          const { data } = await db
+            .from("manuals")
+            .select("id")
+            .eq("item_id", body.item_id as string)
+            .eq("source_url", url)
+            .not("storage_path", "is", null)
+            .limit(1)
+            .maybeSingle();
+          return (data?.id as string | undefined) ?? null;
+        };
+        const before = await stored(pdfUrl);
+        if (before) return answer(before, true);
+        let fetched: Awaited<ReturnType<typeof fetchPdf>>;
+        try {
+          fetched = await fetchPdf(pdfUrl, fetchImpl, ATTACH_DOWNLOAD_MS);
+        } catch (err) {
+          const message =
+            err instanceof FetchPdfError
+              ? err.message
+              : "The maker's site is too slow right now. Try again in a bit, or open the PDF, save it and upload it.";
+          return Response.json({ error: message }, { status: 422 });
+        }
+        const after = fetched.finalUrl === pdfUrl ? null : await stored(fetched.finalUrl);
+        if (after) return answer(after, true);
+        const manualId = await storeManual({
+          db,
+          householdId: await householdId(db),
+          item: item as ItemRow,
+          bytes: fetched.bytes,
+          source: "url",
+          sourceUrl: fetched.finalUrl,
+          official: body.official === true,
+        });
+        return answer(manualId, false);
+      } catch (err) {
+        return Response.json({ error: (err as Error).message }, { status: 502 });
+      }
+    })();
+    // A slow maker's site keeps downloading even if the page is left.
+    background(run);
+    return run;
   };
 }
 
@@ -816,15 +849,26 @@ export function findManualHandler(
         return Response.json({ error: "That thing isn't in your household." }, { status: 404 });
       const started = Date.now();
       try {
-        const found = await findManual(env, item, fetchImpl);
-        await logRun(db, {
-          kind: "search",
-          ok: true,
-          model: env.search.provider,
-          ms: Date.now() - started,
-          item_id: item.id,
-          raw_output: JSON.stringify({ query: found.query, tried: found.tried }, null, 2),
-        });
+        const search = env.search;
+        const job = (async () => {
+          const found = await findManual(env, item, fetchImpl);
+          // The candidates come first, so a return visit can show them without searching again.
+          await logRun(db, {
+            kind: "search",
+            ok: true,
+            model: search.provider,
+            ms: Date.now() - started,
+            item_id: item.id,
+            raw_output: JSON.stringify(
+              { query: found.query, candidates: found.candidates, tried: found.tried },
+              null,
+              2,
+            ),
+          });
+          return found;
+        })();
+        background(job);
+        const found = await job;
         return Response.json({ query: found.query, candidates: found.candidates });
       } catch (err) {
         await logRun(db, {
