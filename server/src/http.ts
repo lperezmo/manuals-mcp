@@ -17,6 +17,17 @@ import {
 } from "./chat.js";
 import { householdId, type ItemRow, userDb } from "./db.js";
 import { authIssuer, type Env } from "./env.js";
+import {
+  cachedSnapshot,
+  type FastLane,
+  fastTag,
+  forgetSnapshot,
+  hintFor,
+  loadSnapshot,
+  quickAnswer,
+  rememberSnapshot,
+  suggestions,
+} from "./fastlane.js";
 import { ATTACH_DOWNLOAD_MS, FetchPdfError, fetchPdf } from "./finder/fetch-pdf.js";
 import { processStoredManual, ReadingBusyError, storeManual } from "./finder/ingest.js";
 import { findManual } from "./finder/search.js";
@@ -269,6 +280,57 @@ export function chatHandler(
       image = { mime: match[1], base64: match[2] };
     }
     const db = userDb(env, auth.token);
+    const { messages, via } = parsed.data;
+    const last = messages[messages.length - 1];
+    const previous = messages.slice(0, -1).findLast((m) => m.role === "assistant")?.content;
+    // A photo turn's text, without the "[photo]" stand-in the page puts in front.
+    const question = last?.content.replace(/^\[photo\]\s*/, "") ?? "";
+    const started = Date.now();
+    // The fast lane: one Jev call over the saved facts and tasks also routes the
+    // turn. A confident, complete, harmless answer goes back without Muse, so it
+    // doesn't count against the chat limit.
+    const routable =
+      via === undefined && last?.role === "user" && !!question && !SETUP_MESSAGE.test(last.content);
+    let lane: FastLane | null = null;
+    if (routable && env.router) {
+      try {
+        const snapshot = await loadSnapshot(db);
+        rememberSnapshot(userFrom(auth).userId, snapshot);
+        lane = await quickAnswer(
+          env,
+          snapshot,
+          { message: question, previous, image: image !== undefined },
+          fetchImpl,
+        );
+      } catch {
+        lane = null;
+      }
+    }
+    if (lane?.answer) {
+      const { pick } = lane.answer;
+      await logRun(db, {
+        kind: "fast",
+        ok: true,
+        model: env.router?.model ?? "jev",
+        ms: Date.now() - started,
+        tokens_in: lane.tokens_in,
+        tokens_out: 0,
+        item_id: pick.item.id,
+        tools_used: [fastTag(lane), `${pick.row.type}:${pick.row.kind}`],
+        raw_output: JSON.stringify({ question, line: pick.row, scores: lane.scores }),
+      });
+      return Response.json({
+        reply: lane.answer.text,
+        tools_used: ["fast_lane"],
+        fast: {
+          item_id: pick.item.id,
+          type: pick.row.type,
+          id: pick.row.id,
+          page: pick.row.page,
+          ms: lane.ms,
+        },
+      });
+    }
     try {
       if ((await runsToday(db, "chat")) >= env.chatDailyLimit) {
         return Response.json(
@@ -289,25 +351,26 @@ export function chatHandler(
       tokens_in: 0,
       tokens_out: 0,
     };
-    const started = Date.now();
-    const { messages, via } = parsed.data;
-    const last = messages[messages.length - 1];
-    const previous = messages.slice(0, -1).findLast((m) => m.role === "assistant")?.content;
-    // A photo turn's text, without the "[photo]" stand-in the page puts in front.
-    const question = last?.content.replace(/^\[photo\]\s*/, "") ?? "";
     let decision: RouteDecision | null =
       via === "card"
         ? { route: "answer", confidence: 1, ms: 0, tokens_in: null }
-        : last?.role === "user" && SETUP_MESSAGE.test(last.content)
-          ? { route: "setup", confidence: 1, ms: 0, tokens_in: null }
-          : last?.role === "user" && question
-            ? await routeTurn(env, { previous, message: question }, fetchImpl)
-            : null;
+        : via === "more"
+          ? { route: "ask", confidence: 1, ms: 0, tokens_in: null }
+          : last?.role === "user" && SETUP_MESSAGE.test(last.content)
+            ? { route: "setup", confidence: 1, ms: 0, tokens_in: null }
+            : lane
+              ? lane.route
+              : last?.role === "user" && question
+                ? await routeTurn(env, { previous, message: question }, fetchImpl)
+                : null;
     // A photo is never small talk or off topic to Muse: it gets every tool.
     if (image && (decision?.route === "smalltalk" || decision?.route === "off_topic")) {
       decision = null;
     }
-    const routeTag = decision ? [`route:${decision.route} ${decision.confidence.toFixed(2)}`] : [];
+    const routeTag = [
+      ...(decision ? [`route:${decision.route} ${decision.confidence.toFixed(2)}`] : []),
+      ...(lane ? [fastTag(lane)] : []),
+    ];
     if (decision?.route === "off_topic" && decision.confidence >= OFF_TOPIC_CONFIDENCE) {
       await logRun(db, {
         kind: "chat",
@@ -327,6 +390,14 @@ export function chatHandler(
     if (image && look?.finding) {
       turn = [...messages.slice(0, -1), { role: "user", content: `${question}\n${look.finding}` }];
       image = undefined;
+    }
+    // Jev's picks ride along under the question, so Muse can skip a lookup or two.
+    const hint = lane && decision?.route !== "smalltalk" ? hintFor(lane) : null;
+    if (hint) {
+      const lastTurn = turn[turn.length - 1];
+      if (lastTurn?.role === "user") {
+        turn = [...turn.slice(0, -1), { role: "user", content: `${lastTurn.content}\n${hint}` }];
+      }
     }
     const photoTag = look
       ? [`photo:${look.finding ? "jev" : "muse"} ${look.simple.toFixed(2)}/${look.yes.toFixed(2)}`]
@@ -360,6 +431,10 @@ export function chatHandler(
         tools_used: [...routeTag, ...photoTag, ...result.tools_used],
         raw_output: photoRaw,
       });
+      // A turn that changed something makes type-ahead read the facts again.
+      if (result.tools_used.some((t) => !READ_ONLY_TOOLS.has(t))) {
+        forgetSnapshot(userFrom(auth).userId);
+      }
       if (look?.finding) result.tools_used.unshift("photo_check");
       return Response.json(
         result.card ? { ...result, history: withCard(result.reply, result.card) } : result,
@@ -377,6 +452,67 @@ export function chatHandler(
         raw_output: photoRaw,
       });
       return Response.json({ error: (err as Error).message }, { status: 502 });
+    }
+  };
+}
+
+/** Tools that only read; a chat turn that used only these leaves type-ahead's cache alone. */
+const READ_ONLY_TOOLS = new Set([
+  "list_items",
+  "ask_manual",
+  "upcoming",
+  "car_seat_status",
+  "warranty_status",
+  "show_card",
+]);
+
+/** Type-ahead calls per user a minute, so a stuck key can't run up Jev calls. */
+export const SUGGEST_PER_MINUTE = 60;
+const suggestCalls = new Map<string, number[]>();
+
+function suggestAllowed(userId: string, now = Date.now()): boolean {
+  const recent = (suggestCalls.get(userId) ?? []).filter((t) => now - t < 60_000);
+  if (recent.length >= SUGGEST_PER_MINUTE) {
+    suggestCalls.set(userId, recent);
+    return false;
+  }
+  recent.push(now);
+  suggestCalls.set(userId, recent);
+  if (suggestCalls.size > 1_000) suggestCalls.delete(suggestCalls.keys().next().value as string);
+  return true;
+}
+
+/**
+ * Search as you type: the saved facts and tasks Jev thinks answer what the
+ * person is typing, before they press Enter. The page keeps one request in
+ * flight and asks again when the text has changed (TypeSafe's intelliprompter
+ * pattern). Never calls Muse, and answers an empty list when Jev is unset or down.
+ */
+export function suggestHandler(
+  env: Env,
+  verify: Verify = supabaseVerifier(env),
+  fetchImpl: typeof fetch = fetch,
+) {
+  return async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    const auth = await verify(bearer(req));
+    if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
+    let q: unknown;
+    try {
+      q = ((await req.json()) as { q?: unknown }).q;
+    } catch {}
+    if (typeof q !== "string") return Response.json({ error: "q is required." }, { status: 400 });
+    const text = q.trim().slice(0, 200);
+    if (text.length < 2 || !env.router) return Response.json({ suggestions: [] });
+    const { userId } = userFrom(auth);
+    if (!suggestAllowed(userId)) return Response.json({ suggestions: [], slow_down: true });
+    const started = Date.now();
+    try {
+      const snapshot = await cachedSnapshot(userDb(env, auth.token), userId);
+      const lane = await quickAnswer(env, snapshot, { message: text, mode: "suggest" }, fetchImpl);
+      return Response.json({ suggestions: suggestions(lane), ms: Date.now() - started });
+    } catch {
+      return Response.json({ suggestions: [] });
     }
   };
 }
