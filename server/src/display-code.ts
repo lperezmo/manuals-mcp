@@ -20,7 +20,8 @@ import { MIN_CONFIDENCE } from "./router.js";
 // error code in the household (the chat doesn't know which thing the photo is
 // of, and the same code on two things is then just two options), plus yes/no
 // questions: does the photo show a display with a code, is that code one of
-// the saved ones, is it clear enough to read, and is the photo about safety.
+// the saved ones, is it clear enough to read, is the photo about safety, and,
+// when words came with the photo, do they ask about that code at all.
 // TypeSafe's docs say a "none of the above" option works poorly, so the
 // "is it one of these" Noul stands in for it (the semantic-find pattern).
 //
@@ -48,6 +49,12 @@ export const CLEAR_AT = 0.7;
  * up to 1, so this also means every other code is at most 0.10 behind it.
  */
 export const CODE_AT = 0.9;
+/**
+ * Words that came with the photo ask about the code on it ("what does this
+ * mean?"), not about something else in the picture ("how often do I clean
+ * this filter?"). The same bar as the display Noul.
+ */
+export const ABOUT_AT = 0.85;
 
 /** One saved code on one thing: what Jev chooses between. */
 export interface CodeOption {
@@ -127,7 +134,8 @@ export interface DisplayRead {
   options: CodeOption[];
   /** Jev's probability per option id. */
   probs: Record<string, number>;
-  scores: { display: number; listed: number; clear: number; safety: number };
+  /** `about` is 1 for a photo sent with no words: there's nothing else it could ask. */
+  scores: { display: number; listed: number; clear: number; safety: number; about: number };
   tokens_in: number | null;
   ms: number;
 }
@@ -159,6 +167,7 @@ export async function readDisplay(
     const shown = also.length ? ` (may show as ${also.join(", ")})` : "";
     return `${itemName(o.item)} · ${o.row.label.trim()}${shown}`;
   };
+  const asked = question.trim().slice(0, 500);
   const started = Date.now();
   try {
     const res = await fetchImpl(`${router.baseUrl}/v1/systemone`, {
@@ -173,6 +182,7 @@ export async function readDisplay(
         state: {
           photo: "display-photo",
           codes: options.map((o) => `${o.item.nickname} · ${o.row.label.trim()}`).join("\n"),
+          ...(asked ? { question: asked } : {}),
         },
         assets: { "display-photo": { type: "image", format, data_base64: image.base64 } },
         questions: {
@@ -202,6 +212,15 @@ export async function readDisplay(
             instructions:
               "Is `photo` about safety: a smoke, carbon monoxide or gas alarm, a child's car seat, or a fire, burn, gas, electrical or chemical hazard?",
           },
+          ...(asked
+            ? {
+                about: {
+                  type: "noul",
+                  instructions:
+                    "Is `question` asking what the code shown on the display in `photo` means or what to do about it, rather than about something else?",
+                },
+              }
+            : {}),
         },
       }),
       signal: AbortSignal.timeout(5_000),
@@ -214,6 +233,7 @@ export async function readDisplay(
       listed: a.listed?.noul,
       clear: a.clear?.noul,
       safety: a.safety?.noul,
+      about: asked ? a.about?.noul : 1,
     };
     if (Object.values(nouls).some((p) => typeof p !== "number")) return null;
     const probs: Record<string, number> = { ...(a.code?.probabilities ?? {}) };
@@ -265,6 +285,7 @@ export function answerDisplay(
     if (lane.route.route !== "ask" || lane.route.confidence < MIN_CONFIDENCE)
       return no("not_a_question");
     if (lane.scores.safety > SAFETY_MAX) return no("safety");
+    if (s.about < ABOUT_AT) return no("other_question");
   }
   if (s.safety > SAFETY_MAX) return no("safety");
   if (s.display < DISPLAY_AT) return no("no_display");

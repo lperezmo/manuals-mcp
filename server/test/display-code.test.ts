@@ -76,7 +76,7 @@ function read(
   return {
     options: codeOptions(snap(rows)),
     probs,
-    scores: { display: 0.95, listed: 0.93, clear: 0.9, safety: 0.02, ...scores },
+    scores: { display: 0.95, listed: 0.93, clear: 0.9, safety: 0.02, about: 0.95, ...scores },
     tokens_in: 1500,
     ms: 300,
   };
@@ -183,7 +183,7 @@ describe("readDisplay", () => {
       "safety",
     ]);
     expect(r?.probs["f-w-f21"]).toBe(0.96);
-    expect(r?.scores).toEqual({ display: 0.97, listed: 0.94, clear: 0.88, safety: 0.01 });
+    expect(r?.scores).toEqual({ display: 0.97, listed: 0.94, clear: 0.88, safety: 0.01, about: 1 });
     expect(r?.tokens_in).toBe(1900);
   });
 
@@ -292,6 +292,11 @@ describe("answerDisplay", () => {
     ).toBe("not_a_question");
     // Words came with the photo but the text read never came back.
     expect(answerDisplay(read(rows, sure), null, "what's this?").reason).toBe("no_route");
+    // A clear code in the photo, but the words ask about something else.
+    expect(
+      answerDisplay(read(rows, sure, { about: 0.1 }), lane(), "how often do I clean the filter?")
+        .reason,
+    ).toBe("other_question");
   });
 });
 
@@ -343,6 +348,7 @@ function network(display: Record<string, number> | "down", toMuse: any[], thing 
             listed: { noul: 0.93 },
             clear: { noul: 0.9 },
             safety: { noul: 0.02 },
+            about: { noul: 0.95 },
           },
           usage: { input_tokens: 1500 },
         });
