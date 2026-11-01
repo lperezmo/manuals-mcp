@@ -344,3 +344,41 @@ describe("opening a maker's page for its PDF links", () => {
     expect(await pdfLinksFromPages(crawl, [page], down)).toEqual([]);
   });
 });
+
+describe("the pick without asking Jev", () => {
+  test("the only PDF that prints the model is the best match", async () => {
+    const env = readEnv({
+      SUPABASE_URL: "https://example-ref.supabase.co",
+      SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+    });
+    const c = (title: string, has_model: boolean) => ({
+      url: `https://e.example/${title}.pdf`,
+      title,
+      host: "e.example",
+      official: false,
+      named: false,
+      has_model,
+      match: has_model ? ("exact" as const) : undefined,
+      excerpt: "text",
+    });
+    const out = await pickBest(env, { model: "RAC-PD0811CRU" }, [c("P14", false), c("P08", true)]);
+    expect(out.map((x) => [x.title, x.best ?? false])).toEqual([
+      ["P08", true],
+      ["P14", false],
+    ]);
+  });
+
+  test("listing sites aren't opened with the crawler", () => {
+    const picked = pagesWorthOpening(
+      [
+        {
+          url: "https://manuals.plus/toshiba/rac-pd0811cru-manual",
+          title: "RAC-PD0811CRU",
+          score: 1,
+        },
+      ],
+      { brand: "Toshiba", model: "RAC-PD0811CRU" },
+    );
+    expect(picked).toEqual([]);
+  });
+});

@@ -380,6 +380,10 @@ export async function findManual(
   return { query, candidates: picked.map(strip), tried: tried.map(strip) };
 }
 
+/** Manual-listing sites: they turn crawlers away (manuals.plus answers 403) and only mirror the maker's PDF. */
+const LISTING_HOSTS =
+  /(^|\.)(manuals\.plus|manualsfile\.com|manualsdir\.com|manualshelf\.com|usermanual\.wiki|manualowl\.com|all-guidesbox\.com|safe-manuals\.com|device\.report)$/;
+
 /** Pages (not PDFs) from the maker's site or naming the model, best first, at most two. */
 export function pagesWorthOpening(
   results: SearchResult[],
@@ -391,6 +395,7 @@ export function pagesWorthOpening(
         const url = new URL(r.url);
         const host = url.hostname.toLowerCase();
         if (url.protocol !== "https:" || SKIP_HOSTS.test(host) || isPdfUrl(url)) return false;
+        if (LISTING_HOSTS.test(host)) return false;
         return (
           isBrandHost(host, item.brand) ||
           modelMatch(`${r.title} ${url.pathname}`, item.model) !== null
@@ -469,6 +474,11 @@ export async function pickBest(
 ): Promise<Candidate[]> {
   const router = env.router;
   const named = candidates.filter((c) => c.has_model && c.excerpt);
+  // Only one PDF prints the model (not a lookalike spelling): that's the pick, no need to ask Jev.
+  if (named.length === 1 && named[0]?.match !== "lookalike") {
+    const only = named[0] as Candidate;
+    return [{ ...only, best: true }, ...candidates.filter((c) => c !== only)];
+  }
   if (!router || !item.model || named.length < 2) return candidates;
   const thing = [item.brand, item.nickname, item.model].filter(Boolean).join(" ");
   try {
