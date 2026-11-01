@@ -17,6 +17,13 @@ import {
   withCard,
 } from "./chat.js";
 import { householdId, type ItemRow, userDb } from "./db.js";
+import {
+  answerDisplay,
+  type DisplayAnswer,
+  type DisplayRead,
+  displayTag,
+  readDisplay,
+} from "./display-code.js";
 import { authIssuer, type Env } from "./env.js";
 import {
   cachedSnapshot,
@@ -330,7 +337,12 @@ export function chatHandler(
     // the turn then skips the router instead of waiting for Jev a second time.
     let jevDown = false;
     const userId = userFrom(auth).userId;
-    if (routable && env.router && fastAllowed(`chat:${userId}`)) {
+    // A photo may be of a display showing an error code: Jev reads it against
+    // the household's saved codes, alongside the fast lane, even when the
+    // photo came with no words.
+    const photoTurn = image !== undefined && via === undefined && last?.role === "user";
+    let shown: DisplayRead | null = null;
+    if ((routable || photoTurn) && env.router && fastAllowed(`chat:${userId}`)) {
       const watched = (async (...args: Parameters<typeof fetch>) => {
         try {
           return await fetchImpl(...args);
@@ -342,38 +354,56 @@ export function chatHandler(
       try {
         const snapshot = await loadSnapshot(db);
         rememberSnapshot(userId, snapshot);
-        lane = await quickAnswer(
-          env,
-          snapshot,
-          { message: question, previous, image: image !== undefined },
-          watched,
-        );
+        // The display read gets the plain fetch: its failing alone isn't Jev being down.
+        [lane, shown] = await Promise.all([
+          routable
+            ? quickAnswer(
+                env,
+                snapshot,
+                { message: question, previous, image: image !== undefined },
+                watched,
+              )
+            : null,
+          image ? readDisplay(env, image, snapshot, question, fetchImpl) : null,
+        ]);
       } catch {
         lane = null;
       }
     }
-    if (lane?.answer) {
-      const { pick } = lane.answer;
+    const read: DisplayAnswer | null = shown ? answerDisplay(shown, lane, question) : null;
+    const fromPhoto = !lane?.answer && !!read?.answer;
+    const instant = lane?.answer ?? read?.answer;
+    if (instant) {
+      const { pick } = instant;
       await logRun(db, {
         kind: "fast",
         ok: true,
         model: env.router?.model ?? "jev",
         ms: Date.now() - started,
-        tokens_in: lane.tokens_in,
+        tokens_in: (lane?.tokens_in ?? 0) + (shown?.tokens_in ?? 0) || null,
         tokens_out: 0,
         item_id: pick.item.id,
-        tools_used: [fastTag(lane), `${pick.row.type}:${pick.row.kind}`],
-        raw_output: JSON.stringify({ question, line: pick.row, scores: lane.scores }),
+        tools_used: [
+          ...(lane ? [fastTag(lane)] : []),
+          ...(shown && read ? [displayTag(shown, read)] : []),
+          `${pick.row.type}:${pick.row.kind}`,
+        ],
+        raw_output: JSON.stringify({
+          question,
+          line: pick.row,
+          scores: lane?.scores,
+          ...(shown ? { display: { ...shown.scores, code: read?.code, p: read?.p } } : {}),
+        }),
       });
       return Response.json({
-        reply: lane.answer.text,
-        tools_used: ["fast_lane"],
+        reply: instant.text,
+        tools_used: fromPhoto ? ["photo_check", "fast_lane"] : ["fast_lane"],
         fast: {
           item_id: pick.item.id,
           type: pick.row.type,
           id: pick.row.id,
           page: pick.row.page,
-          ms: lane.ms,
+          ms: fromPhoto ? (shown?.ms ?? 0) : (lane?.ms ?? 0),
         },
       });
     }
@@ -416,6 +446,7 @@ export function chatHandler(
     const routeTag = [
       ...(decision ? [`route:${decision.route} ${decision.confidence.toFixed(2)}`] : []),
       ...(lane ? [fastTag(lane)] : []),
+      ...(shown && read ? [displayTag(shown, read)] : []),
     ];
     if (decision?.route === "off_topic" && decision.confidence >= OFF_TOPIC_CONFIDENCE) {
       await logRun(db, {
