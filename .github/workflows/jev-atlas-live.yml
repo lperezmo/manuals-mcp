@@ -1,0 +1,36 @@
+# Runs the House Atlas sort, views and manual page kinds against the real
+# TypeSafe (Jev) service with the repo secret JEV_API_KEY. The key only reaches
+# the script as an env var; nothing prints it, and GitHub masks it in logs.
+# .github is gitignored in this repo, so this file is force-added on purpose.
+name: jev-atlas-live
+
+on:
+  pull_request:
+    paths:
+      - "server/src/atlas.ts"
+      - "server/src/finder/page-kinds.ts"
+      - "server/test/live/atlas-live.ts"
+      - ".github/workflows/jev-atlas-live.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jev-atlas-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - name: House Atlas live checks
+        env:
+          JEV_API_KEY: ${{ secrets.JEV_API_KEY }}
+        run: bun run server/test/live/atlas-live.ts

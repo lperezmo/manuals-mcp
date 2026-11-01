@@ -4,6 +4,7 @@ import type { Db, TaskRow } from "../db.js";
 import type { Env } from "../env.js";
 import { answerFrom, loadSnapshot, quickAnswer } from "../fastlane.js";
 import { findLine, LINE_PAGES, type LineFinding } from "../finder/find-line.js";
+import { PAGE_KIND_KEYS, type PageKind, pageStrip } from "../finder/page-kinds.js";
 import { describeInterval, relativeDay } from "../lib/schedule.js";
 import { latestReceipts, warrantyStatus } from "../receipt.js";
 import { findItem, guarded, itemLabel, reply, session } from "./context.js";
@@ -21,6 +22,7 @@ export function register(server: McpServer, env: Env) {
         "Searches the manual text and also returns matching facts (error codes, parts, specs, safety) exactly. With an item, it adds that item's facts and upkeep schedule.",
         'Search with the manual\'s likely wording ("descale", "error code"), not the whole question.',
         "To check a fact against its source, pass item and page to get that page's full text; if the fact is wrong, fix it with revise_fact.",
+        'For a fault, pass kind "fix" to search only the troubleshooting pages (it falls back to every page when none match). With an item, manual_atlas lists its pages by kind (safety, setup, use, care, fix, parts, warranty) for jump links.',
         "Quote the page in your answer. Mention when a fact's status is needs_review.",
         "Pass the person's whole question as question too: when one saved fact or task answers it outright, it comes back first as best_match (a quick check, no reading).",
         "When the search finds pages, answer_line is the exact line that answers the question, with its page: quote it. covered: false means the pages searched don't answer it: say the manual doesn't seem to cover it rather than guessing.",
@@ -41,10 +43,14 @@ export function register(server: McpServer, env: Env) {
           .optional()
           .describe("Return this page's full text (needs item)."),
         max_results: z.number().int().min(1).max(10).default(5),
+        kind: z
+          .enum(PAGE_KIND_KEYS as [PageKind, ...PageKind[]])
+          .optional()
+          .describe('Search only pages of this kind, like "fix" for troubleshooting.'),
       }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ query, question, item: ref, page, max_results }, ctx) =>
+    async ({ query, question, item: ref, page, max_results, kind }, ctx) =>
       guarded(async () => {
         if (!query && !ref && !question) throw new Error("Give a query, a question or an item.");
         const { db } = await session(env, ctx);
@@ -82,14 +88,30 @@ export function register(server: McpServer, env: Env) {
             .ilike("label", literal)
             .limit(10);
           if (target) facts = facts.eq("item_id", target.id);
-          const [exact, search] = await Promise.all([
-            facts,
+          const everyPage = () =>
             db.rpc("search_manual_pages", {
               query: term,
               p_item: target?.id ?? null,
               max_results,
-            }),
+            });
+          const [exact, first] = await Promise.all([
+            facts,
+            kind
+              ? db.rpc("search_manual_pages_of_kind", {
+                  query: term,
+                  p_kind: kind,
+                  p_item: target?.id ?? null,
+                  max_results,
+                })
+              : everyPage(),
           ]);
+          // Pages not sorted by kind yet (or no match among them) are searched as usual.
+          let search = first;
+          if (kind && (first.error || !first.data?.length)) {
+            search = await everyPage();
+            if (!search.error && search.data?.length)
+              out.kind_note = `No ${kind} pages matched, so every page was searched.`;
+          }
           if (search.error) throw new Error(`Search failed: ${search.error.message}`);
           if (exact.data?.length) out.exact_facts = exact.data;
           const hits = (search.data ?? []) as Hit[];
@@ -127,7 +149,7 @@ export function register(server: McpServer, env: Env) {
         }
 
         if (target) {
-          const [facts, tasks, seats, receipts] = await Promise.all([
+          const [facts, tasks, seats, receipts, kinds] = await Promise.all([
             db.from("manual_facts").select(FACT_COLUMNS).eq("item_id", target.id).limit(100),
             db
               .from("tasks")
@@ -143,6 +165,13 @@ export function register(server: McpServer, env: Env) {
               )
               .eq("item_id", target.id),
             latestReceipts(db, [target.id]),
+            db
+              .from("manual_pages")
+              .select("page_number, kind, manuals!inner(item_id)")
+              .eq("manuals.item_id", target.id)
+              .not("kind", "is", null)
+              .order("page_number")
+              .limit(500),
           ]);
           // A saved receipt rides along, so a question about a fault also learns the warranty.
           const receipt = receipts?.get(target.id);
@@ -170,6 +199,9 @@ export function register(server: McpServer, env: Env) {
             );
           }
           if (seats.data?.length) out.seat_limits = seats.data;
+          // Fails quietly on a database without page kinds: no strip, same answer.
+          const strip = kinds.error ? [] : pageStrip(kinds.data ?? []);
+          if (strip.length) out.manual_atlas = strip;
         }
 
         const found = Object.keys(out).filter((k) => k !== "item").length;

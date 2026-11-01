@@ -72,6 +72,7 @@ describe("routeTurn", () => {
       "car_seat_status",
       "upcoming",
       "warranty_status",
+      "house_atlas",
     ]);
   });
 
