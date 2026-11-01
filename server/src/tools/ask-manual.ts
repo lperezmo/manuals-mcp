@@ -44,7 +44,7 @@ export function register(server: McpServer, env: Env) {
     },
     async ({ query, question, item: ref, page, max_results }, ctx) =>
       guarded(async () => {
-        if (!query && !ref && !question) throw new Error("Give a query, an item, or both.");
+        if (!query && !ref && !question) throw new Error("Give a query, a question or an item.");
         const { db } = await session(env, ctx);
         const target = ref ? await findItem(db, ref) : null;
         const out: Record<string, unknown> = {};
@@ -152,10 +152,13 @@ export function register(server: McpServer, env: Env) {
 
         const found = Object.keys(out).filter((k) => k !== "item").length;
         if (!found) {
+          // A question alone only asks the fast lane: the manual pages weren't searched.
           return reply(
-            query || question
-              ? `Nothing in the saved manuals matches "${query ?? question}". Try the manual's own wording.`
-              : `${target ? itemLabel(target) : "That item"} has no manual yet. Attach one with add_item (attach_to, pdf_url).`,
+            query
+              ? `Nothing in the saved manuals matches "${query}". Try the manual's own wording.`
+              : question && !ref
+                ? "No saved fact or task answers that outright, and the manual pages weren't searched. Search them with query, in the manual's likely wording."
+                : `${target ? itemLabel(target) : "That item"} has no manual yet. Attach one with add_item (attach_to, pdf_url).`,
           );
         }
         return reply("Here's what the manuals say. Cite the page numbers.", out);
