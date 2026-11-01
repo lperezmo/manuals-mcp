@@ -336,7 +336,8 @@
 
       async function detail(id) {
         onJobDone = (job) => {
-          if (job.item === id && job.kind === "read") detail(id);
+          // A finished read, or a search that carried on while the page was paused.
+          if (job.item === id) detail(id);
         };
         const supa = await db();
         const { data: item, error } = await supa
@@ -983,9 +984,18 @@
             watchJob({ kind: "search", item: item.id, label: item.nickname });
             try {
               out = await api("/api/find-manual", { item_id: item.id });
-            } finally {
+            } catch (err) {
+              // The phone paused the page (another app, screen off): the server keeps
+              // searching and saves what it finds. The pill watches for it, and this
+              // card fills in when it's done.
+              if (err.dropped) {
+                found.innerHTML = '<p class="muted small" role="status">Still searching. The results show up here when it's done.</p>';
+                return;
+              }
               forgetJob("search", item.id);
+              throw err;
             }
+            forgetJob("search", item.id);
             // Only a search that found something is remembered; an empty one is tried again next visit.
             try {
               if (out.candidates.length) sessionStorage.setItem(FOUND_KEY(item.id), JSON.stringify(out));
