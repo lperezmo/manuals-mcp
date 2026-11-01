@@ -9,6 +9,7 @@ import {
   searchQuery,
   squash,
   suggestModel,
+  tidyTitle,
 } from "../src/finder/search.js";
 
 // Shapes from real Tavily answers, 2026-10-28.
@@ -161,5 +162,14 @@ describe("suggestModel", () => {
       { brand: "Galanz", model: "GSWWD0951A09B" },
     );
     expect(c?.model_hint).toBe("GSWWD09S1A09B");
+  });
+});
+
+describe("tidyTitle", () => {
+  test("drops the work file's extension and calms all-caps", () => {
+    expect(tidyTitle("PORTABLE PD_USER MANUAL TOSHIBA US (06-19_RT).indd")).toBe(
+      "Portable PD User Manual Toshiba US (06-19 RT)",
+    );
+    expect(tidyTitle("LG Washer Owner's Manual")).toBe("LG Washer Owner's Manual");
   });
 });

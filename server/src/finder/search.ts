@@ -132,6 +132,24 @@ export function isBrandHost(host: string, brand: string | null | undefined): boo
   return b.length >= 2 && squash(host.replace(/\.[a-z]+$/, "")).includes(b);
 }
 
+/**
+ * A result title a person can read. PDFs often carry their work file's name as
+ * the title ("PORTABLE PD_USER MANUAL TOSHIBA US (P14).indd"): drop the file
+ * extension and underscores, and calm all-caps down. Short words like "US" stay.
+ */
+export function tidyTitle(raw: string): string {
+  let t = raw
+    .replace(/\.(indd|pdf|docx?|qxp|qxd|ai|idml|pub|rtf|txt)\b/gi, "")
+    .replace(/_+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const letters = t.replace(/[^A-Za-z]/g, "");
+  if (letters.length >= 6 && letters === letters.toUpperCase()) {
+    t = t.replace(/[A-Z]{4,}/g, (w) => w[0] + w.slice(1).toLowerCase());
+  }
+  return t;
+}
+
 /** PDF links from the results, best first: the maker's site, then the model in the link or title. */
 export function rankResults(
   results: SearchResult[],
@@ -155,7 +173,7 @@ export function rankResults(
     const hint = suggestModel(`${r.title} ${url.pathname}`, item.model);
     ranked.push({
       url: url.toString(),
-      title: r.title,
+      title: tidyTitle(r.title) || url.pathname.split("/").pop() || host,
       host,
       official,
       named,
