@@ -22,6 +22,7 @@ import { processStoredManual, ReadingBusyError, storeManual } from "./finder/ing
 import { findManual } from "./finder/search.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
 import { checkPhoto, lookAtPhoto } from "./photo-check.js";
+import { readReceipt, saveReceipt, warrantyStatus } from "./receipt.js";
 import {
   pushReport,
   REPORT_DAILY_LIMIT,
@@ -474,6 +475,119 @@ export function snapHandler(
       const label = await readLabel(env, photo, fetchImpl);
       await logRun(db, { kind: "snap", ok: true, model, ms: Date.now() - started });
       return Response.json(label);
+    } catch (err) {
+      const error = (err as Error).message;
+      await logRun(db, { kind: "snap", ok: false, model, error, ms: Date.now() - started });
+      return Response.json({ error }, { status: 502 });
+    }
+  };
+}
+
+/**
+ * Reads a receipt or warranty card photo for one thing, saves it with the
+ * photo, and answers with when the warranty ends. Counts toward the daily
+ * photo limit, like a label photo.
+ */
+export function receiptHandler(
+  env: Env,
+  verify: Verify = supabaseVerifier(env),
+  fetchImpl: typeof fetch = fetch,
+) {
+  return async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    const auth = await verify(bearer(req));
+    if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
+    let body: { item_id?: unknown; image?: unknown; force?: unknown };
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return Response.json({ error: "Send JSON with item_id and an image." }, { status: 400 });
+    }
+    if (typeof body.item_id !== "string")
+      return Response.json({ error: "item_id is required." }, { status: 400 });
+    const match = typeof body.image === "string" ? body.image.match(DATA_URL) : null;
+    if (!match?.[1] || !match[2]) {
+      return Response.json({ error: "Send a JPEG, PNG or WebP photo." }, { status: 400 });
+    }
+    if (match[2].length * 0.75 > MAX_IMAGE_BYTES) {
+      return Response.json({ error: "That photo is too big; try a smaller one." }, { status: 413 });
+    }
+    const db = userDb(env, auth.token);
+    let item: { id: string; purchased_on: string | null };
+    try {
+      if ((await runsToday(db, "snap")) >= env.snapDailyLimit) {
+        return Response.json(
+          {
+            error: `That's all the photos for today (${env.snapDailyLimit}). Type the details instead.`,
+          },
+          { status: 429 },
+        );
+      }
+      if ((await modelRunsTodayAll(db)) >= env.globalDailyLimit) {
+        return Response.json({ error: BUDGET_USED }, { status: 429 });
+      }
+      const { data, error } = await db
+        .from("items")
+        .select("id, purchased_on")
+        .eq("id", body.item_id)
+        .maybeSingle();
+      if (error) throw new Error(error.message);
+      if (!data)
+        return Response.json({ error: "That thing isn't in your household." }, { status: 404 });
+      item = data;
+    } catch (err) {
+      return Response.json({ error: (err as Error).message }, { status: 502 });
+    }
+    const model = env.chatModel ?? env.reader?.model ?? null;
+    const started = Date.now();
+    const photo = { mime: match[1], base64: match[2] };
+    // The same quick look as label photos, asking for a receipt or card instead.
+    const check = body.force === true ? null : await checkPhoto(env, photo, fetchImpl, "receipt");
+    if (check?.retake) {
+      await logRun(db, {
+        kind: "snap",
+        ok: true,
+        model: env.router?.model ?? null,
+        ms: check.ms,
+        tokens_in: check.tokens_in,
+        tokens_out: 0,
+        item_id: item.id,
+        raw_output: JSON.stringify({ photo: "receipt", retake: check.retake }),
+      });
+      return Response.json({ found: false, retake: check.retake });
+    }
+    try {
+      const read = await readReceipt(env, photo, fetchImpl);
+      await logRun(db, {
+        kind: "snap",
+        ok: true,
+        model,
+        ms: Date.now() - started,
+        item_id: item.id,
+        raw_output: JSON.stringify({ photo: "receipt", ...read }),
+      });
+      if (!read.found && !read.purchased_on && !read.store && !read.warranty_months) {
+        return Response.json({ found: false });
+      }
+      const saved = await saveReceipt({
+        db,
+        householdId: await householdId(db),
+        item,
+        read,
+        image: photo,
+      });
+      return Response.json({
+        ...read,
+        found: true,
+        saved: !!saved.receipt,
+        receipt: saved.receipt,
+        warranty: warrantyStatus({
+          purchased_on: read.purchased_on ?? null,
+          warranty_months: read.warranty_months ?? null,
+          warranty_ends_on: read.warranty_ends_on ?? null,
+        }),
+        ...(saved.note ? { note: saved.note } : {}),
+      });
     } catch (err) {
       const error = (err as Error).message;
       await logRun(db, { kind: "snap", ok: false, model, error, ms: Date.now() - started });

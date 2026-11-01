@@ -19,10 +19,19 @@ export interface PhotoCheck {
   ms: number;
 }
 
+/** What each kind of photo should show. A receipt's "no_label" means no receipt or card. */
+const SHOWS = {
+  label:
+    "Does `photo` show a product label, rating plate or sticker with printed text such as a brand, model or serial number?",
+  receipt:
+    "Does `photo` show a store receipt, invoice or product warranty card with printed text such as a store name, date or price?",
+};
+
 export async function checkPhoto(
   env: Env,
   image: { mime: string; base64: string },
   fetchImpl: typeof fetch = fetch,
+  what: keyof typeof SHOWS = "label",
 ): Promise<PhotoCheck | null> {
   const router = env.router;
   // Jev takes JPEG and PNG; WebP goes straight to Muse.
@@ -39,14 +48,10 @@ export async function checkPhoto(
       },
       body: JSON.stringify({
         model: router.model,
-        state: { photo: "label-photo" },
-        assets: { "label-photo": { type: "image", format, data_base64: image.base64 } },
+        state: { photo: `${what}-photo` },
+        assets: { [`${what}-photo`]: { type: "image", format, data_base64: image.base64 } },
         questions: {
-          label: {
-            type: "noul",
-            instructions:
-              "Does `photo` show a product label, rating plate or sticker with printed text such as a brand, model or serial number?",
-          },
+          label: { type: "noul", instructions: SHOWS[what] },
           sharp: {
             type: "noul",
             instructions:

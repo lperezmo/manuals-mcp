@@ -103,6 +103,54 @@ begin
 end;
 $$;
 
+-- Receipts and their photos: A saves one, B can't see or add to it.
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","role":"authenticated"}', false);
+do $$
+declare
+  hid uuid := public.current_household_id();
+  wid uuid;
+begin
+  select id into wid from public.items order by created_at limit 1;
+  insert into public.receipts (item_id, purchased_on, store, price, currency, warranty_months)
+  values (wid, current_date - 100, 'Appliance Barn', 899.99, 'USD', 12);
+  insert into storage.objects (bucket_id, name) values ('receipts', hid || '/r.jpg');
+  assert (select count(*) from public.receipts) = 1, 'user A should see their receipt';
+end;
+$$;
+
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","role":"authenticated"}', false);
+do $$
+declare
+  n integer;
+  a_household uuid;
+  a_item uuid;
+begin
+  select count(*) into n from public.receipts;
+  assert n = 0, 'user B can read A''s receipts';
+  select count(*) into n from storage.objects where bucket_id = 'receipts';
+  assert n = 0, 'user B can see A''s receipt photos';
+
+  reset role;
+  select household_id into a_household from public.household_members
+    where user_id = '00000000-0000-0000-0000-00000000000a';
+  select id into a_item from public.items where household_id = a_household limit 1;
+  set role authenticated;
+
+  begin
+    insert into public.receipts (household_id, item_id, store) values (a_household, a_item, 'Sneaky');
+    raise exception 'user B wrote a receipt into A''s household';
+  exception when insufficient_privilege then
+    null;
+  end;
+  begin
+    insert into storage.objects (bucket_id, name) values ('receipts', a_household || '/sneaky.jpg');
+    raise exception 'user B uploaded into A''s receipts folder';
+  exception when insufficient_privilege then
+    null;
+  end;
+end;
+$$;
+
 -- Model runs: members log and read their own; nobody can delete them.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","role":"authenticated"}', false);
 insert into public.model_runs (kind, ok, model) values ('chat', true, 'test');

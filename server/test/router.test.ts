@@ -66,7 +66,13 @@ describe("routeTurn", () => {
     expect(sent.questions.intent.type).toBe("choice");
     expect(Object.keys(sent.questions.intent.criteria)).toContain("off_topic");
     expect(decision).toMatchObject({ route: "ask", confidence: 0.93, tokens_in: 210 });
-    expect(toolsFor(decision)).toEqual(["list_items", "ask_manual", "car_seat_status", "upcoming"]);
+    expect(toolsFor(decision)).toEqual([
+      "list_items",
+      "ask_manual",
+      "car_seat_status",
+      "upcoming",
+      "warranty_status",
+    ]);
   });
 
   test("falls back to every tool when unsure, down or unset", async () => {

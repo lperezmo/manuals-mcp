@@ -6,7 +6,7 @@ import { INSTRUCTIONS, registerTools } from "./mcp.js";
 import * as updateItem from "./tools/update-item.js";
 
 // The website's chat: Muse Spark (or any OpenAI-compatible model) with the
-// same 8 tools the MCP server exposes, run as the signed-in user so RLS
+// same 9 tools the MCP server exposes, run as the signed-in user so RLS
 // applies exactly as it does over MCP. Kept small on purpose: a few tool
 // rounds, short answers, and a capped history.
 

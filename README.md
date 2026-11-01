@@ -15,7 +15,7 @@ Built for the Meta Global AI Developer Hackathon (indie track).
 flowchart LR
   you["You"] --> site["Website\nMuse chat"]
   you --> ai["Claude, ChatGPT\nany MCP client"]
-  site --> tools["8 tools"]
+  site --> tools["9 tools"]
   ai -- "/mcp" --> tools
   tools --> db[("Supabase\nPostgres + RLS")]
   tools -- "add_item" --> muse["Muse Spark\nreads manuals"]
@@ -34,6 +34,8 @@ flowchart LR
 | `log_done`           | "I just cleaned the filter" moves the next due date.                         |
 | `record_measurement` | A child's height and weight, or a thing's cycle count or hours.              |
 | `car_seat_status`    | Which mode fits now, room left before its limits, and when to measure again. |
+| `warranty_status`    | Whether a broken thing is likely still covered, from its saved receipt.      |
+| `warranty_status`    | Whether a broken thing is likely still under warranty, from its receipt.     |
 
 ## Run it
 

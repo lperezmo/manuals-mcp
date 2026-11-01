@@ -7,7 +7,7 @@ import type { Env } from "./env.js";
 // When Jev is unsure, unset or down, Muse gets every tool, as before.
 
 export const ROUTES = {
-  ask: "Asks how to do something, what a manual or error code says, what is due, or whether a car seat still fits.",
+  ask: "Asks how to do something, what a manual or error code says, what is due, whether a car seat still fits, or says something broke or is under warranty.",
   log: "Says they did some upkeep, or gives a reading: a cycle count, hours, a child's weight or height.",
   fix: "Says a saved fact, task or limit is wrong, or doubts what the manual says.",
   add: "Wants to add a new thing they own, or attach a manual or PDF link.",
@@ -24,7 +24,7 @@ export type Route = keyof typeof ROUTES;
 const LOOKUP = ["list_items"];
 /** Tools offered per route. show_card is offered on every route that has tools. */
 export const ROUTE_TOOLS: Record<Route, string[]> = {
-  ask: [...LOOKUP, "ask_manual", "car_seat_status", "upcoming"],
+  ask: [...LOOKUP, "ask_manual", "car_seat_status", "upcoming", "warranty_status"],
   log: [...LOOKUP, "log_done", "record_measurement", "upcoming"],
   fix: [...LOOKUP, "revise_fact", "ask_manual"],
   add: [...LOOKUP, "add_item", "update_item"],
