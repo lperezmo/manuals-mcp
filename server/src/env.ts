@@ -27,8 +27,17 @@ export interface Env {
   planDailyLimit: number;
   /** Most model calls (reads, chats, photos, plans) across every household per day: the budget's ceiling. */
   globalDailyLimit: number;
-  /** Web search for finding manuals from the website (Tavily). */
-  search?: { provider: "tavily"; apiKey: string; dailyLimit: number };
+  /**
+   * Web search for finding manuals from the website: a self-hosted SearXNG
+   * first when set (behind Cloudflare Access), then Tavily as the fallback.
+   */
+  search?: {
+    /** What the model log names, e.g. "searxng+tavily". */
+    provider: string;
+    dailyLimit: number;
+    searxng?: { baseUrl: string; accessId?: string; accessSecret?: string };
+    tavily?: { apiKey: string };
+  };
   /** Where issue reports are pushed (an ntfy.sh topic); reports are saved either way. */
   notify?: { url: string; topic: string };
   /** Jev (TypeSafe AI) sorts each chat message so Muse only gets the tools it needs. */
@@ -71,13 +80,25 @@ export function readEnv(source: Record<string, string | undefined> = process.env
     snapDailyLimit: positive(source.SNAP_DAILY_LIMIT, 20),
     planDailyLimit: positive(source.PLAN_DAILY_LIMIT, 20),
     globalDailyLimit: positive(source.GLOBAL_DAILY_LIMIT, 400),
-    search: source.SEARCH_API_KEY
-      ? {
-          provider: "tavily",
-          apiKey: source.SEARCH_API_KEY,
-          dailyLimit: positive(source.SEARCH_DAILY_LIMIT, 20),
-        }
-      : undefined,
+    search:
+      source.SEARXNG_URL || source.SEARCH_API_KEY
+        ? {
+            provider: [source.SEARXNG_URL && "searxng", source.SEARCH_API_KEY && "tavily"]
+              .filter(Boolean)
+              .join("+"),
+            dailyLimit: positive(source.SEARCH_DAILY_LIMIT, 20),
+            ...(source.SEARXNG_URL
+              ? {
+                  searxng: {
+                    baseUrl: trimSlash(source.SEARXNG_URL),
+                    accessId: source.SEARXNG_ACCESS_ID || undefined,
+                    accessSecret: source.SEARXNG_ACCESS_SECRET || undefined,
+                  },
+                }
+              : {}),
+            ...(source.SEARCH_API_KEY ? { tavily: { apiKey: source.SEARCH_API_KEY } } : {}),
+          }
+        : undefined,
     notify: source.NTFY_TOPIC
       ? { url: trimSlash(source.NTFY_URL || "https://ntfy.sh"), topic: source.NTFY_TOPIC }
       : undefined,

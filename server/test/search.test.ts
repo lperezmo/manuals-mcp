@@ -9,6 +9,7 @@ import {
   sameLineModels,
   searchQueries,
   searchQuery,
+  searchWeb,
   squash,
   suggestModel,
   tidyTitle,
@@ -217,5 +218,59 @@ describe("narrowing the options", () => {
     const out = await pickBest(jevEnv, item, list, jev([0.7, 0.65]));
     expect(out.map((c) => c.title)).toEqual(["A", "B"]);
     expect(out.some((c) => c.best)).toBe(false);
+  });
+});
+
+describe("searchWeb", () => {
+  const base = {
+    SUPABASE_URL: "https://example-ref.supabase.co",
+    SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+    SEARXNG_URL: "https://search.example.com/",
+    SEARXNG_ACCESS_ID: "id.access",
+    SEARXNG_ACCESS_SECRET: "secret",
+  };
+  const answer = (searx: Response) => {
+    const calls: { url: string; headers: Record<string, string> }[] = [];
+    const impl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, headers: (init?.headers ?? {}) as Record<string, string> });
+      if (url.startsWith("https://search.example.com")) return searx.clone();
+      return Response.json({
+        results: [{ url: "https://t.example/a.pdf", title: "T", score: 0.9 }],
+      });
+    }) as unknown as typeof fetch;
+    return { calls, impl };
+  };
+  const SEARX = Response.json({
+    results: [
+      { url: "https://a.example/one.pdf", title: "One" },
+      { url: "https://b.example/two.pdf", title: "Two" },
+    ],
+  });
+
+  test("asks SearXNG first, through Cloudflare Access, and ranks by position", async () => {
+    const { calls, impl } = answer(SEARX);
+    const out = await searchWeb(readEnv({ ...base, SEARCH_API_KEY: "tvly" }), "lg manual", impl);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://search.example.com/search?q=lg+manual&format=json");
+    expect(calls[0]?.headers["CF-Access-Client-Id"]).toBe("id.access");
+    expect(out.map((r) => r.score)).toEqual([1, 0.5]);
+  });
+
+  test("falls back to Tavily when SearXNG is blocked or finds nothing", async () => {
+    for (const searx of [new Response("no", { status: 403 }), Response.json({ results: [] })]) {
+      const { calls, impl } = answer(searx);
+      const out = await searchWeb(readEnv({ ...base, SEARCH_API_KEY: "tvly" }), "lg", impl);
+      expect(calls.map((c) => new URL(c.url).hostname)).toEqual([
+        "search.example.com",
+        "api.tavily.com",
+      ]);
+      expect(out[0]?.url).toBe("https://t.example/a.pdf");
+    }
+  });
+
+  test("without Tavily, a SearXNG failure is the error", async () => {
+    const { impl } = answer(new Response("no", { status: 403 }));
+    await expect(searchWeb(readEnv(base), "lg", impl)).rejects.toThrow("403");
   });
 });

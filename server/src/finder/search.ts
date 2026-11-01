@@ -190,17 +190,66 @@ export function rankResults(
   return ranked.sort((a, b) => b.rank - a.rank).map(({ rank: _, ...c }) => c);
 }
 
-/** One web search through the configured provider. */
+/**
+ * One web search: SearXNG first when it's set, Tavily when SearXNG is down or
+ * finds nothing. Scores are 0 to 1 either way so ranking treats them alike.
+ */
 export async function searchWeb(
   env: Env,
   query: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<SearchResult[]> {
   const search = env.search;
-  if (!search) throw new Error("Web search isn't set up (SEARCH_API_KEY).");
+  if (!search) throw new Error("Web search isn't set up (SEARXNG_URL or SEARCH_API_KEY).");
+  let failure: unknown;
+  if (search.searxng) {
+    try {
+      const found = await searxng(search.searxng, query, fetchImpl);
+      if (found.length || !search.tavily) return found;
+    } catch (err) {
+      if (!search.tavily) throw err;
+      failure = err;
+    }
+  }
+  if (search.tavily) return tavily(search.tavily.apiKey, query, fetchImpl);
+  throw failure;
+}
+
+/** The self-hosted SearXNG's JSON API, through Cloudflare Access when a service token is set. */
+async function searxng(
+  config: NonNullable<NonNullable<Env["search"]>["searxng"]>,
+  query: string,
+  fetchImpl: typeof fetch,
+): Promise<SearchResult[]> {
+  const url = `${config.baseUrl}/search?${new URLSearchParams({ q: query, format: "json" })}`;
+  const res = await fetchImpl(url, {
+    headers: {
+      accept: "application/json",
+      ...(config.accessId && config.accessSecret
+        ? { "CF-Access-Client-Id": config.accessId, "CF-Access-Client-Secret": config.accessSecret }
+        : {}),
+    },
+    signal: AbortSignal.timeout(12_000),
+  });
+  if (!res.ok) throw new Error(`The search answered ${res.status}.`);
+  const body = (await res.json()) as { results?: { url?: string; title?: string }[] };
+  const results = (body.results ?? []).filter((r) => typeof r.url === "string").slice(0, 15);
+  // SearXNG's own scores aren't on a fixed scale; its order is, so rank by position.
+  return results.map((r, i) => ({
+    url: r.url as string,
+    title: r.title ?? "",
+    score: 1 - i / results.length,
+  }));
+}
+
+async function tavily(
+  apiKey: string,
+  query: string,
+  fetchImpl: typeof fetch,
+): Promise<SearchResult[]> {
   const res = await fetchImpl("https://api.tavily.com/search", {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${search.apiKey}` },
+    headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({ query, search_depth: "basic", max_results: 10 }),
     signal: AbortSignal.timeout(15_000),
   });
