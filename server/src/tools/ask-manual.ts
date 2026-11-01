@@ -1,7 +1,8 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import type { TaskRow } from "../db.js";
+import type { Db, TaskRow } from "../db.js";
 import type { Env } from "../env.js";
+import { answerFrom, loadSnapshot, quickAnswer } from "../fastlane.js";
 import { describeInterval, relativeDay } from "../lib/schedule.js";
 import { latestReceipts, warrantyStatus } from "../receipt.js";
 import { findItem, guarded, itemLabel, reply, session } from "./context.js";
@@ -20,9 +21,16 @@ export function register(server: McpServer, env: Env) {
         'Search with the manual\'s likely wording ("descale", "error code"), not the whole question.',
         "To check a fact against its source, pass item and page to get that page's full text; if the fact is wrong, fix it with revise_fact.",
         "Quote the page in your answer. Mention when a fact's status is needs_review.",
+        "Pass the person's whole question as question too: when one saved fact or task answers it outright, it comes back first as best_match (a quick check, no reading).",
       ].join(" "),
       inputSchema: z.object({
         query: z.string().min(1).max(200).optional(),
+        question: z
+          .string()
+          .min(1)
+          .max(500)
+          .optional()
+          .describe("The person's question, word for word, for a quick best_match."),
         item: z.string().optional().describe("Item id or name, to focus on its manual."),
         page: z
           .number()
@@ -34,12 +42,18 @@ export function register(server: McpServer, env: Env) {
       }),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async ({ query, item: ref, page, max_results }, ctx) =>
+    async ({ query, question, item: ref, page, max_results }, ctx) =>
       guarded(async () => {
-        if (!query && !ref) throw new Error("Give a query, an item, or both.");
+        if (!query && !ref && !question) throw new Error("Give a query, a question or an item.");
         const { db } = await session(env, ctx);
         const target = ref ? await findItem(db, ref) : null;
         const out: Record<string, unknown> = {};
+
+        // The fast lane's pick, when one saved line answers the whole question.
+        if (question) {
+          const match = await bestMatch(env, db, question, target?.id);
+          if (match) out.best_match = match;
+        }
 
         if (page) {
           if (!target) throw new Error("Pass item with page, so I know which manual.");
@@ -138,13 +152,43 @@ export function register(server: McpServer, env: Env) {
 
         const found = Object.keys(out).filter((k) => k !== "item").length;
         if (!found) {
+          // A question alone only asks the fast lane: the manual pages weren't searched.
           return reply(
             query
               ? `Nothing in the saved manuals matches "${query}". Try the manual's own wording.`
-              : `${target ? itemLabel(target) : "That item"} has no manual yet. Attach one with add_item (attach_to, pdf_url).`,
+              : question && !ref
+                ? "No saved fact or task answers that outright, and the manual pages weren't searched. Search them with query, in the manual's likely wording."
+                : `${target ? itemLabel(target) : "That item"} has no manual yet. Attach one with add_item (attach_to, pdf_url).`,
           );
         }
         return reply("Here's what the manuals say. Cite the page numbers.", out);
       }),
   );
+}
+
+/**
+ * The fast lane inside ask_manual: one Jev call over the saved facts and tasks.
+ * Returns the line only when Jev is sure it holds the whole answer and it isn't
+ * about safety or a car seat; anything else (or Jev unset or down) returns null.
+ */
+async function bestMatch(env: Env, db: Db, question: string, itemId?: string) {
+  if (!env.router) return null;
+  try {
+    const snapshot = await loadSnapshot(db);
+    const scoped = itemId
+      ? { ...snapshot, rows: snapshot.rows.filter((r) => r.item_id === itemId) }
+      : snapshot;
+    const lane = await quickAnswer(env, scoped, { message: question });
+    const pick = lane?.answer?.pick;
+    if (!lane?.answer || !pick) return null;
+    return {
+      answer: answerFrom(pick.row, pick.item),
+      item: { id: pick.item.id, name: pick.item.nickname },
+      [pick.row.type]: { id: pick.row.id, label: pick.row.label, value: pick.row.value },
+      page: pick.row.page,
+      confidence: Math.round(pick.p * 100) / 100,
+    };
+  } catch {
+    return null;
+  }
 }

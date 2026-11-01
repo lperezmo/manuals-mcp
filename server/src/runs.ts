@@ -1,12 +1,13 @@
 import type { Db } from "./db.js";
 
-// The model_runs log: one row per manual read, chat turn, search, label photo or catch-up plan, written as the
-// user so it lands in their household. Logging never breaks the real work.
+// The model_runs log: one row per manual read, chat turn, search, label photo, catch-up plan or
+// instant answer (the fast lane, no Muse), written as the user so it lands in their household.
+// Logging never breaks the real work.
 
 const MAX_RAW_CHARS = 20_000;
 
 export interface ModelRun {
-  kind: "read" | "chat" | "search" | "snap" | "plan";
+  kind: "read" | "chat" | "search" | "snap" | "plan" | "fast";
   ok: boolean;
   model?: string | null;
   error?: string | null;

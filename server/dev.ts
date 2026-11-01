@@ -12,6 +12,7 @@ import {
   reportHandler,
   resourceMetadataHandler,
   snapHandler,
+  suggestHandler,
   toolHandler,
   upkeepGroupsHandler,
 } from "./src/http.js";
@@ -26,6 +27,7 @@ const report = reportHandler(config);
 const find = findManualHandler(config);
 const tool = toolHandler(config);
 const snap = snapHandler(config);
+const suggest = suggestHandler(config);
 const receipt = receiptHandler(config);
 const attach = attachHandler(config);
 const upkeepGroups = upkeepGroupsHandler(config);
@@ -44,6 +46,7 @@ Bun.serve({
     if (pathname === "/api/find-manual") return find(req);
     if (pathname === "/api/tool") return tool(req);
     if (pathname === "/api/snap") return snap(req);
+    if (pathname === "/api/suggest") return suggest(req);
     if (pathname === "/api/receipt") return receipt(req);
     if (pathname === "/api/attach") return attach(req);
     if (pathname === "/api/upkeep-groups") return upkeepGroups(req);
