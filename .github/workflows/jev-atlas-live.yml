@@ -1,12 +1,11 @@
-# Runs the House Atlas sort and views against the real TypeSafe (Jev) service
-# with the repo secret JEV_API_KEY. The key only reaches the script as an env
-# var; nothing prints it, and GitHub masks it in logs. Test-only: .github is
-# gitignored in this repo, so this file was added to the branch on purpose.
+# Runs the House Atlas sort, views and manual page kinds against the real
+# TypeSafe (Jev) service with the repo secret JEV_API_KEY. The key only reaches
+# the script as an env var; nothing prints it, and GitHub masks it in logs.
+# .github is gitignored in this repo, so this file is force-added on purpose.
 name: jev-atlas-live
 
 on:
-  push:
-    branches: [claude/project-thread-ohf9pg]
+  pull_request:
     paths:
       - "server/src/atlas.ts"
       - "server/src/finder/page-kinds.ts"
