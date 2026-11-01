@@ -1,0 +1,39 @@
+{
+  "about": "A Midea dishwasher's Wi-Fi / Matter module sticker, snapped on Add a thing on 2026-11-01. No line says Model.",
+  "text": [
+    "CONTAINS FCC ID: 2ADQOMDNA23",
+    "CONTAINS IC: 12575A-MDNA23",
+    "MADE IN THAILAND",
+    "Midea",
+    "Scan QR code for more information",
+    "MO:R0698201",
+    "S/N:541206000ADA1280640712",
+    "matter"
+  ],
+  "production_read": {
+    "found": true,
+    "brand": "Midea",
+    "model": null,
+    "serial": "541206000ADA1280640712",
+    "category": "refrigerator",
+    "kind": "appliance",
+    "nickname": "Refrigerator",
+    "unsure": false
+  },
+  "read_with_codes": {
+    "found": true,
+    "brand": "Midea",
+    "model": null,
+    "serial": "541206000ADA1280640712",
+    "category": "refrigerator",
+    "kind": "appliance",
+    "nickname": "Refrigerator",
+    "unsure": false,
+    "codes": [
+      "CONTAINS FCC ID: 2ADQOMDNA23",
+      "CONTAINS IC: 12575A-MDNA23",
+      "MO:R0698201",
+      "S/N:541206000ADA1280640712"
+    ]
+  }
+}
