@@ -1,7 +1,14 @@
 import type { CallToolResult, ServerContext } from "@modelcontextprotocol/server";
+import { getPublicOrigin } from "mcp-handler";
 import { userFrom } from "../auth.js";
 import { type Db, householdId, type ItemRow, userDb } from "../db.js";
 import type { Env } from "../env.js";
+
+/**
+ * Where a tool is offered: over MCP to the person's own AI app, or in the
+ * website's chat (Muse), which has no sandbox and can't download files.
+ */
+export type Surface = "mcp" | "chat";
 
 export interface Session {
   db: Db;
@@ -15,6 +22,13 @@ export async function session(env: Env, ctx: ServerContext): Promise<Session> {
   const { userId } = userFrom(auth);
   const db = userDb(env, auth?.token ?? "");
   return { db, userId, householdId: await householdId(db) };
+}
+
+/** The thing's page on the website, where the person can tap Upload a PDF. */
+export function itemPageUrl(env: Env, ctx: ServerContext, itemId: string): string {
+  const req = ctx.http?.req;
+  const origin = env.publicUrl ?? (req ? getPublicOrigin(req) : "");
+  return `${origin}/things?id=${itemId}`;
 }
 
 /**

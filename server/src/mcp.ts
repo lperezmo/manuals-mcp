@@ -4,10 +4,12 @@ import * as addItem from "./tools/add-item.js";
 import * as askManual from "./tools/ask-manual.js";
 import * as carSeatStatus from "./tools/car-seat-status.js";
 import * as catchUp from "./tools/catch-up.js";
+import type { Surface } from "./tools/context.js";
 import * as houseAtlas from "./tools/house-atlas.js";
 import * as listItems from "./tools/list-items.js";
 import * as logDone from "./tools/log-done.js";
 import * as recordMeasurement from "./tools/record-measurement.js";
+import * as requestUpload from "./tools/request-upload.js";
 import * as reviseFact from "./tools/revise-fact.js";
 import * as saveView from "./tools/save-view.js";
 import * as upcoming from "./tools/upcoming.js";
@@ -19,6 +21,7 @@ export const INSTRUCTIONS = `Manuals keeps the user's household manuals and upke
 
 - Quote the manual page whenever an answer comes from a manual.
 - To set up a new thing: find the official manual PDF on the maker's site, then add_item with pdf_url.
+- If add_item says the site won't let apps download it but you can (a code sandbox or browser with network access), call request_manual_upload, PUT the PDF's raw bytes to its upload_url, then add_item with attach_to and upload_id. Never paste a file into the chat.
 - Some facts are flagged needs_review. Mention it when you use one, and offer to check it.
 - When the user doubts a fact, read its page with ask_manual (item and page), compare, and fix or confirm it with revise_fact. What the user states themselves wins.
 - When something breaks or needs a repair, check warranty_status first; if it's likely still covered, say so before suggesting a paid repair.
@@ -27,8 +30,13 @@ export const INSTRUCTIONS = `Manuals keeps the user's household manuals and upke
 - For questions across the house ("what's in the nursery", "what uses water", "what can I do in five minutes", "what's due before winter"), use house_atlas with a lens, and a view in the user's words when the lenses don't cover it.
 - For calendar reminders, use your own calendar tools.`;
 
-export const TOOL_MODULES = [
+interface ToolModule {
+  register(server: McpServer, env: Env, surface?: Surface): void;
+}
+
+export const TOOL_MODULES: ToolModule[] = [
   addItem,
+  requestUpload,
   listItems,
   askManual,
   upcoming,
@@ -42,6 +50,7 @@ export const TOOL_MODULES = [
   saveView,
 ];
 
-export function registerTools(server: McpServer, env: Env): void {
-  for (const mod of TOOL_MODULES) mod.register(server, env);
+/** Registers the tools; the website's chat (surface "chat") leaves out the MCP-only upload slot. */
+export function registerTools(server: McpServer, env: Env, surface: Surface = "mcp"): void {
+  for (const mod of TOOL_MODULES) mod.register(server, env, surface);
 }

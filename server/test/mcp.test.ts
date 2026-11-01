@@ -75,6 +75,7 @@ describe("MCP endpoint", () => {
         "list_items",
         "log_done",
         "record_measurement",
+        "request_manual_upload",
         "revise_fact",
         "save_view",
         "upcoming",
