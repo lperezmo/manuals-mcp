@@ -36,6 +36,8 @@ export const LENSES = {
       garage: "Garage or shed: tools, the mower, storage, workshop gear.",
       outdoors: "Outdoors: the yard, patio, grill, pool, garden.",
       car: "The car: car seats, the vehicle itself, things that travel in it.",
+      whole_house:
+        "All through the house: smoke alarms in every room, the thermostat, the network.",
     },
   },
   system: {
@@ -171,6 +173,7 @@ const LABELS: Record<string, string> = {
   garage: "Garage",
   outdoors: "Outdoors",
   car: "Car",
+  whole_house: "Whole house",
   water: "Water",
   air_heat: "Air and heat",
   power: "Power",
@@ -383,6 +386,7 @@ export async function sortFacets(
 // ---------------------------------------------------------------------------
 
 const ROOM_WORDS: [string, RegExp][] = [
+  ["whole_house", /\b(smoke|carbon monoxide|detector|thermostat|router|mesh)\b/],
   ["car", /\b(car ?seat|booster|vehicle|car|truck|suv|minivan)\b/],
   ["laundry", /\b(washer|washing machine|dryer|iron)\b/],
   [
@@ -395,10 +399,7 @@ const ROOM_WORDS: [string, RegExp][] = [
   ["outdoors", /\b(grill|sprinkler|pool|hose|trampoline|patio)\b/],
   ["bathroom", /\b(toothbrush|hair ?dryer|shaver|scale|shower|toilet|bath)\b/],
   ["bedroom", /\b(air conditioner|window ac|ac unit|mattress|bed)\b/],
-  [
-    "living",
-    /\b(tv|television|speaker|router|modem|vacuum|robot|thermostat|purifier|console|printer|laptop)\b/,
-  ],
+  ["living", /\b(tv|television|speaker|modem|vacuum|robot|purifier|console|printer|laptop)\b/],
 ];
 
 const SYSTEM_WORDS: [string, RegExp][] = [

@@ -148,6 +148,7 @@ expectTop("crib", "room", ["nursery"]);
 expectTop("humid", "room", ["nursery", "bedroom"]);
 expectTop("mower", "room", ["garage", "outdoors"]);
 expectTop("heater", "room", ["basement", "garage"]);
+expectTop("smoke", "room", ["whole_house"]);
 expectTop("dish", "system", ["water"]);
 expectTop("smoke", "system", ["safety"]);
 expectTop("furnace", "system", ["air_heat"]);
