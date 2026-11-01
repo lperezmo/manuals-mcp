@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { userDb } from "../src/db.js";
 import { readEnv } from "../src/env.js";
+import { processStoredManual, READ_TIMED_OUT } from "../src/finder/ingest.js";
 import { attachHandler, ingestHandler } from "../src/http.js";
 import { testAuth } from "./helpers.js";
 
@@ -163,5 +165,42 @@ describe("read a stored manual", () => {
     const res = await ingestHandler(env, verify)(ingest(await mint(), { reread: true }));
     expect(res.status).toBe(409);
     expect((await res.json()).error).toContain("just read");
+  });
+
+  test("a read that runs out of time says so and frees the manual", async () => {
+    const calls = manualDb({ status: "pending", reader_at: null }, true);
+    const fake = globalThis.fetch;
+    const bodies: string[] = [];
+    // The PDF download stands in for any slow step: it answers long after the deadline.
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (init?.body && typeof init.body === "string") bodies.push(init.body);
+      if (url.includes("/storage/v1/object")) {
+        await new Promise((r) => setTimeout(r, 300));
+        return new Response("gone", { status: 500 });
+      }
+      return fake(input, init);
+    }) as typeof fetch;
+    const started = Date.now();
+    const out = await processStoredManual({
+      env,
+      db: userDb(env, "token"),
+      householdId: "11111111-1111-1111-1111-111111111111",
+      manualId: MANUAL_ID,
+      deadline: Date.now() + 30,
+    });
+    expect(Date.now() - started).toBeLessThan(250);
+    expect(out.note).toBe(READ_TIMED_OUT);
+    expect(out.distilled).toBeNull();
+    // The page gets a plain sentence, never written over a read that already finished...
+    expect(bodies.some((b) => b.includes(READ_TIMED_OUT))).toBe(true);
+    expect(calls.some((c) => c.startsWith("PATCH") && c.includes("status=neq.distilled"))).toBe(
+      true,
+    );
+    // ...the lock is let go so Read it again works...
+    expect(bodies.some((b) => b === JSON.stringify({ reading_since: null }))).toBe(true);
+    // ...and model_runs has a line saying why.
+    expect(calls.some((c) => c.startsWith("POST /rest/v1/model_runs"))).toBe(true);
+    expect(bodies.some((b) => b.includes("Ran out of time"))).toBe(true);
   });
 });

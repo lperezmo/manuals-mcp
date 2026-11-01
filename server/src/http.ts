@@ -38,7 +38,12 @@ import {
   suggestions,
 } from "./fastlane.js";
 import { ATTACH_DOWNLOAD_MS, FetchPdfError, fetchPdf } from "./finder/fetch-pdf.js";
-import { processStoredManual, ReadingBusyError, storeManual } from "./finder/ingest.js";
+import {
+  processStoredManual,
+  READ_BUDGET_MS,
+  ReadingBusyError,
+  storeManual,
+} from "./finder/ingest.js";
 import { findManual } from "./finder/search.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
 import { isSafetyTurn, memoryTag, noteFrom, notesForMuse, saveNote } from "./memory.js";
@@ -123,6 +128,8 @@ export const READ_QUICK_MS = 2_500;
 
 export function ingestHandler(env: Env, verify: Verify = supabaseVerifier(env)) {
   return async (req: Request) => {
+    // The read's time counts from here: the function limit does too.
+    const deadline = Date.now() + READ_BUDGET_MS;
     if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
     const auth = await verify(bearer(req));
     if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
@@ -143,6 +150,7 @@ export function ingestHandler(env: Env, verify: Verify = supabaseVerifier(env)) 
           householdId: await householdId(db),
           manualId: body.manual_id,
           reread: body.reread === true,
+          deadline,
         }),
         READ_QUICK_MS,
       );
@@ -158,9 +166,10 @@ export function ingestHandler(env: Env, verify: Verify = supabaseVerifier(env)) 
 }
 
 /**
- * "Use this" on a found manual: downloads the PDF and stores it, nothing more.
- * The page then calls /api/ingest for Muse's read. A slow maker's site gets
- * this whole call; it doesn't eat into the read's time.
+ * "Use this" on a found manual: downloads the PDF and stores it. With
+ * `read: true` (what the page sends) Muse's read starts here too, in the same
+ * function, so the download and the read share its time limit (300 s) and the
+ * read gives up at READ_BUDGET_MS from the start of the request.
  */
 export function attachHandler(
   env: Env,
@@ -168,6 +177,8 @@ export function attachHandler(
   fetchImpl: typeof fetch = fetch,
 ) {
   return async (req: Request) => {
+    // A slow download eats into the read's time: both share this function's limit.
+    const deadline = Date.now() + READ_BUDGET_MS;
     if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
     const auth = await verify(bearer(req));
     if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
@@ -187,7 +198,7 @@ export function attachHandler(
       if (body.read !== true) return Response.json(base);
       try {
         const read = await quickOrBackground(
-          processStoredManual({ env, db, householdId: await householdId(db), manualId }),
+          processStoredManual({ env, db, householdId: await householdId(db), manualId, deadline }),
           READ_QUICK_MS,
         );
         return Response.json(read.done ? { ...base, ...read.value } : { ...base, reading: true });

@@ -26,6 +26,7 @@
 
     <script type="module">
       import { $, ago, api, boot, daysBetween, db, esc, forgetJob, howOften, ICONS, iconKey, iconSvg, itemIcon, openChat, relDay, shareLink, shrink, TINTS, takePendingPhoto, tintKey, toast, today, tool, watchJob } from "/app.js";
+      import { JOB_MAX_MS } from "/jobs.js";
 
       const main = $("#main");
       const params = new URLSearchParams(location.search);
@@ -341,7 +342,7 @@
         const { data: item, error } = await supa
           .from("items")
           .select(
-            "id, nickname, brand, model, serial, category, kind, icon, tint, pinned, archived_at, uses_per_week, purchased_on, manuals(id, title, page_count, source_url, storage_path, status, status_detail), manual_facts(id, kind, label, value, source_page, source, status), tasks(id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source, status, active), seat_modes(id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, source, status), item_readings(kind, value, measured_on)",
+            "id, nickname, brand, model, serial, category, kind, icon, tint, pinned, archived_at, uses_per_week, purchased_on, manuals(id, title, page_count, source_url, storage_path, status, status_detail, reading_since), manual_facts(id, kind, label, value, source_page, source, status), tasks(id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source, status, active), seat_modes(id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, source, status), item_readings(kind, value, measured_on)",
           )
           .eq("id", id)
           .maybeSingle();
@@ -1064,11 +1065,17 @@
 
       // A failed read used to save the reader's raw error here; show those as one plain sentence.
       const READ_FAILED = "Muse couldn't turn it into a schedule this time. The text is still searchable, and you can read it again.";
-      const canReread = (m) =>
-        m.status === "text_ready" && /couldn't distill|couldn't turn it into|wasn't read yet|not read yet|scanned pages/.test(m.status_detail || "");
+      // A read that died leaves its lock behind; past this it's over (READING_STALE_MS on the server).
+      const readingNow = (m) => !!m.reading_since && Date.now() - Date.parse(m.reading_since) < JOB_MAX_MS;
+      // Any manual with a PDF that isn't read, and isn't being read, can be read again.
+      const canReread = (m) => (m.status === "text_ready" || m.status === "pending") && !!m.storage_path && !readingNow(m);
 
       function manualLine(manual) {
-        const detail = /couldn't distill/.test(manual.status_detail || "") ? READ_FAILED : manual.status_detail;
+        const detail = readingNow(manual)
+          ? "Muse is reading it now"
+          : /couldn't distill/.test(manual.status_detail || "")
+            ? READ_FAILED
+            : manual.status_detail || (canReread(manual) ? "Muse didn't finish reading it" : "");
         // A failed or unread manual gets the button up front; a read one gets a quiet one (your fixes are kept).
         const button = canReread(manual)
           ? ` <button type="button" class="small" data-reread="${esc(manual.id)}">Read it again</button>`

@@ -1,6 +1,8 @@
 // Shared by every page: Supabase sign-in, the header, calls to the server's
 // tools, and the Muse chat drawer. Pages import what they need.
 
+import { couldntFinish, JOB_MAX_MS, readVerdict, withTimeout } from "/jobs.js";
+
 let client;
 let config;
 
@@ -987,8 +989,15 @@ export function openSettings() {
 // pill on every page, and says when each one is done.
 
 const JOBS_KEY = "manuals-jobs";
-const JOB_MAX_MS = 8 * 60_000;
 let watching = false;
+
+// Another tab may finish a job, and a page restored with Back may show an old pill.
+window.addEventListener("storage", (e) => {
+  if (e.key === JOBS_KEY) drawJobs();
+});
+window.addEventListener("pageshow", (e) => {
+  if (e.persisted) startWatching();
+});
 
 function loadJobs() {
   try {
@@ -1043,7 +1052,7 @@ function drawJobs() {
 /** Is it done? A read is done when its manual is no longer pending or being read; a search when its log entry is in. */
 async function checkJob(supa, job) {
   if (job.kind === "read") {
-    const { data: m } = await supa
+    const { data: m, error } = await supa
       .from("manuals")
       .select("status, status_detail, reading_since")
       .eq("item_id", job.item)
@@ -1051,9 +1060,8 @@ async function checkJob(supa, job) {
       .order("updated_at", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (!m || m.reading_since || m.status === "pending") return null;
-    if (m.status === "distilled") return { text: `Muse finished reading the ${job.label} manual.` };
-    return { text: m.status_detail || `Muse couldn't finish the ${job.label} manual.` };
+    if (error) throw error;
+    return readVerdict(m, job);
   }
   const { data: run } = await supa
     .from("model_runs")
@@ -1081,27 +1089,41 @@ async function startWatching() {
   drawJobs();
   if (watching || !loadJobs().length) return;
   watching = true;
-  const supa = await db();
-  while (loadJobs().length) {
-    await new Promise((r) => setTimeout(r, 4000));
-    for (const job of loadJobs()) {
-      let done = null;
-      try {
-        done = await checkJob(supa, job);
-      } catch {}
-      if (!done && Date.now() - Date.parse(job.since) > JOB_MAX_MS) {
-        done = { text: `Muse is still on the ${job.label}. Check back in a bit.` };
-      }
-      if (!done) continue;
-      forgetJob(job.kind, job.item);
-      const here =
-        location.pathname === "/things" &&
-        new URLSearchParams(location.search).get("id") === job.item;
-      notify(done.text, here ? null : `/things?id=${job.item}`);
-      window.dispatchEvent(new CustomEvent("manuals:job-done", { detail: job }));
+  try {
+    const supa = await db();
+    while (loadJobs().length) {
+      await new Promise((r) => setTimeout(r, 4000));
+      for (const job of loadJobs()) await settle(supa, job);
     }
+  } finally {
+    watching = false;
+    drawJobs();
   }
-  watching = false;
+}
+
+/** Checks one job, and tells the person once it's over. */
+async function settle(supa, job) {
+  let done = null;
+  try {
+    // A request that never answers would otherwise hold the pill up forever.
+    done = await withTimeout(checkJob(supa, job));
+  } catch {}
+  if (!done && Date.now() - Date.parse(job.since) > JOB_MAX_MS) {
+    done = {
+      text:
+        job.kind === "read"
+          ? couldntFinish(job.label)
+          : `The search for the ${job.label} manual didn't finish. Try again.`,
+    };
+  }
+  if (!done) return;
+  // Another tab may have told the person already.
+  if (!loadJobs().some((j) => j.kind === job.kind && j.item === job.item)) return;
+  forgetJob(job.kind, job.item);
+  const here =
+    location.pathname === "/things" && new URLSearchParams(location.search).get("id") === job.item;
+  notify(done.text, here ? null : `/things?id=${job.item}`);
+  window.dispatchEvent(new CustomEvent("manuals:job-done", { detail: job }));
 }
 
 /** A toast that stays a little longer, with a link to the thing. */

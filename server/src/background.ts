@@ -22,9 +22,17 @@ export async function quickOrBackground<T>(
   ms: number,
 ): Promise<{ done: true; value: T } | { done: false }> {
   background(work);
+  return within(work, ms);
+}
+
+/** Waits up to `ms` for `work`; a late one is left running and reported as not done. */
+export async function within<T>(
+  work: Promise<T>,
+  ms: number,
+): Promise<{ done: true; value: T } | { done: false }> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<{ done: false }>((resolve) => {
-    timer = setTimeout(() => resolve({ done: false }), ms);
+    timer = setTimeout(() => resolve({ done: false }), Math.max(0, ms));
   });
   try {
     return await Promise.race([work.then((value) => ({ done: true as const, value })), late]);
