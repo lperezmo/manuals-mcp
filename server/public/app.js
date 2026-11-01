@@ -553,7 +553,11 @@ export function typeAhead(input, onPick, { above = false } = {}) {
 }
 
 /** Opens the chat drawer, optionally sending a message right away. */
-export function openChat(text, onChange) {
+/**
+ * Opens the chat drawer and sends `text` if given. With `once`, a message
+ * already in this chat (a setup button tapped again) just opens the chat.
+ */
+export function openChat(text, onChange, { once = false } = {}) {
   if (!drawer) {
     drawer = document.createElement("section");
     drawer.className = "chat";
@@ -644,8 +648,11 @@ export function openChat(text, onChange) {
     });
   }
   drawer.classList.remove("hidden");
-  renderChat(loadChat());
-  if (text) send(text, onChange);
+  const past = loadChat();
+  renderChat(past);
+  const sent = once && past.some((m) => m.role === "user" && m.content === text);
+  if (text && !sent) send(text, onChange);
+  else if (sent) $(".chat-log", drawer).lastElementChild?.scrollIntoView({ block: "end" });
   else $("#chat-input", drawer).focus();
 }
 
