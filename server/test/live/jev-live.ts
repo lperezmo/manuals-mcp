@@ -6,6 +6,11 @@
 // The checks fail open in the app (any error returns null), so this script
 // first makes one raw call to surface the HTTP status, then runs each check on
 // small fixture images and compares Jev's answers with what the photo shows.
+// Each check runs through a fetch that remembers how its call went, so a null
+// says why (an HTTP status, a timeout, a network error) instead of just
+// "returned null". Now and then one call in the burst comes back null within
+// 50 ms (not the 5 s timeout), so a null is tried once more before it fails and
+// the RETRY line stays in the log. A wrong answer is never retried.
 // It never prints the key or request headers.
 
 import { readFileSync } from "node:fs";
@@ -42,6 +47,47 @@ const round = (scores: Record<string, number>) =>
   Object.entries(scores)
     .map(([k, v]) => `${k}=${v.toFixed(3)}`)
     .join(" ");
+
+/** How the last call through `watched` went, in words for the log. */
+let lastCall = "no call made";
+let retryAfter = 0;
+
+/** fetch that records the status, time and start of the body of each call, or why it threw. */
+const watched = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const started = Date.now();
+  try {
+    const res = await fetch(input, init);
+    const body = (await res.clone().text()).slice(0, 200);
+    lastCall = `HTTP ${res.status} in ${Date.now() - started} ms: ${body}`;
+    retryAfter = Number(res.headers.get("retry-after")) || 0;
+    return res;
+  } catch (err) {
+    const ms = Date.now() - started;
+    const e = err as Error;
+    lastCall =
+      e.name === "TimeoutError"
+        ? `timed out after ${ms} ms`
+        : `${e.name} after ${ms} ms: ${e.message}`;
+    retryAfter = 0;
+    throw err;
+  }
+}) as typeof fetch;
+
+/** Why the last check came back null, both tries. */
+let nullWhy = "";
+
+/** Runs a check through `watched`; a null gets one more try after a short wait. */
+async function live<T>(call: (f: typeof fetch) => Promise<T | null>): Promise<T | null> {
+  const first = await call(watched);
+  if (first !== null) return first;
+  const firstWhy = lastCall;
+  const wait = Math.min(retryAfter * 1000 || 1_000, 10_000);
+  console.log(`RETRY in ${wait} ms, the check returned null: ${firstWhy}`);
+  await new Promise((r) => setTimeout(r, wait));
+  const second = await call(watched);
+  nullWhy = `returned null twice. 1st: ${firstWhy}. 2nd: ${lastCall}`;
+  return second;
+}
 
 /** One raw call, so a bad key, model or size shows as a status instead of a silent null. */
 async function probe(image: { base64: string }, format: "jpg" | "png") {
@@ -88,78 +134,90 @@ console.log(`INFO  1800 px tall photo gets HTTP ${oversize.status} (the old rece
 const fits = await probe(receipt, "jpg");
 pass("1568 px tall receipt is accepted", fits.status === 200, `HTTP ${fits.status}`);
 
-const labelPhoto = await checkPhoto(env, label);
+const labelPhoto = await live((f) => checkPhoto(env, label, f));
 pass(
   "checkPhoto keeps a clear label photo",
   labelPhoto?.retake === null,
   labelPhoto
     ? `label=${labelPhoto.label.toFixed(3)} sharp=${labelPhoto.sharp.toFixed(3)} ${labelPhoto.ms} ms`
-    : "returned null",
+    : nullWhy,
 );
 
-const empty = await checkPhoto(env, noLabel);
+const empty = await live((f) => checkPhoto(env, noLabel, f));
 pass(
   "checkPhoto asks for a retake of a photo with no label",
   empty?.retake === "no_label",
-  empty ? `retake=${empty.retake} label=${empty.label.toFixed(3)}` : "returned null",
+  empty ? `retake=${empty.retake} label=${empty.label.toFixed(3)}` : nullWhy,
 );
 
-const receiptPhoto = await checkPhoto(env, receipt, fetch, "receipt");
+const receiptPhoto = await live((f) => checkPhoto(env, receipt, f, "receipt"));
 pass(
   "checkPhoto keeps a clear receipt photo",
   receiptPhoto?.retake === null,
   receiptPhoto
     ? `label=${receiptPhoto.label.toFixed(3)} sharp=${receiptPhoto.sharp.toFixed(3)}`
-    : "returned null",
+    : nullWhy,
 );
 
-const rightLabel = await checkRead(env, label, {
-  brand: "Breville",
-  model: "BES870XL",
-  serial: "SN2491B7730",
-});
+const rightLabel = await live((f) =>
+  checkRead(
+    env,
+    label,
+    { brand: "Breville", model: "BES870XL", serial: "SN2491B7730" },
+    "label",
+    f,
+  ),
+);
 pass(
   "checkRead trusts a correct label read",
   rightLabel !== null && rightLabel.doubtful.length === 0,
-  rightLabel ? `${round(rightLabel.scores)} ${rightLabel.ms} ms` : "returned null",
+  rightLabel ? `${round(rightLabel.scores)} ${rightLabel.ms} ms` : nullWhy,
 );
 
-const wrongModel = await checkRead(env, label, {
-  brand: "Breville",
-  model: "BE5870XL",
-  serial: "SN2491B7730",
-});
+const wrongModel = await live((f) =>
+  checkRead(
+    env,
+    label,
+    { brand: "Breville", model: "BE5870XL", serial: "SN2491B7730" },
+    "label",
+    f,
+  ),
+);
 pass(
   "checkRead doubts a model with S read as 5",
   wrongModel?.doubtful.includes("model") === true,
-  wrongModel ? `${round(wrongModel.scores)} doubtful=[${wrongModel.doubtful}]` : "returned null",
+  wrongModel ? `${round(wrongModel.scores)} doubtful=[${wrongModel.doubtful}]` : nullWhy,
 );
 
-const rightReceipt = await checkRead(
-  env,
-  receipt,
-  { store: "Home Depot", purchased_on: "2026-10-14", price: 89.97, warranty_months: 24 },
-  "receipt",
+const rightReceipt = await live((f) =>
+  checkRead(
+    env,
+    receipt,
+    { store: "Home Depot", purchased_on: "2026-10-14", price: 89.97, warranty_months: 24 },
+    "receipt",
+    f,
+  ),
 );
 pass(
   "checkRead trusts a correct receipt read",
   rightReceipt !== null && rightReceipt.doubtful.length === 0,
-  rightReceipt ? `${round(rightReceipt.scores)} ${rightReceipt.ms} ms` : "returned null",
+  rightReceipt ? `${round(rightReceipt.scores)} ${rightReceipt.ms} ms` : nullWhy,
 );
 
-const wrongReceipt = await checkRead(
-  env,
-  receipt,
-  { store: "Home Depot", purchased_on: "2026-10-17", price: 98.97, warranty_months: 24 },
-  "receipt",
+const wrongReceipt = await live((f) =>
+  checkRead(
+    env,
+    receipt,
+    { store: "Home Depot", purchased_on: "2026-10-17", price: 98.97, warranty_months: 24 },
+    "receipt",
+    f,
+  ),
 );
 pass(
   "checkRead doubts a wrong date and price",
   (wrongReceipt?.doubtful.includes("purchased_on") && wrongReceipt.doubtful.includes("price")) ===
     true,
-  wrongReceipt
-    ? `${round(wrongReceipt.scores)} doubtful=[${wrongReceipt.doubtful}]`
-    : "returned null",
+  wrongReceipt ? `${round(wrongReceipt.scores)} doubtful=[${wrongReceipt.doubtful}]` : nullWhy,
 );
 
 console.log(`\nDoubt bar ${DOUBT_BELOW}. ${failed ? `${failed} failed.` : "All passed."}`);
