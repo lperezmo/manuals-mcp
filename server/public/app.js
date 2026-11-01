@@ -1052,16 +1052,35 @@ function drawJobs() {
 /** Is it done? A read is done when its manual is no longer pending or being read; a search when its log entry is in. */
 async function checkJob(supa, job) {
   if (job.kind === "read") {
-    const { data: m, error } = await supa
-      .from("manuals")
-      .select("status, status_detail, reading_since")
-      .eq("item_id", job.item)
-      .gte("updated_at", job.since)
-      .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const [{ data: m, error }, { data: failed }] = await Promise.all([
+      supa
+        .from("manuals")
+        .select("status, status_detail, reading_since")
+        .eq("item_id", job.item)
+        .gte("updated_at", job.since)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      // A download that failed (a site that blocks apps) leaves no manual, only this log entry.
+      supa
+        .from("model_runs")
+        .select("error")
+        .eq("kind", "read")
+        .eq("item_id", job.item)
+        .eq("ok", false)
+        .is("manual_id", null)
+        .gte("created_at", job.since)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ]);
     if (error) throw error;
-    return readVerdict(m, job);
+    return readVerdict(
+      m,
+      job,
+      Date.now(),
+      failed ? failed.error || couldntFinish(job.label) : null,
+    );
   }
   const { data: run } = await supa
     .from("model_runs")

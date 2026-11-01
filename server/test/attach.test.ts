@@ -38,6 +38,52 @@ describe("attach a found manual", () => {
     expect((await attachHandler(env, verify)(attach())).status).toBe(401);
   });
 
+  test("a maker's site that blocks apps ends at once, says what to do, and ends the pill", async () => {
+    const { verify, mint } = await testAuth();
+    const logged: Record<string, unknown>[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("/rest/v1/items")) return Response.json({ ...ITEM, brand: "Whirlpool" });
+      if (url.includes("/rest/v1/model_runs") && init?.method === "POST") {
+        logged.push(JSON.parse(String(init.body)));
+        return new Response(null, { status: 201 });
+      }
+      if (url.includes("/rest/v1/manuals")) return new Response(null, { status: 204 });
+      return new Response("unexpected", { status: 500 });
+    }) as typeof fetch;
+    const akamai = (async () =>
+      new Response("Access Denied", { status: 403 })) as unknown as typeof fetch;
+    const req = new Request("https://manuals.example.com/api/attach", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${await mint()}` },
+      body: JSON.stringify({
+        item_id: ITEM.id,
+        url: "https://www.whirlpool.com/content/dam/global/documents/201508/owners-manual-W10717214-RevA.pdf",
+        official: true,
+        read: true,
+      }),
+    });
+    const started = Date.now();
+    const res = await attachHandler(env, verify, akamai)(req);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({
+      error:
+        "Whirlpool's site won't let apps download its manuals. Tap Open, save the PDF on your phone, then add it with Upload a PDF.",
+      blocked: true,
+    });
+    // A failed read with no manual: the "Reading" pill sees it and ends, even on another page.
+    expect(logged).toEqual([
+      expect.objectContaining({
+        kind: "read",
+        ok: false,
+        item_id: ITEM.id,
+        error: expect.stringContaining("won't let apps"),
+      }),
+    ]);
+    expect(logged[0]?.manual_id).toBeUndefined();
+  });
+
   test("a slow maker's site gets a sentence a person can act on", async () => {
     const { verify, mint } = await testAuth();
     globalThis.fetch = (async (input: RequestInfo | URL) => {

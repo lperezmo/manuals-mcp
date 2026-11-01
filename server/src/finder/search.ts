@@ -1,5 +1,12 @@
 import type { Env } from "../env.js";
-import { FetchPdfError, fetchPdf } from "./fetch-pdf.js";
+import {
+  blockedSentence,
+  CHECK_FIRST_BYTE_MS,
+  CHECK_TIMEOUT_MS,
+  FetchPdfError,
+  fetchPdf,
+  SiteBlockedError,
+} from "./fetch-pdf.js";
 import { pdfPages } from "./pdf-text.js";
 
 // Finding a manual on the web for the website, where no AI client is there
@@ -30,6 +37,10 @@ export interface Candidate {
   problem?: string;
   /** The check didn't finish (slow site, network); the PDF may still be fine. */
   unchecked?: boolean;
+  /** The site turned us away or never answered: only the person's own browser can get it. */
+  blocked?: boolean;
+  /** A spec, feature, energy, dimension or install sheet: about the model, but not its manual. */
+  sheet?: boolean;
   /** Other models of the same line this PDF also covers (RAC-PD1011CRU, ...), when it covers several. */
   models?: string[];
   /** Jev's pick among the candidates that name the model. */
@@ -156,6 +167,30 @@ export function tidyTitle(raw: string): string {
   return t;
 }
 
+/** Words that mark a sheet about the model rather than its manual. */
+const SHEET_WORDS =
+  /\b(spec(ification)?s? ?sheet|specsheet|quick ?specs?|feature ?sheet|key features|features (&|and) benefits|energy ?guide|dimension(s| guide)?|install(ation)? (instructions?|guide|sheet)|tech ?sheet|wiring diagram|parts? (list|catalog)|service manual|warranty|brochure)\b/;
+/** Words that mark the manual itself; a combined "Installation and Use & Care Guide" is a manual. */
+const MANUAL_WORDS =
+  /\b(use (&|and) care|owner'?s? (manual|guide)|user'?s? (manual|guide|instructions)|operating instructions|instruction manual)\b/;
+
+/**
+ * Whether a title, link or first page reads like a spec sheet, energy guide,
+ * dimension guide or the like (Whirlpool's "Key Features & Benefits"), not
+ * the owner's or use and care manual.
+ */
+export function isSheet(text: string): boolean {
+  let t = text;
+  try {
+    t = decodeURIComponent(text);
+  } catch {}
+  t = t
+    .toLowerCase()
+    .replace(/[_\-./]+/g, " ")
+    .replace(/\s+/g, " ");
+  return SHEET_WORDS.test(t) && !MANUAL_WORDS.test(t);
+}
+
 /** PDF links from the results, best first: the maker's site, then the model in the link or title. */
 export function rankResults(
   results: SearchResult[],
@@ -177,6 +212,7 @@ export function rankResults(
     const official = isBrandHost(host, item.brand);
     const named = modelMatch(`${r.title} ${url.pathname}`, item.model) !== null;
     const hint = suggestModel(`${r.title} ${url.pathname}`, item.model);
+    const sheet = isSheet(`${r.title} ${url.pathname}`);
     ranked.push({
       url: url.toString(),
       title: tidyTitle(r.title) || url.pathname.split("/").pop() || host,
@@ -184,7 +220,9 @@ export function rankResults(
       official,
       named,
       ...(hint ? { model_hint: hint } : {}),
-      rank: (official ? 3 : 0) + (named ? 2 : 0) + r.score,
+      ...(sheet ? { sheet } : {}),
+      // A sheet that names the model shouldn't push the manual out of the few PDFs checked.
+      rank: (official ? 3 : 0) + (named ? 2 : 0) - (sheet ? 3 : 0) + r.score,
     });
   }
   return ranked.sort((a, b) => b.rank - a.rank).map(({ rank: _, ...c }) => c);
@@ -285,15 +323,29 @@ export async function checkCandidate(
   candidate: Candidate,
   model: string | null | undefined,
   fetchImpl: typeof fetch = fetch,
+  timeoutMs = CHECK_TIMEOUT_MS,
+  firstByteMs = CHECK_FIRST_BYTE_MS,
 ): Promise<Candidate> {
   try {
-    const { bytes } = await fetchPdf(candidate.url, fetchImpl);
+    const { bytes } = await fetchPdf(
+      candidate.url,
+      fetchImpl,
+      timeoutMs,
+      Math.min(firstByteMs, timeoutMs),
+    );
     const { pageCount, pages } = await pdfPages(bytes);
     // No text layer (a scan) or no model to look for: we can't tell, so don't claim a match.
     const text = pages.map((p) => p.content).join(" ");
     const match = modelMatch(text, model);
     const hint = match === "lookalike" ? suggestModel(text, model) : null;
     const models = sameLineModels(text, model);
+    const excerpt = pages
+      .slice(0, 3)
+      .map((p) => p.content)
+      .join(" ")
+      .slice(0, 3_000);
+    // A page or two that reads like a spec or install sheet is one, whatever its link says.
+    const sheet = candidate.sheet || (pageCount <= 4 && isSheet(excerpt.slice(0, 1_500)));
     return {
       ...candidate,
       page_count: pageCount,
@@ -301,13 +353,13 @@ export async function checkCandidate(
       ...(match ? { match } : {}),
       ...(hint ? { model_hint: hint } : {}),
       ...(models.length > 1 ? { models: models.slice(0, 8) } : {}),
-      excerpt: pages
-        .slice(0, 3)
-        .map((p) => p.content)
-        .join(" ")
-        .slice(0, 3_000),
+      ...(sheet ? { sheet } : {}),
+      excerpt,
     };
   } catch (err) {
+    // The site turned us away: the PDF may be fine, but only the person's browser can get it.
+    if (err instanceof SiteBlockedError)
+      return { ...candidate, problem: err.message, unchecked: true, blocked: true };
     // A FetchPdfError is a definite answer (not a PDF, 404, too big); anything
     // else is a timeout or network trouble, which says nothing about the PDF.
     const definite = err instanceof FetchPdfError;
@@ -319,6 +371,14 @@ export async function checkCandidate(
   }
 }
 
+/** "Whirlpool's site won't let apps download its manuals.", with the brand's name when it's the maker's own site. */
+export function blockedMessage(err: SiteBlockedError, brand: string | null | undefined): string {
+  const site =
+    brand && isBrandHost(err.host, brand) ? `${brand}'s site` : err.host.replace(/^www\./, "");
+  const first = blockedSentence(site, err.why);
+  return `${first[0]?.toUpperCase() ?? ""}${first.slice(1)} Tap Open, save the PDF on your phone, then add it with Upload a PDF.`;
+}
+
 export interface FindOutcome {
   query: string;
   /** Checked PDFs that opened and look like this thing's, model matches first. */
@@ -327,13 +387,28 @@ export interface FindOutcome {
   tried: Candidate[];
 }
 
-/** Searches, ranks and checks up to `check` PDFs, in parallel. */
+/** All of a search's downloading ends by then, so Jev's pick and the log fit in the function's 60 s. */
+export const FIND_BUDGET_MS = 45_000;
+/** A second look needs at least this long to be worth starting. */
+const SECOND_LOOK_MIN_MS = 12_000;
+/** Pages the second look opens with the crawler, in one call. */
+const SECOND_LOOK_PAGES = 5;
+
+/**
+ * Searches, ranks and checks up to `check` PDFs, in parallel. When none of
+ * them turns out to be the manual because a site turned us away or they were
+ * only spec sheets, looks once more: further down the list and on retailers'
+ * pages, skipping the sites that didn't answer, for a copy that opens.
+ */
 export async function findManual(
   env: Env,
   item: { brand?: string | null; model?: string | null; nickname?: string | null },
   fetchImpl: typeof fetch = fetch,
   check = 3,
+  budgetMs = FIND_BUDGET_MS,
 ): Promise<FindOutcome> {
+  const deadline = Date.now() + budgetMs;
+  const left = () => deadline - Date.now();
   const queries = searchQueries(item);
   const query = queries[0] as string;
   const answers = await Promise.allSettled(queries.map((q) => searchWeb(env, q, fetchImpl)));
@@ -358,36 +433,83 @@ export async function findManual(
       ranked = rankResults([...best.values()], item);
     }
   }
-  const tried = await Promise.all(
-    ranked.slice(0, check).map((c) => checkCandidate(c, item.model, fetchImpl)),
-  );
+  const checkAll = (list: Candidate[]) =>
+    Promise.all(
+      list.map((c) =>
+        checkCandidate(
+          c,
+          item.model,
+          fetchImpl,
+          Math.max(1_000, Math.min(CHECK_TIMEOUT_MS, left())),
+        ),
+      ),
+    );
+  const tried = await checkAll(ranked.slice(0, check));
+  const isManual = (c: Candidate) => !c.problem && !c.sheet && Boolean(c.has_model || c.named);
+  const gotStuck = tried.some((c) => c.unchecked || c.sheet);
+  if (!tried.some(isManual) && gotStuck && left() >= SECOND_LOOK_MIN_MS) {
+    // Sites that didn't answer won't answer a second time either.
+    const away = new Set(tried.filter((c) => c.unchecked).map((c) => c.host));
+    const done = new Set(tried.map((c) => c.url));
+    const fresh = (list: Candidate[]) => list.filter((c) => !away.has(c.host) && !done.has(c.url));
+    let more = fresh(ranked);
+    if (more.length < check && env.crawl) {
+      // Jev's picks, then more of the pages naming the model: a retailer's page often carries the PDF.
+      const results = [...best.values()].filter((r) => !away.has(hostOf(r.url)));
+      const pages = [
+        ...(await choosePages(env, item, results, fetchImpl, away)),
+        ...pagesWorthOpening(results, item, SECOND_LOOK_PAGES),
+      ]
+        .filter((p, i, all) => all.findIndex((q) => q.url === p.url) === i)
+        .slice(0, SECOND_LOOK_PAGES);
+      const found = await pdfLinksFromPages(
+        env.crawl,
+        pages,
+        fetchImpl,
+        Math.min(20_000, left() - 5_000),
+      );
+      for (const r of found) if (!best.has(r.url)) best.set(r.url, r);
+      if (found.length) more = fresh(rankResults([...best.values()], item));
+    }
+    if (more.length && left() >= 5_000) tried.push(...(await checkAll(more.slice(0, check))));
+  }
   // A PDF that names neither the model nor comes from the maker is likely
   // someone else's (a fictional "BW-4100" found a forklift's "XL4100").
   // A slow maker's site isn't a wrong PDF: keep an unchecked one when it's the
   // maker's own and its link names the model, and let the person decide.
-  const candidates = tried
-    .filter((c) =>
-      c.problem ? c.unchecked && c.official && c.named : c.has_model || c.official || c.named,
-    )
-    .sort(
-      (a, b) =>
-        Number(Boolean(b.has_model)) - Number(Boolean(a.has_model)) ||
-        Number(!b.unchecked) - Number(!a.unchecked) ||
-        Number(b.official) - Number(a.official),
-    );
+  const kept = tried.filter((c) =>
+    c.problem ? c.unchecked && c.official && c.named : c.has_model || c.official || c.named,
+  );
+  // A spec sheet isn't offered when a manual that opens is there.
+  const candidates = (kept.some(isManual) ? kept.filter((c) => !c.sheet) : kept).sort(
+    (a, b) =>
+      Number(!b.unchecked) - Number(!a.unchecked) ||
+      Number(!b.sheet) - Number(!a.sheet) ||
+      Number(Boolean(b.has_model)) - Number(Boolean(a.has_model)) ||
+      Number(b.official) - Number(a.official),
+  );
   const picked = await pickBest(env, item, candidates, fetchImpl);
   const strip = ({ excerpt: _, ...c }: Candidate) => c;
   return { query, candidates: picked.map(strip), tried: tried.map(strip) };
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
 }
 
 /** Manual-listing sites: they turn crawlers away (manuals.plus answers 403) and only mirror the maker's PDF. */
 const LISTING_HOSTS =
   /(^|\.)(manuals\.plus|manualsfile\.com|manualsdir\.com|manualshelf\.com|usermanual\.wiki|manualowl\.com|all-guidesbox\.com|safe-manuals\.com|device\.report)$/;
 
-/** Pages (not PDFs) from the maker's site or naming the model, best first, at most two. */
+/** Pages (not PDFs) from the maker's site or naming the model, best first, at most `limit`. */
 export function pagesWorthOpening(
   results: SearchResult[],
   item: { brand?: string | null; model?: string | null },
+  limit = 2,
 ): SearchResult[] {
   return results
     .filter((r) => {
@@ -405,7 +527,7 @@ export function pagesWorthOpening(
       }
     })
     .sort((a, b) => b.score - a.score)
-    .slice(0, 2);
+    .slice(0, limit);
 }
 
 /**
@@ -419,8 +541,9 @@ export async function choosePages(
   item: { brand?: string | null; model?: string | null; nickname?: string | null },
   results: SearchResult[],
   fetchImpl: typeof fetch = fetch,
+  avoid: Set<string> = new Set(),
 ): Promise<SearchResult[]> {
-  const fallback = pagesWorthOpening(results, item);
+  const fallback = pagesWorthOpening(results, item).filter((r) => !avoid.has(hostOf(r.url)));
   const router = env.router;
   const pool = results
     .filter((r) => {
@@ -431,6 +554,7 @@ export async function choosePages(
           url.protocol === "https:" &&
           !SKIP_HOSTS.test(host) &&
           !LISTING_HOSTS.test(host) &&
+          !avoid.has(host) &&
           !isPdfUrl(url)
         );
       } catch {
@@ -489,8 +613,9 @@ export async function pdfLinksFromPages(
   crawl: NonNullable<Env["crawl"]>,
   pages: SearchResult[],
   fetchImpl: typeof fetch = fetch,
+  timeoutMs = 20_000,
 ): Promise<SearchResult[]> {
-  if (!pages.length) return [];
+  if (!pages.length || timeoutMs <= 0) return [];
   const res = await fetchImpl(`${crawl.baseUrl}/crawl`, {
     method: "POST",
     headers: {
@@ -501,7 +626,7 @@ export async function pdfLinksFromPages(
         : {}),
     },
     body: JSON.stringify({ urls: pages.map((p) => p.url) }),
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(timeoutMs),
   }).catch(() => null);
   if (!res?.ok) return [];
   const body = (await res.json().catch(() => ({}))) as {
@@ -548,7 +673,8 @@ export async function pickBest(
   fetchImpl: typeof fetch = fetch,
 ): Promise<Candidate[]> {
   const router = env.router;
-  const named = candidates.filter((c) => c.has_model && c.excerpt);
+  // A spec sheet prints the model too, but it's never the pick.
+  const named = candidates.filter((c) => c.has_model && c.excerpt && !c.sheet);
   // Only one PDF prints the model (not a lookalike spelling): that's the pick, no need to ask Jev.
   if (named.length === 1 && named[0]?.match !== "lookalike") {
     const only = named[0] as Candidate;

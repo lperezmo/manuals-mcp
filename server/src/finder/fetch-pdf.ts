@@ -7,6 +7,30 @@ const MAX_REDIRECTS = 4;
 
 export class FetchPdfError extends Error {}
 
+/**
+ * The site turned us away (401, 403, 429) or never started answering. Some
+ * makers' sites block apps outright (whirlpool.com hangs, then answers 403 to
+ * a browser), so waiting or retrying won't help: the person has to open the
+ * link and save the PDF themselves. We don't try to get around it.
+ */
+export class SiteBlockedError extends FetchPdfError {
+  constructor(
+    readonly host: string,
+    readonly why: "refused" | "silent",
+  ) {
+    super(blockedSentence(host.replace(/^www\./, ""), why));
+  }
+}
+
+/** "whirlpool.com won't let apps download its manuals.", or the brand's name in place of the host. */
+export function blockedSentence(site: string, why: "refused" | "silent"): string {
+  return why === "refused"
+    ? `${site} won't let apps download its manuals.`
+    : `${site} didn't answer. It may not let apps download its manuals.`;
+}
+
+const REFUSED = new Set([401, 403, 429]);
+
 export function checkPublicHttpsUrl(raw: string): URL {
   let url: URL;
   try {
@@ -42,23 +66,35 @@ export const CHECK_TIMEOUT_MS = 25_000;
 export const ATTACH_TIMEOUT_MS = 50_000;
 /** The website's two-step attach: the download has its own call, so it can wait longest. */
 export const ATTACH_DOWNLOAD_MS = 120_000;
+/**
+ * A site that hasn't started answering by now is turning us away, not slow:
+ * slow sites send headers quickly and then trickle the PDF. The search's check
+ * waits less, so it has time to look for a copy elsewhere.
+ */
+export const FIRST_BYTE_MS = 15_000;
+export const CHECK_FIRST_BYTE_MS = 10_000;
+
+/** What a browser asks for. The user agent stays honest. */
+const HEADERS = {
+  accept: "application/pdf,text/html;q=0.9,*/*;q=0.8",
+  "accept-language": "en-US,en;q=0.9",
+  "user-agent": "manuals-mcp/0.1 (+manual fetcher)",
+};
 
 export async function fetchPdf(
   raw: string,
   fetchImpl: typeof fetch = fetch,
   timeoutMs = CHECK_TIMEOUT_MS,
+  firstByteMs = FIRST_BYTE_MS,
 ): Promise<{ bytes: Uint8Array; finalUrl: string }> {
   const signal = AbortSignal.timeout(timeoutMs);
   let url = checkPublicHttpsUrl(raw);
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-    const res = await fetchImpl(url, {
-      redirect: "manual",
-      headers: {
-        accept: "application/pdf,*/*;q=0.5",
-        "user-agent": "manuals-mcp/0.1 (+manual fetcher)",
-      },
-      signal,
-    });
+    const res = await headersWithin(fetchImpl, url, signal, Math.min(firstByteMs, timeoutMs));
+    if (REFUSED.has(res.status)) {
+      await res.body?.cancel().catch(() => {});
+      throw new SiteBlockedError(url.hostname, "refused");
+    }
     if (res.status >= 300 && res.status < 400) {
       const next = res.headers.get("location");
       if (!next) throw new FetchPdfError("The link redirected nowhere.");
@@ -77,6 +113,36 @@ export async function fetchPdf(
     return { bytes, finalUrl: url.toString() };
   }
   throw new FetchPdfError("Too many redirects.");
+}
+
+/** One request whose headers must arrive within `ms`; the body may take longer. */
+async function headersWithin(
+  fetchImpl: typeof fetch,
+  url: URL,
+  signal: AbortSignal,
+  ms: number,
+): Promise<Response> {
+  const quiet = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const silent = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      // Rejected first, so the race ends with this and not with the aborted request.
+      reject(new SiteBlockedError(url.hostname, "silent"));
+      quiet.abort();
+    }, ms);
+  });
+  try {
+    return await Promise.race([
+      fetchImpl(url, {
+        redirect: "manual",
+        headers: HEADERS,
+        signal: AbortSignal.any([signal, quiet.signal]),
+      }),
+      silent,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function readCapped(res: Response, cap: number): Promise<Uint8Array> {

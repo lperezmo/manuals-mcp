@@ -7,6 +7,7 @@ const jobs = (await import(String(new URL("../public/jobs.js", import.meta.url))
     manual: Record<string, unknown> | null,
     job: { since: string; label: string },
     now?: number,
+    downloadError?: string | null,
   ) => { text: string } | null;
   withTimeout: <T>(work: Promise<T>, ms?: number) => Promise<T>;
 };
@@ -55,6 +56,16 @@ describe("when the reading pill goes away", () => {
       readVerdict({ status: "text_ready", status_detail: null, reading_since: null }, job(1), NOW)
         ?.text,
     ).toBe("Muse couldn't finish the Dishwasher manual. Open it and tap Read it again.");
+  });
+
+  test("a download the site refused ends the pill with the server's sentence", () => {
+    const why =
+      "Whirlpool's site won't let apps download its manuals. Tap Open, save the PDF on your phone, then add it with Upload a PDF.";
+    expect(readVerdict(null, job(5_000), NOW, why)?.text).toBe(why);
+    // A manual that did arrive speaks for itself.
+    expect(
+      readVerdict({ status: "distilled", reading_since: null }, job(5_000), NOW, why)?.text,
+    ).toBe("Muse finished reading the Dishwasher manual.");
   });
 
   test("a check that never answers is dropped", async () => {
