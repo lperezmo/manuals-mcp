@@ -10,7 +10,7 @@ import type { PageText } from "./pdf-text.js";
 
 /** Jev's "supported" probability below this flags the entry. Supported claims score modestly, made-up ones near 0. */
 export const SUPPORT_THRESHOLD = 0.2;
-const PAGE_CHARS = 12_000;
+export const PAGE_CHARS = 12_000;
 const PARALLEL = 6;
 
 const WORD_NUMBERS: Record<string, string> = {

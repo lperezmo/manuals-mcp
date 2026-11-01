@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Db, TaskRow } from "../db.js";
 import type { Env } from "../env.js";
 import { answerFrom, loadSnapshot, quickAnswer } from "../fastlane.js";
+import { findLine, LINE_PAGES, type LineFinding } from "../finder/find-line.js";
 import { describeInterval, relativeDay } from "../lib/schedule.js";
 import { latestReceipts, warrantyStatus } from "../receipt.js";
 import { findItem, guarded, itemLabel, reply, session } from "./context.js";
@@ -22,6 +23,7 @@ export function register(server: McpServer, env: Env) {
         "To check a fact against its source, pass item and page to get that page's full text; if the fact is wrong, fix it with revise_fact.",
         "Quote the page in your answer. Mention when a fact's status is needs_review.",
         "Pass the person's whole question as question too: when one saved fact or task answers it outright, it comes back first as best_match (a quick check, no reading).",
+        "When the search finds pages, answer_line is the exact line that answers the question, with its page: quote it. covered: false means the pages searched don't answer it: say the manual doesn't seem to cover it rather than guessing.",
       ].join(" "),
       inputSchema: z.object({
         query: z.string().min(1).max(200).optional(),
@@ -90,12 +92,32 @@ export function register(server: McpServer, env: Env) {
           ]);
           if (search.error) throw new Error(`Search failed: ${search.error.message}`);
           if (exact.data?.length) out.exact_facts = exact.data;
-          const hits = (search.data ?? []) as {
-            item_name: string;
-            page_number: number;
-            snippet: string;
-          }[];
-          if (hits.length) {
+          const hits = (search.data ?? []) as Hit[];
+          // Jev reads the top pages for the line that answers, or finds none does.
+          const finding = hits.length ? await lineFor(env, db, question ?? term, hits) : null;
+          const line = finding?.line;
+          if (finding?.verdict === "found" && line) {
+            out.answer_line = {
+              item: line.item,
+              page: line.page,
+              line: line.line,
+              text: line.text,
+              confidence: finding.confidence,
+            };
+          }
+          // Only for the person's own question (a bare keyword is too thin to rule a
+          // manual out), when Jev read every page the search found, and no saved
+          // fact matched either. Otherwise the passages go out as before.
+          const uncovered =
+            finding?.verdict === "absent" &&
+            !!question &&
+            hits.length <= LINE_PAGES &&
+            !out.best_match &&
+            !out.exact_facts;
+          if (uncovered) {
+            out.covered = false;
+            out.searched = hits.map((h) => ({ item: h.item_name, page: h.page_number }));
+          } else if (hits.length) {
             out.passages = hits.map((h) => ({
               item: h.item_name,
               page: h.page_number,
@@ -161,9 +183,54 @@ export function register(server: McpServer, env: Env) {
                 : `${target ? itemLabel(target) : "That item"} has no manual yet. Attach one with add_item (attach_to, pdf_url).`,
           );
         }
-        return reply("Here's what the manuals say. Cite the page numbers.", out);
+        return reply(
+          out.answer_line
+            ? "Here's the line in the manual that answers it. Quote it with its page."
+            : out.covered === false
+              ? "The manual doesn't seem to cover this. Say so plainly instead of stretching related pages into an answer."
+              : "Here's what the manuals say. Cite the page numbers.",
+          out,
+        );
       }),
   );
+}
+
+interface Hit {
+  manual_id: string;
+  item_name: string;
+  page_number: number;
+  snippet: string;
+}
+
+/**
+ * Reads the top search hits' pages in full and asks Jev for the line that
+ * answers `question`. Null with Jev unset, or on any error: the passages go
+ * out as before.
+ */
+async function lineFor(
+  env: Env,
+  db: Db,
+  question: string,
+  hits: Hit[],
+): Promise<LineFinding | null> {
+  if (!env.router) return null;
+  try {
+    const top = hits.slice(0, LINE_PAGES);
+    const { data, error } = await db
+      .from("manual_pages")
+      .select("manual_id, page_number, content")
+      .in("manual_id", [...new Set(top.map((h) => h.manual_id))])
+      .in("page_number", [...new Set(top.map((h) => h.page_number))]);
+    if (error) return null;
+    const rows = (data ?? []) as { manual_id: string; page_number: number; content: string }[];
+    const pages = top.flatMap((h) => {
+      const row = rows.find((r) => r.manual_id === h.manual_id && r.page_number === h.page_number);
+      return row ? [{ item: h.item_name, page: h.page_number, text: row.content }] : [];
+    });
+    return pages.length ? await findLine(env, question, pages) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
