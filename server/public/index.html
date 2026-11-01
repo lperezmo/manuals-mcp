@@ -600,9 +600,13 @@
           b.addEventListener("click", async () => {
             b.disabled = true;
             const days = Number(b.dataset.days) || 7;
+            // The server compares `until` with its own UTC date, so count from
+            // UTC here too: from a local date, a one-day snooze in a US evening
+            // (already tomorrow in UTC) would end the moment it was saved.
+            const utcToday = new Date().toISOString().slice(0, 10);
             const { error } = await (await db())
               .from("pulse_snoozes")
-              .upsert({ event_key: b.dataset.pulseLater, until: addDays(today(), days) });
+              .upsert({ event_key: b.dataset.pulseLater, until: addDays(utcToday, days) });
             if (error) {
               b.disabled = false;
               return toast(error.message);
