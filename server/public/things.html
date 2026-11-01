@@ -437,8 +437,9 @@
             b.disabled = true;
             b.textContent = "Reading, up to a minute…";
             try {
-              const out = await api("/api/ingest", { manual_id: b.dataset.reread });
-              toast(out.distilled ? `Read it: ${out.distilled.tasks} tasks, ${out.distilled.facts} facts.` : out.note || "Saved.");
+              await readManual(b.dataset.reread, (text) => {
+                b.textContent = text;
+              }, true);
             } catch (err) {
               toast(err.message);
             }
@@ -767,8 +768,9 @@
               try {
                 const { manual_id } = await api("/api/attach", { item_id: item.id, url: b.dataset.use, official: b.dataset.official === "true" });
                 status.textContent = "Got it. Muse is reading the manual now, about a minute.";
-                const out = await api("/api/ingest", { manual_id });
-                toast(out.distilled ? `Read it: ${out.distilled.tasks} tasks, ${out.distilled.facts} facts.` : out.note || "Saved.");
+                await readManual(manual_id, (text) => {
+                  status.textContent = text;
+                });
                 after();
               } catch (err) {
                 status.style.color = "var(--coral)";
@@ -837,6 +839,38 @@
         return `<p class="small muted">${esc(manual.title || "Manual")}${manual.page_count ? `, ${manual.page_count} pages` : ""}${detail ? `. ${esc(detail)}` : ""}${button}</p>`;
       }
 
+      /**
+       * Asks Muse to read a manual. If the connection drops (the phone switched apps) or a
+       * read is already running, the server keeps going, so this checks back until it's done.
+       */
+      async function readManual(manualId, say, reread = false) {
+        let out;
+        try {
+          out = await api("/api/ingest", reread ? { manual_id: manualId, reread: true } : { manual_id: manualId });
+        } catch (err) {
+          if (!err.dropped && !err.busy) throw err;
+          // A refused re-read right after a read has nothing to wait for.
+          if (err.busy && reread && /just read/.test(err.message)) throw err;
+          say("Still reading. You can leave this page; it keeps going.");
+          out = await waitForRead(manualId);
+        }
+        toast(out.distilled ? `Read it: ${out.distilled.tasks} tasks, ${out.distilled.facts} facts.` : out.note || "Saved.");
+      }
+
+      /** Checks the manual every few seconds until no read is running, for up to six minutes. */
+      async function waitForRead(manualId) {
+        const supa = await db();
+        const until = Date.now() + 6 * 60_000;
+        while (Date.now() < until) {
+          await new Promise((r) => setTimeout(r, 5000));
+          const { data: m } = await supa.from("manuals").select("status, status_detail, reading_since").eq("id", manualId).maybeSingle();
+          if (m && !m.reading_since && m.status !== "pending") {
+            return { note: m.status === "distilled" ? "Muse finished reading it." : m.status_detail || "Saved." };
+          }
+        }
+        return { note: "Still working on it. Check back in a minute." };
+      }
+
       async function uploadManual(item, file, say) {
         const supa = await db();
         const { data: hid } = await supa.rpc("ensure_household");
@@ -851,8 +885,7 @@
         if (up.error) throw new Error(up.error.message);
         await supa.from("manuals").update({ storage_path: path }).eq("id", manual.id);
         say("Muse is reading the manual. This takes up to a minute.");
-        const out = await api("/api/ingest", { manual_id: manual.id });
-        toast(out.distilled ? `Read it: ${out.distilled.tasks} tasks, ${out.distilled.facts} facts.` : out.note || "Saved.");
+        await readManual(manual.id, say);
       }
 
       /** Shrinks a photo to at most 1280 px so it stays small to send. */
