@@ -66,7 +66,7 @@ import {
   toolsFor,
 } from "./router.js";
 import { BUDGET_USED, logRun, modelRunsTodayAll, runsToday } from "./runs.js";
-import { MAX_IMAGE_BYTES, readLabel } from "./snap.js";
+import { MAX_IMAGE_BYTES, modelGuess, radioSticker, readLabel } from "./snap.js";
 import { ITEM_COLUMNS, itemLabel } from "./tools/context.js";
 import { groupTasks } from "./upkeep.js";
 
@@ -704,6 +704,16 @@ export function snapHandler(
     }
     try {
       const label = await readLabel(env, photo, fetchImpl);
+      if (!label.model) {
+        // No line says "Model": offer the likeliest tagged code for the person to confirm.
+        const guess = modelGuess(label.codes);
+        if (guess) Object.assign(label, { model_guess: guess });
+        // A Wi-Fi module's sticker (FCC or IC ID) doesn't say what the thing is,
+        // so a category read off it is a guess; the wizard asks instead.
+        if (radioSticker(label.codes)) {
+          Object.assign(label, { category: null, kind: null, nickname: null, radio: true });
+        }
+      }
       // Jev's second look at what Muse read: a doubtful model number sends the
       // wizard to its "Almost" step instead of finding the wrong manual. Asked
       // even when found is false, since the wizard still uses a brand or model.
@@ -715,7 +725,7 @@ export function snapHandler(
         ok: true,
         model,
         ms: Date.now() - started,
-        ...(reread ? { raw_output: JSON.stringify({ ...label, check: reread }) } : {}),
+        raw_output: JSON.stringify(reread ? { ...label, check: reread } : label),
       });
       return Response.json(
         doubtful.length ? { ...label, unsure: true, doubtful, ...(boxes ? { boxes } : {}) } : label,

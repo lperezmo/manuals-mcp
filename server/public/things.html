@@ -1460,9 +1460,11 @@
           drawReceipt();
           for (const b of main.querySelectorAll("[data-what]")) {
             b.addEventListener("click", () => {
+              // The person's pick beats Muse's guess, and renames a thing still called by that guess.
               thing.category = b.dataset.what;
               thing.kind = KIND_OF[b.dataset.what] ?? "appliance";
-              if (!thing.nickname) thing.nickname = ICONS[b.dataset.what][0];
+              thing.picked = true;
+              if (!thing.nickname || thing.nickname === thing.autoName) thing.nickname = thing.autoName = ICONS[b.dataset.what][0];
               redraw();
             });
           }
@@ -1557,13 +1559,48 @@
             });
             return;
           }
+          // Where to look, only when we know what it is: the person said, or Muse read a model off its plate.
+          // A category guessed from a sticker with no model (a Wi-Fi label, say) is often wrong.
+          const sure = thing.category && (thing.picked || thing.model);
+          const spot = sure
+            ? `On a ${esc(ICONS[iconKey({ category: thing.category })][0].toLowerCase())} the model label is usually ${esc(where())}.`
+            : "";
+          const wifi = thing.radio ? "This looks like the Wi-Fi sticker, so the model label may be somewhere else. " : "";
+          // No line said "Model", but a code like "MO: R0698201" might be it: ask.
+          if (!thing.model && thing.guess) {
+            step(`<div class="stack">
+              ${image ? `<img src="${image}" alt="Your label photo" class="wizard-photo">` : ""}
+              <h2>Is this the model number?</h2>
+              <p>${thing.brand ? `I read <strong>${esc(thing.brand)}</strong>. ` : ""}No line says "Model", but this code might be it. Fix it if it's off.</p>
+              <form class="row" id="guess-form">
+                <input id="guess-model" value="${esc(thing.guess)}" aria-label="Model number" autocomplete="off" autocapitalize="characters" spellcheck="false" style="flex:1;min-width:10ch;font-family:ui-monospace,monospace">
+                <button type="submit">Yes, that's it</button>
+              </form>
+              <p class="muted">${wifi}${spot}</p>
+              ${sure ? "" : picker("What is it?")}
+              <div class="row">${photoButton("Take a photo of the model label", true)}<button type="button" class="quiet" data-continue>Continue without it</button></div>
+              <p class="small muted" data-add-msg role="status"></p>
+            </div>`);
+            $("#guess-model").addEventListener("input", (e) => {
+              thing.guess = e.target.value;
+            });
+            $("#guess-form").addEventListener("submit", (e) => {
+              e.preventDefault();
+              const model = $("#guess-model").value.trim();
+              if (!model) return $("#guess-model").focus();
+              thing.model = model;
+              thing.guess = "";
+              confirm();
+            });
+            return;
+          }
           const got = [thing.brand && `<strong>${esc(thing.brand)}</strong>`, thing.model && `model <strong>${esc(thing.model)}</strong>`].filter(Boolean).join(", ");
           const missing = !thing.model ? "the model number" : thing.doubtful?.includes("model") ? "the model number for sure" : "all of it clearly";
           step(`<div class="stack">
             ${image ? `<img src="${image}" alt="Your label photo" class="wizard-photo">` : ""}
             <h2>Almost</h2>
-            <p>I read ${got || "part of it"}, but not ${missing}. ${thing.category ? `On a ${esc(ICONS[iconKey({ category: thing.category })][0].toLowerCase())} the model label is usually ${esc(where())}.` : ""} A close photo of just that sticker works best.</p>
-            ${thing.category ? "" : picker("What is it?")}
+            <p>I read ${got || "part of it"}, but not ${missing}. ${wifi}${spot} A close photo of just that sticker works best.</p>
+            ${sure ? "" : picker("What is it?")}
             <div class="row">${photoButton("Take a closer photo")}<button type="button" class="quiet" data-type>Type the model</button><button type="button" class="quiet" data-continue>Continue without it</button></div>
             <p class="small muted" data-add-msg role="status"></p>
           </div>`);
@@ -1613,20 +1650,25 @@
         async function readImage(getImage, force = false) {
           // A closer photo after "Almost" adds to what we read; any other photo starts over.
           if (redraw !== partial) {
-            Object.assign(thing, { nickname: "", brand: "", model: "", serial: "", category: null, kind: "appliance", doubtful: [], crops: {} });
+            Object.assign(thing, { nickname: "", autoName: "", brand: "", model: "", serial: "", category: null, kind: "appliance", picked: false, guess: "", radio: false, doubtful: [], crops: {} });
           }
           try {
             image = await getImage();
             reading();
             const label = await api("/api/snap", force ? { image, force: true } : { image });
             if (label.retake) return retake(label.retake);
-            if (label.category) thing.category = label.category;
-            if (label.kind) thing.kind = label.kind;
+            // What the person picked stays; Muse's read only fills in what they didn't say.
+            if (!thing.picked) {
+              if (label.category) thing.category = label.category;
+              if (label.kind) thing.kind = label.kind;
+            }
             if (!label.found && !label.brand && !label.model) return notFound();
-            thing.nickname = label.nickname || thing.nickname;
+            if (label.nickname && !thing.picked) thing.nickname = thing.autoName = label.nickname;
             thing.brand = label.brand || thing.brand;
             thing.model = label.model || thing.model;
             thing.serial = label.serial || thing.serial;
+            if (label.model_guess) thing.guess = label.model_guess;
+            thing.radio = Boolean(label.radio) && !thing.model;
             // A closer photo that didn't read a value again keeps the doubt about it.
             const reread = ["brand", "model", "serial"].filter((k) => label[k]);
             thing.doubtful = [...(thing.doubtful || []).filter((f) => !reread.includes(f)), ...(label.doubtful || [])];
