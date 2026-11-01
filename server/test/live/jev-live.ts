@@ -11,7 +11,7 @@
 import { readFileSync } from "node:fs";
 import { createCanvas } from "@napi-rs/canvas";
 import { readEnv } from "../../src/env.js";
-import { checkPhoto, checkRead, DOUBT_BELOW } from "../../src/photo-check.js";
+import { BOX_AT, checkPhoto, checkRead, DOUBT_BELOW, PRESENT_AT } from "../../src/photo-check.js";
 
 const env = readEnv({
   ...process.env,
@@ -135,6 +135,38 @@ pass(
   wrongModel ? `${round(wrongModel.scores)} doubtful=[${wrongModel.doubtful}]` : "returned null",
 );
 
+// Where the doubtful model is on the photo. Box is "dreamer-ready" with no
+// recommended bar, so the boxes are printed to tune PRESENT_AT and BOX_AT, and
+// only the raw call itself has to pass (the app fails open, so a refused Box
+// call would otherwise just mean no crop, silently).
+const boxCall = await fetch(`${router.baseUrl}/v1/systemone`, {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    authorization: `Bearer ${router.apiKey}`,
+    "TypeSafe-Danger-Zone-Images": "true",
+  },
+  body: JSON.stringify({
+    model: router.model,
+    state: { photo: "box-probe" },
+    assets: { "box-probe": { type: "image", format: "jpg", data_base64: label.base64 } },
+    questions: {
+      box_model: { type: "box", instructions: "the model number printed in `photo`" },
+      present_model: { type: "noul", instructions: "Does `photo` clearly show the model number?" },
+    },
+  }),
+  signal: AbortSignal.timeout(15_000),
+});
+const boxText = await boxCall.text();
+pass(
+  "raw Box call with the label photo",
+  boxCall.status === 200 && boxText.includes('"box"'),
+  `HTTP ${boxCall.status}: ${boxText.slice(0, 300)}`,
+);
+console.log(
+  `INFO  doubtful model located=${JSON.stringify(wrongModel?.located ?? null)} boxes=${JSON.stringify(wrongModel?.boxes ?? null)} (bars present ${PRESENT_AT}, box ${BOX_AT})`,
+);
+
 const rightReceipt = await checkRead(
   env,
   receipt,
@@ -160,6 +192,9 @@ pass(
   wrongReceipt
     ? `${round(wrongReceipt.scores)} doubtful=[${wrongReceipt.doubtful}]`
     : "returned null",
+);
+console.log(
+  `INFO  doubtful receipt located=${JSON.stringify(wrongReceipt?.located ?? null)} boxes=${JSON.stringify(wrongReceipt?.boxes ?? null)}`,
 );
 
 console.log(`\nDoubt bar ${DOUBT_BELOW}. ${failed ? `${failed} failed.` : "All passed."}`);
