@@ -342,6 +342,9 @@ export function chatHandler(
     // photo came with no words.
     const photoTurn = image !== undefined && via === undefined && last?.role === "user";
     let shown: DisplayRead | null = null;
+    // Jev's yes/no look at the photo (below) starts now, beside the display
+    // read, so a photo turn that goes on to Muse waits for one image call, not two.
+    const looking = image ? lookAtPhoto(env, image, question, fetchImpl) : null;
     if ((routable || photoTurn) && env.router && fastAllowed(`chat:${userId}`)) {
       const watched = (async (...args: Parameters<typeof fetch>) => {
         try {
@@ -464,7 +467,7 @@ export function chatHandler(
     // something looks reaches Muse as text, so Muse skips the image read.
     // Skipped when Jev just failed to answer the fast lane.
     let turn = messages;
-    const look = image && !jevDown ? await lookAtPhoto(env, image, question, fetchImpl) : null;
+    const look = image && !jevDown ? await looking : null;
     if (image && look?.finding) {
       turn = [...messages.slice(0, -1), { role: "user", content: `${question}\n${look.finding}` }];
       image = undefined;
