@@ -1971,3 +1971,42 @@ button.danger {
 .review-fold summary::-webkit-details-marker {
   display: none;
 }
+
+/* Work running in the background: a small pill above the bottom nav */
+.jobs-pill {
+  position: fixed;
+  left: 16px;
+  bottom: 20px;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 32px);
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 14px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.18);
+}
+body:has(.nav) .jobs-pill {
+  bottom: calc(84px + env(safe-area-inset-bottom));
+}
+.jobs-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: jobs-pulse 1.4s ease-in-out infinite;
+}
+@keyframes jobs-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jobs-dot {
+    animation: none;
+  }
+}

@@ -25,7 +25,7 @@
     </main>
 
     <script type="module">
-      import { $, ago, api, boot, daysBetween, db, esc, howOften, ICONS, iconKey, iconSvg, itemIcon, openChat, relDay, shareLink, shrink, TINTS, takePendingPhoto, tintKey, toast, today, tool } from "/app.js";
+      import { $, ago, api, boot, daysBetween, db, esc, forgetJob, howOften, ICONS, iconKey, iconSvg, itemIcon, openChat, relDay, shareLink, shrink, TINTS, takePendingPhoto, tintKey, toast, today, tool, watchJob } from "/app.js";
 
       const main = $("#main");
       const params = new URLSearchParams(location.search);
@@ -284,7 +284,14 @@
         });
       }
 
+      // The open thing's page redraws when a read in the background finishes.
+      let onJobDone = null;
+      window.addEventListener("manuals:job-done", (e) => onJobDone?.(e.detail));
+
       async function detail(id) {
+        onJobDone = (job) => {
+          if (job.item === id && job.kind === "read") detail(id);
+        };
         const supa = await db();
         const { data: item, error } = await supa
           .from("items")
@@ -549,9 +556,10 @@
             b.disabled = true;
             b.textContent = "Reading, up to a minute…";
             try {
-              await readManual(b.dataset.reread, (text) => {
+              const out = await readManual(b.dataset.reread, (text) => {
                 b.textContent = text;
-              }, true);
+              }, true, item);
+              if (out?.background) return;
             } catch (err) {
               toast(err.message);
             }
@@ -834,6 +842,27 @@
 
       const FOUND_KEY = (id) => `manuals-found-${id}`;
 
+      /** The thing's search from the last half hour, from the model log: a search finished after the page was left. */
+      async function recentSearch(itemId) {
+        const supa = await db();
+        const { data: run } = await supa
+          .from("model_runs")
+          .select("raw_output")
+          .eq("kind", "search")
+          .eq("item_id", itemId)
+          .eq("ok", true)
+          .gte("created_at", new Date(Date.now() - 30 * 60_000).toISOString())
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        try {
+          const saved = JSON.parse(run?.raw_output ?? "null");
+          return saved?.candidates?.length ? { query: saved.query, candidates: saved.candidates } : null;
+        } catch {
+          return null;
+        }
+      }
+
       function candidateCard(c) {
         const tags = [
           c.best ? '<span class="chip teal strong">Best match</span>' : "",
@@ -869,15 +898,21 @@
           if (own) own.open = true;
         };
         if (button) button.disabled = true;
-        found.innerHTML = '<p class="muted small" role="status">Searching the web for the manual and opening the best PDFs. About 10 seconds…</p>';
+        found.innerHTML = '<p class="muted small" role="status">Searching the web for the manual and opening the best PDFs. About 10 seconds; you can leave this page and it keeps going.</p>';
         try {
           // One search per thing per visit; going back and forth reuses it.
           let out;
           try {
             out = fresh ? null : JSON.parse(sessionStorage.getItem(FOUND_KEY(item.id)) || "null");
           } catch {}
+          if (!out && !fresh) out = await recentSearch(item.id);
           if (!out) {
-            out = await api("/api/find-manual", { item_id: item.id });
+            watchJob({ kind: "search", item: item.id, label: item.nickname });
+            try {
+              out = await api("/api/find-manual", { item_id: item.id });
+            } finally {
+              forgetJob("search", item.id);
+            }
             // Only a search that found something is remembered; an empty one is tried again next visit.
             try {
               if (out.candidates.length) sessionStorage.setItem(FOUND_KEY(item.id), JSON.stringify(out));
@@ -918,13 +953,18 @@
               status.style.color = "";
               status.textContent = "Downloading the manual from the maker's site. Some are slow; this can take a minute or two.";
               try {
-                const { manual_id } = await api("/api/attach", { item_id: item.id, url: b.dataset.use, official: b.dataset.official === "true" });
-                status.textContent = "Got it. Muse is reading the manual now, about a minute.";
-                await readManual(manual_id, (text) => {
-                  status.textContent = text;
-                });
+                // The read starts on the server, so leaving the page doesn't stop it.
+                watchJob({ kind: "read", item: item.id, label: item.nickname });
+                const out = await api("/api/attach", { item_id: item.id, url: b.dataset.use, official: b.dataset.official === "true", read: true });
+                if (out.reading) {
+                  status.textContent = READING_IN_BACKGROUND;
+                  return;
+                }
+                forgetJob("read", item.id);
+                toast(out.distilled ? `Read it: ${out.distilled.tasks} tasks, ${out.distilled.facts} facts.` : out.note || "Saved.");
                 after();
               } catch (err) {
+                forgetJob("read", item.id);
                 status.style.color = "var(--coral)";
                 status.textContent = err.message;
                 for (const other of uses) other.disabled = false;
@@ -965,10 +1005,10 @@
           if (!file) return;
           progress.textContent = "Uploading…";
           try {
-            await uploadManual(item, file, (t) => {
+            const out = await uploadManual(item, file, (t) => {
               progress.textContent = t;
             });
-            after();
+            if (!out?.background) after();
           } catch (err) {
             progress.textContent = err.message;
           }
@@ -995,7 +1035,11 @@
        * Asks Muse to read a manual. If the connection drops (the phone switched apps) or a
        * read is already running, the server keeps going, so this checks back until it's done.
        */
-      async function readManual(manualId, say, reread = false) {
+      const READING_IN_BACKGROUND =
+        "Muse is reading it in the background, about a minute. You can leave this page or add another thing; you'll get a heads-up when it's done.";
+
+      /** Starts Muse's read. A long one carries on in the background: returns { background: true } and the pill takes over. */
+      async function readManual(manualId, say, reread = false, item) {
         let out;
         try {
           out = await api("/api/ingest", reread ? { manual_id: manualId, reread: true } : { manual_id: manualId });
@@ -1003,24 +1047,15 @@
           if (!err.dropped && !err.busy) throw err;
           // A refused re-read right after a read has nothing to wait for.
           if (err.busy && reread && /just read/.test(err.message)) throw err;
-          say("Still reading. You can leave this page; it keeps going.");
-          out = await waitForRead(manualId);
+          out = { reading: true };
+        }
+        if (out.reading) {
+          if (item) watchJob({ kind: "read", item: item.id, label: item.nickname });
+          say(READING_IN_BACKGROUND);
+          return { background: true };
         }
         toast(out.distilled ? `Read it: ${out.distilled.tasks} tasks, ${out.distilled.facts} facts.` : out.note || "Saved.");
-      }
-
-      /** Checks the manual every few seconds until no read is running, for up to six minutes. */
-      async function waitForRead(manualId) {
-        const supa = await db();
-        const until = Date.now() + 6 * 60_000;
-        while (Date.now() < until) {
-          await new Promise((r) => setTimeout(r, 5000));
-          const { data: m } = await supa.from("manuals").select("status, status_detail, reading_since").eq("id", manualId).maybeSingle();
-          if (m && !m.reading_since && m.status !== "pending") {
-            return { note: m.status === "distilled" ? "Muse finished reading it." : m.status_detail || "Saved." };
-          }
-        }
-        return { note: "Still working on it. Check back in a minute." };
+        return out;
       }
 
       async function uploadManual(item, file, say) {
@@ -1037,7 +1072,7 @@
         if (up.error) throw new Error(up.error.message);
         await supa.from("manuals").update({ storage_path: path }).eq("id", manual.id);
         say("Muse is reading the manual. This takes up to a minute.");
-        await readManual(manual.id, say);
+        return readManual(manual.id, say, false, item);
       }
 
       /** Shrinks a photo to at most 1280 px so it stays small to send. */
