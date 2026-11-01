@@ -83,7 +83,7 @@ export async function api(path, body) {
   return json;
 }
 
-/** Runs one of the 8 tools, exactly as an AI would. */
+/** Runs one of the 9 tools, exactly as an AI would. */
 export const tool = (name, args = {}) => api("/api/tool", { name, args });
 
 const NAV = [
@@ -698,12 +698,12 @@ export function reportIssue({ runId, debug, about } = {}) {
   $("#report-text", dialog).focus();
 }
 
-/** A photo as a JPEG data URL, at most 1280 px on its long side. */
-export function shrink(file) {
+/** A photo as a JPEG data URL, at most 1280 px on its long side (more for long receipts). */
+export function shrink(file, longSide = 1280) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
-      const scale = Math.min(1, 1280 / Math.max(img.width, img.height));
+      const scale = Math.min(1, longSide / Math.max(img.width, img.height));
       const c = document.createElement("canvas");
       c.width = Math.round(img.width * scale);
       c.height = Math.round(img.height * scale);
