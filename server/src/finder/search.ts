@@ -350,7 +350,7 @@ export async function findManual(
   if (ranked.length < check && env.crawl) {
     const found = await pdfLinksFromPages(
       env.crawl,
-      pagesWorthOpening([...best.values()], item),
+      await choosePages(env, item, [...best.values()], fetchImpl),
       fetchImpl,
     );
     if (found.length) {
@@ -409,6 +409,79 @@ export function pagesWorthOpening(
 }
 
 /**
+ * Which pages to open with the crawler. Jev reads each page's title and link
+ * and says whether it likely links this thing's manual PDF (a maker's product
+ * or support page does; a forum or parts shop rarely does). Without Jev, or
+ * if it's away, the maker's pages and model-named ones go.
+ */
+export async function choosePages(
+  env: Env,
+  item: { brand?: string | null; model?: string | null; nickname?: string | null },
+  results: SearchResult[],
+  fetchImpl: typeof fetch = fetch,
+): Promise<SearchResult[]> {
+  const fallback = pagesWorthOpening(results, item);
+  const router = env.router;
+  const pool = results
+    .filter((r) => {
+      try {
+        const url = new URL(r.url);
+        const host = url.hostname.toLowerCase();
+        return (
+          url.protocol === "https:" &&
+          !SKIP_HOSTS.test(host) &&
+          !LISTING_HOSTS.test(host) &&
+          !isPdfUrl(url)
+        );
+      } catch {
+        return false;
+      }
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8);
+  if (!router || pool.length === 0) return fallback;
+  const thing = [item.brand, item.nickname, item.model].filter(Boolean).join(" ");
+  try {
+    const res = await fetchImpl(`${router.baseUrl}/v1/systemone`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${router.apiKey}` },
+      body: JSON.stringify({
+        model: router.model,
+        state: {
+          thing,
+          pages: Object.fromEntries(pool.map((r, i) => [`p${i}`, { title: r.title, url: r.url }])),
+        },
+        questions: Object.fromEntries(
+          pool.map((_, i) => [
+            `p${i}`,
+            {
+              type: "noul",
+              instructions: `Is page p${i} likely to link the owner's manual PDF for the ${thing}?`,
+              criteria: {
+                true: "The maker's product, support or downloads page for this model, or a retailer's page for it with a manuals section.",
+                false:
+                  "A forum, review, news, parts or general shopping page, or one for another product.",
+              },
+            },
+          ]),
+        ),
+      }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return fallback;
+    const body = (await res.json()) as { answers?: Record<string, { noul?: number }> };
+    return pool
+      .map((r, i) => ({ r, p: body.answers?.[`p${i}`]?.noul ?? 0 }))
+      .filter((x) => x.p >= PICK_FLOOR)
+      .sort((a, b) => b.p - a.p)
+      .slice(0, 2)
+      .map((x) => x.r);
+  } catch {
+    return fallback;
+  }
+}
+
+/**
  * Opens each page with Crawl4AI and keeps the PDF links on it, scored just
  * under the page itself. Slow or failing pages are skipped quietly.
  */
@@ -462,9 +535,11 @@ export const PICK_MARGIN = 0.15;
 
 /**
  * When two or more PDFs name the model, Jev reads the first pages of each and
- * says which one is written for this exact model (not a sibling size, not a
- * whole product line). The clear winner is marked best and moved first; a
- * close call, or Jev being away, leaves the order as it was.
+ * answers three questions: is it for this model, is it for this model alone
+ * rather than a series, and is it the full manual rather than a quick start.
+ * The clear winner on the first is marked best and moved first; a tie goes to
+ * the more specific, complete one, then to the one covering fewer models. A
+ * close call all the way down, or Jev being away, leaves the order as it was.
  */
 export async function pickBest(
   env: Env,
@@ -497,17 +572,42 @@ export async function pickBest(
           ),
         },
         questions: Object.fromEntries(
-          named.map((_, i) => [
-            `m${i}`,
-            {
-              type: "noul",
-              instructions: `Is manual m${i} the owner's manual for the ${thing} itself?`,
-              criteria: {
-                true: "It is written for this model: its own size and version, or a short list where this model is one of a few close variants.",
-                false:
-                  "It is for a different size or model, or a long catalog where this model is only mentioned.",
+          named.flatMap((_, i) => [
+            [
+              `m${i}`,
+              {
+                type: "noul",
+                instructions: `Is manual m${i} the owner's manual for the ${thing} itself?`,
+                criteria: {
+                  true: "It is written for this model: its own size and version, or a short list where this model is one of a few close variants.",
+                  false:
+                    "It is for a different size or model, or a long catalog where this model is only mentioned.",
+                },
               },
-            },
+            ],
+            [
+              `m${i}_specific`,
+              {
+                type: "noul",
+                instructions: `Is manual m${i} written for this one model rather than a whole series of sizes?`,
+                criteria: {
+                  true: "It covers this model alone or with one or two near-identical variants.",
+                  false: "It covers a series of several sizes or models with shared instructions.",
+                },
+              },
+            ],
+            [
+              `m${i}_full`,
+              {
+                type: "noul",
+                instructions: `Is manual m${i} the full owner's or user manual?`,
+                criteria: {
+                  true: "A complete owner's or user manual: safety, operation, care and troubleshooting.",
+                  false:
+                    "Only part of it: a quick start, spec sheet, parts list, installation-only sheet or warranty card.",
+                },
+              },
+            ],
           ]),
         ),
       }),
@@ -515,16 +615,23 @@ export async function pickBest(
     });
     if (!res.ok) return candidates;
     const body = (await res.json()) as { answers?: Record<string, { noul?: number }> };
+    const p = (key: string) => body.answers?.[key]?.noul ?? 0;
     const scored = named
-      .map((c, i) => ({ c, p: body.answers?.[`m${i}`]?.noul ?? 0 }))
+      .map((c, i) => ({ c, p: p(`m${i}`), extra: p(`m${i}_specific`) + p(`m${i}_full`) }))
       .sort((a, b) => b.p - a.p);
     let [top, next] = scored;
     if (!top || top.p < PICK_FLOOR) return candidates;
     if (next && top.p - next.p < PICK_MARGIN) {
-      // A tie between two right manuals: the one covering fewer models is the more specific.
+      // Two right manuals: the more specific, complete one wins, then the one covering fewer models.
+      if (next.p < PICK_FLOOR) return candidates;
       const covers = (c: Candidate) => c.models?.length ?? 1;
-      if (next.p < PICK_FLOOR || covers(top.c) === covers(next.c)) return candidates;
-      if (covers(next.c) < covers(top.c)) [top, next] = [next, top];
+      if (Math.abs(top.extra - next.extra) >= PICK_MARGIN) {
+        if (next.extra > top.extra) [top, next] = [next, top];
+      } else if (covers(top.c) !== covers(next.c)) {
+        if (covers(next.c) < covers(top.c)) [top, next] = [next, top];
+      } else {
+        return candidates;
+      }
     }
     const winner = { ...top.c, best: true };
     return [winner, ...candidates.filter((c) => c !== top.c)];

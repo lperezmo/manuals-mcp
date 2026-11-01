@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readEnv } from "../src/env.js";
 import {
+  choosePages,
   findManual,
   isBrandHost,
   modelMatch,
@@ -221,6 +222,61 @@ describe("narrowing the options", () => {
     const out = await pickBest(jevEnv, item, [wide, narrow], jev([0.9, 0.9]));
     expect(out[0]?.title).toBe("RT");
     expect(out[0]?.best).toBe(true);
+  });
+
+  test("a tie on the model goes to the more specific, complete manual", async () => {
+    const list = [cand("Series", "x"), cand("Own", "y")];
+    const answers = (async () =>
+      Response.json({
+        answers: {
+          m0: { noul: 0.9 },
+          m0_specific: { noul: 0.2 },
+          m0_full: { noul: 0.9 },
+          m1: { noul: 0.9 },
+          m1_specific: { noul: 0.9 },
+          m1_full: { noul: 0.9 },
+        },
+      })) as unknown as typeof fetch;
+    const out = await pickBest(jevEnv, item, list, answers);
+    expect(out[0]?.title).toBe("Own");
+    expect(out[0]?.best).toBe(true);
+  });
+
+  test("Jev chooses which pages to crawl, at most two it believes in", async () => {
+    let asked = 0;
+    const answers = (async (_u: string, init: RequestInit) => {
+      asked = Object.keys(JSON.parse(String(init.body)).questions).length;
+      return Response.json({
+        answers: { p0: { noul: 0.1 }, p1: { noul: 0.8 }, p2: { noul: 0.6 }, p3: { noul: 0.7 } },
+      });
+    }) as unknown as typeof fetch;
+    const pages = await choosePages(
+      jevEnv,
+      item,
+      [
+        { url: "https://forum.example.com/ac", title: "Forum", score: 0.9 },
+        { url: "https://www.toshiba-lifestyle.com/us/ac", title: "Toshiba AC", score: 0.8 },
+        { url: "https://store.example.com/ac", title: "Store", score: 0.7 },
+        { url: "https://www.toshiba-lifestyle.com/support", title: "Support", score: 0.6 },
+        { url: "https://manuals.plus/toshiba/ac", title: "Listing", score: 1 },
+        { url: "https://x.example.com/m.pdf", title: "PDF", score: 1 },
+      ],
+      answers,
+    );
+    expect(asked).toBe(4);
+    expect(pages.map((r) => r.title)).toEqual(["Toshiba AC", "Support"]);
+  });
+
+  test("without Jev, the maker's and model-named pages are crawled", async () => {
+    const noJev = readEnv({
+      SUPABASE_URL: "https://example-ref.supabase.co",
+      SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+    });
+    const pages = await choosePages(noJev, item, [
+      { url: "https://forum.example.com/ac", title: "Forum", score: 0.9 },
+      { url: "https://www.toshiba-lifestyle.com/us/ac", title: "Toshiba AC", score: 0.8 },
+    ]);
+    expect(pages.map((r) => r.title)).toEqual(["Toshiba AC"]);
   });
 
   test("a close call leaves the order alone", async () => {

@@ -2,12 +2,7 @@
 // non-PDF pages, then the full findManual with Jev's pick. Run from server/
 // with `bun scripts/probe-find.ts`; bun loads .env. Prints results only.
 import { readEnv } from "../src/env.js";
-import {
-  findManual,
-  pagesWorthOpening,
-  pdfLinksFromPages,
-  searchWeb,
-} from "../src/finder/search.js";
+import { choosePages, findManual, pdfLinksFromPages, searchWeb } from "../src/finder/search.js";
 
 const env = readEnv(process.env);
 
@@ -60,7 +55,7 @@ const query = "Toshiba RAC-PD0811CRU manual";
 const results = await searchWeb(env, query, traced);
 console.log(`\n${results.length} results for "${query}"`);
 
-const pages = pagesWorthOpening(results, item);
+const pages = await choosePages(env, item, results, traced);
 console.log(`\nPages worth opening: ${pages.map((p) => p.url).join(", ") || "none"}`);
 if (env.crawl && pages.length) {
   const started = Date.now();
