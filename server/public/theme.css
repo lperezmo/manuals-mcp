@@ -503,6 +503,17 @@ button:disabled {
   background: var(--slate-soft);
   color: var(--slate);
 }
+/* A real photo of the thing, in the same tile. */
+.icon-badge.photo {
+  background: var(--line);
+  overflow: hidden;
+}
+.icon-badge > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 
 /* Things grid */
 .filters {

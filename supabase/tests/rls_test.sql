@@ -151,6 +151,53 @@ begin
 end;
 $$;
 
+-- A thing's photo: A sets one, B can't see, add, or point at it.
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","role":"authenticated"}', false);
+do $$
+declare
+  hid uuid := public.current_household_id();
+  wid uuid;
+begin
+  select id into wid from public.items order by created_at limit 1;
+  insert into storage.objects (bucket_id, name) values ('item-photos', hid || '/' || wid || '-1.jpg');
+  update public.items set photo_path = hid || '/' || wid || '-1.jpg' where id = wid;
+  assert (select count(*) from public.items where photo_path is not null) = 1, 'user A should see their photo path';
+  assert (select count(*) from storage.objects where bucket_id = 'item-photos') = 1, 'user A should see their photo';
+  begin
+    update public.items set photo_path = gen_random_uuid() || '/x.jpg' where id = wid;
+    raise exception 'a photo path outside the household was accepted';
+  exception when check_violation then
+    null;
+  end;
+end;
+$$;
+
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","role":"authenticated"}', false);
+do $$
+declare
+  n integer;
+  a_household uuid;
+begin
+  select count(*) into n from storage.objects where bucket_id = 'item-photos';
+  assert n = 0, 'user B can see A''s thing photos';
+
+  reset role;
+  select household_id into a_household from public.household_members
+    where user_id = '00000000-0000-0000-0000-00000000000a';
+  set role authenticated;
+
+  begin
+    insert into storage.objects (bucket_id, name) values ('item-photos', a_household || '/sneaky.jpg');
+    raise exception 'user B uploaded into A''s photo folder';
+  exception when insufficient_privilege then
+    null;
+  end;
+  delete from storage.objects where bucket_id = 'item-photos';
+  get diagnostics n = row_count;
+  assert n = 0, 'user B deleted A''s thing photo';
+end;
+$$;
+
 -- House memory: A's notes are A's household's only, and the same words save once.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","role":"authenticated"}', false);
 do $$
