@@ -361,6 +361,9 @@
           main.innerHTML = '<p class="card">That thing isn\'t in your household.</p>';
           return;
         }
+        // "Doesn't apply to mine" lines stay in the history but not on the page.
+        item.manual_facts = item.manual_facts.filter((f) => f.status !== "not_applicable");
+        item.seat_modes = item.seat_modes.filter((m) => m.status !== "not_applicable");
         const ids = [
           ...item.manual_facts.map((f) => f.id),
           ...item.tasks.map((t) => t.id),

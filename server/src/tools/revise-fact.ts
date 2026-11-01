@@ -86,6 +86,7 @@ export function register(server: McpServer, env: Env) {
         "Corrects or confirms one fact, upkeep task or car seat limit that was read from a manual.",
         'Use it when the user says something "doesn\'t sound right": first read the source page with ask_manual (item and page), compare, then pass the corrected fields in changes and a short reason that cites the page.',
         "Pass no changes to confirm it as checked.",
+        'Pass not_applicable true when the user says a line is for a part or feature their model does not have ("my washer has no lint filter"): it stops the reminder and drops it from review and from what ask_manual returns, and the history keeps it.',
         'Set source to "user" only when the user states the value themselves ("trust me, it\'s 2 hours"); otherwise "assistant".',
         "Sources rank user over assistant over the manual reader: an assistant can't change something the user set, so ask them instead. The old value is always kept in the history.",
       ].join(" "),
@@ -93,6 +94,10 @@ export function register(server: McpServer, env: Env) {
         id: z.uuid().describe("The fact, task or seat limit id from ask_manual or upcoming."),
         type: z.enum(["fact", "task", "seat_limit"]).describe("What the id points at."),
         changes: changesSchema.optional(),
+        not_applicable: z
+          .boolean()
+          .optional()
+          .describe("true: this doesn't apply to the user's model, so stop showing it."),
         reason: z.string().min(1).max(1000).describe('e.g. "Page 38 says warm water, no vinegar."'),
         source: z.enum(["assistant", "user"]).default("assistant"),
       }),
@@ -103,7 +108,7 @@ export function register(server: McpServer, env: Env) {
         openWorldHint: false,
       },
     },
-    async ({ id, type, changes, reason, source }, ctx) =>
+    async ({ id, type, changes, not_applicable, reason, source }, ctx) =>
       guarded(async () => {
         const { db, householdId } = await session(env, ctx);
         const { table, columns } = TABLES[type];
@@ -118,7 +123,8 @@ export function register(server: McpServer, env: Env) {
         const current = before as unknown as Record<string, unknown>;
 
         const update: Record<string, unknown> = changes ? columnsFor(type, changes) : {};
-        const changing = Object.keys(update).length > 0;
+        if (not_applicable && type === "task") update.active = false;
+        const changing = Object.keys(update).length > 0 || !!not_applicable;
         if (changing && current.source === "user" && source === "assistant") {
           return reply(
             "The user set this one themselves, so it isn't changed. Tell them what the manual says and ask; if they agree, call again with source user.",
@@ -127,7 +133,7 @@ export function register(server: McpServer, env: Env) {
         }
 
         update.source = changing ? source : current.source;
-        update.status = changing ? "revised" : "confirmed";
+        update.status = not_applicable ? "not_applicable" : changing ? "revised" : "confirmed";
 
         if (type === "task" && (update.interval_unit || update.interval_value)) {
           const unit = (update.interval_unit ?? current.interval_unit) as string;
@@ -166,9 +172,11 @@ export function register(server: McpServer, env: Env) {
         if (logError) throw new Error(`Saved, but couldn't log the change: ${logError.message}`);
 
         return reply(
-          changing
-            ? `Revised. The earlier version is kept in the history.`
-            : `Confirmed as checked.`,
+          not_applicable
+            ? "Marked as not applying to this one. It's kept in the history."
+            : changing
+              ? `Revised. The earlier version is kept in the history.`
+              : `Confirmed as checked.`,
           { before: current, after },
         );
       }),

@@ -86,6 +86,7 @@ export async function loadSnapshot(db: Db): Promise<Snapshot> {
     db
       .from("manual_facts")
       .select("id, item_id, kind, label, value, source_page, source, status")
+      .neq("status", "not_applicable")
       .limit(2_000),
     db
       .from("tasks")

@@ -112,7 +112,8 @@
             id: t.id,
             type: "task",
             item: one(t.items),
-            title: `${t.title}, ${howOften(t.interval_unit, t.interval_value)}`,
+            // "Check lint filters after every 2 to 3 loads" already says how often.
+            title: SAYS_WHEN.test(t.title) ? t.title : `${t.title}, ${howOften(t.interval_unit, t.interval_value)}`,
             read: t.details || t.title,
             page: t.source_page,
             manual: t.source_manual_id,
@@ -255,6 +256,7 @@
       }
 
 
+      const SAYS_WHEN = /(every|each|daily|weekly|monthly|yearly|annually|once a)/i;
       const REVIEW_KIND = { fact: "Fact", task: "Upkeep", seat_limit: "Car seat limit" };
       function reviewTile(r) {
         return `<button type="button" class="rv-tile" data-review-tile="${r.id}" aria-pressed="false">
@@ -282,6 +284,7 @@
             <button type="button" data-ask>Ask Muse to check it</button>
             <button type="button" class="quiet" data-right>It's right</button>
             <button type="button" class="quiet" data-own>Write my own</button>
+            <button type="button" class="quiet" data-na>Doesn't apply to mine</button>
           </div>
           <form class="field hidden" data-own-form>
             <label class="sr-only" for="own-${r.id}">Your version</label>
@@ -502,6 +505,23 @@
                 });
               }
               toast("Marked as checked.");
+              load();
+            } catch (err) {
+              toast(err.message);
+            }
+          });
+          $("[data-na]", card).addEventListener("click", async () => {
+            try {
+              for (const id of [r.id, ...r.twins]) {
+                await tool("revise_fact", {
+                  id,
+                  type: r.type,
+                  source: "user",
+                  not_applicable: true,
+                  reason: `Doesn't apply to this ${r.item?.nickname?.toLowerCase() ?? "one"}, said by you.`,
+                });
+              }
+              toast("Dropped. It's kept in the history.");
               load();
             } catch (err) {
               toast(err.message);

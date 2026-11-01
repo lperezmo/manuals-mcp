@@ -14,8 +14,9 @@ const KEYWORDS =
 
 export const DISTILL_INSTRUCTIONS = `You read product manuals for a household upkeep app.
 Return JSON with three arrays:
-- "tasks": recurring or one-time upkeep the owner should do. Each has "title" (short imperative), "details" (one or two sentences, in the manual's terms), "interval_unit" (days|weeks|months|cycles|once|as_needed), "interval_value" (integer; omit for once/as_needed), "source_page" (the page number shown before the text).
+- "tasks": recurring or one-time upkeep the owner should do. Each has "title" (short imperative, without the interval: the app shows it), "details" (one or two sentences, in the manual's terms), "interval_unit" (days|weeks|months|cycles|once|as_needed), "interval_value" (integer; omit for once/as_needed), "source_page" (the page number shown before the text).
   Use "cycles" for "every N washes/uses/loads". Only include intervals the manual states; do not invent any.
+  Manuals often cover several models. Skip upkeep and parts the manual says only some models have ("if your washer has a lint filter", "if equipped", "models with ...") unless the manual shows this model has it; when you can't tell, include it with "unsure": true.
 - "facts": things owners look up later. Each has "kind" (error_code|part|spec|safety|other), "label", "value", "source_page". One fact per error code (label is the code as displayed, e.g. "E4"), per replaceable part, per spec (capacity, detergent type, voltage), per safety rule specific to this product.
   Skip what nobody needs saved: common-sense warnings (supervise children, don't use it if damaged, read the manual), legal and regulatory text (FCC, Prop 65, warranty, disposal law), and plain labels from the product diagram. A part is worth a fact only if the owner may replace it, buy it or care for it. Fewer, useful facts beat many.
 - "seat_modes": only for car seats: one entry per mode (rear_facing, forward_facing, booster_high_back, booster_backless) with min/max weight and height exactly as printed, "weight_unit" (lb|kg), "height_unit" (in|cm), "min_age_months" if stated, "fit_note" for non-numeric limits, "source_page".

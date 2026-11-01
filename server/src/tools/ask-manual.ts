@@ -86,6 +86,7 @@ export function register(server: McpServer, env: Env) {
             .from("manual_facts")
             .select(FACT_COLUMNS)
             .ilike("label", literal)
+            .neq("status", "not_applicable")
             .limit(10);
           if (target) facts = facts.eq("item_id", target.id);
           const everyPage = () =>
@@ -150,7 +151,12 @@ export function register(server: McpServer, env: Env) {
 
         if (target) {
           const [facts, tasks, seats, receipts, kinds] = await Promise.all([
-            db.from("manual_facts").select(FACT_COLUMNS).eq("item_id", target.id).limit(100),
+            db
+              .from("manual_facts")
+              .select(FACT_COLUMNS)
+              .eq("item_id", target.id)
+              .neq("status", "not_applicable")
+              .limit(100),
             db
               .from("tasks")
               .select(
@@ -163,7 +169,8 @@ export function register(server: McpServer, env: Env) {
               .select(
                 "id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, fit_note, source_page, source, status",
               )
-              .eq("item_id", target.id),
+              .eq("item_id", target.id)
+              .neq("status", "not_applicable"),
             latestReceipts(db, [target.id]),
             db
               .from("manual_pages")
