@@ -37,6 +37,8 @@ export const THING_HINT = 0.6;
 /** Type-ahead shows lines at least this likely, when the answer looks saved. */
 export const SUGGEST_ROW = 0.15;
 export const SUGGEST_EXISTS = 0.4;
+/** Fast lane calls per user a minute (type-ahead, and chat turns), so a stuck key can't run up Jev calls. */
+export const FAST_PER_MINUTE = 60;
 
 export interface SnapshotItem {
   id: string;
@@ -45,6 +47,8 @@ export interface SnapshotItem {
   model: string | null;
   kind: string;
   category: string | null;
+  /** Has car seat limits saved (seat_modes), whatever it's called. */
+  car_seat?: boolean;
 }
 
 export interface SnapshotRow {
@@ -72,7 +76,7 @@ export interface Snapshot {
 
 /** Reads the household's things, facts and active tasks as the user (RLS applies). */
 export async function loadSnapshot(db: Db): Promise<Snapshot> {
-  const [items, facts, tasks] = await Promise.all([
+  const [items, facts, tasks, seats] = await Promise.all([
     db
       .from("items")
       .select("id, nickname, brand, model, kind, category")
@@ -90,11 +94,16 @@ export async function loadSnapshot(db: Db): Promise<Snapshot> {
       )
       .eq("active", true)
       .limit(2_000),
+    // A seat with limits saved is a car seat even when its name doesn't say so.
+    db.from("seat_modes").select("item_id").limit(2_000),
   ]);
-  for (const r of [items, facts, tasks]) {
+  for (const r of [items, facts, tasks, seats]) {
     if (r.error) throw new Error(r.error.message);
   }
-  const list = (items.data ?? []) as SnapshotItem[];
+  const seated = new Set(((seats.data ?? []) as { item_id: string }[]).map((s) => s.item_id));
+  const list = ((items.data ?? []) as SnapshotItem[]).map((i) =>
+    seated.has(i.id) ? { ...i, car_seat: true } : i,
+  );
   const live = new Set(list.map((i) => i.id));
   const rows: SnapshotRow[] = [];
   for (const f of (facts.data ?? []) as Record<string, unknown>[]) {
@@ -157,8 +166,28 @@ export function forgetSnapshot(userId: string): void {
   snapshots.delete(userId);
 }
 
-export function isCarSeat(item: Pick<SnapshotItem, "category" | "nickname">): boolean {
-  return /car.?seat|booster/i.test(`${item.category ?? ""} ${item.nickname}`);
+export function isCarSeat(
+  item: Pick<SnapshotItem, "category" | "nickname"> & { car_seat?: boolean },
+): boolean {
+  return (
+    item.car_seat === true || /car.?seat|booster/i.test(`${item.category ?? ""} ${item.nickname}`)
+  );
+}
+
+// Per-user call times for the last minute, by key ("suggest:<user>", "chat:<user>").
+const recentCalls = new Map<string, number[]>();
+
+/** True when `key` has made fewer than FAST_PER_MINUTE fast lane calls in the last minute; counts this one. */
+export function fastAllowed(key: string, now = Date.now()): boolean {
+  const recent = (recentCalls.get(key) ?? []).filter((t) => now - t < 60_000);
+  if (recent.length >= FAST_PER_MINUTE) {
+    recentCalls.set(key, recent);
+    return false;
+  }
+  recent.push(now);
+  recentCalls.set(key, recent);
+  if (recentCalls.size > 2_000) recentCalls.delete(recentCalls.keys().next().value as string);
+  return true;
 }
 
 function itemName(item: SnapshotItem): string {
@@ -373,8 +402,9 @@ export async function quickAnswer(
     const thingId = a.thing?.choice;
     const thingIndex = thingId?.startsWith("i") ? Number(thingId.slice(1)) - 1 : -1;
     const thingP = a.thing?.confidence ?? 0;
-    const thing =
-      thingIndex >= 0 && thingP >= THING_HINT ? (snapshot.items[thingIndex] ?? null) : null;
+    // Jev's top pick, however sure: a line on another thing is never answered.
+    const named = thingIndex >= 0 ? (snapshot.items[thingIndex] ?? null) : null;
+    const thing = named && thingP >= THING_HINT ? named : null;
     const scores = {
       row: top[0]?.p ?? 0,
       exists: a.exists?.noul ?? 0,
@@ -393,7 +423,7 @@ export async function quickAnswer(
       tokens_in: body.usage?.input_tokens ?? null,
     };
     if (mode === "chat") {
-      lane.reason = refuse(lane, turn.image === true);
+      lane.reason = refuse(lane, turn.image === true, named, snapshot.rows);
       const best = top[0];
       if (!lane.reason && best) lane.answer = { text: answerFrom(best.row, best.item), pick: best };
     }
@@ -403,8 +433,17 @@ export async function quickAnswer(
   }
 }
 
+function sameLabel(a: SnapshotRow, b: SnapshotRow): boolean {
+  return a.label.trim().toLowerCase() === b.label.trim().toLowerCase();
+}
+
 /** Why the fast lane can't answer this turn by itself, or null when it can. */
-function refuse(lane: FastLane, image: boolean): string | null {
+function refuse(
+  lane: FastLane,
+  image: boolean,
+  named: SnapshotItem | null,
+  rows: SnapshotRow[],
+): string | null {
   const best = lane.top[0];
   if (image) return "photo";
   if (!best) return "no_line";
@@ -416,8 +455,14 @@ function refuse(lane: FastLane, image: boolean): string | null {
   if (lane.scores.row < ROW_FOUND) return "unsure_line";
   if (lane.scores.exists < EXISTS_FOUND) return "not_saved";
   if (best.row.status === "needs_review") return "needs_review";
-  // Jev named a different thing than the line it picked: let Muse sort it out.
-  if (lane.thing && lane.thing.id !== best.item.id) return "thing_mismatch";
+  // Jev named a different thing than the line it picked, even unsurely: let Muse sort it out.
+  if (named && named.id !== best.item.id) return "thing_mismatch";
+  // The same label is saved on another thing too (E4 on the washer and the
+  // dryer): answer only when Jev is sure which thing the question means.
+  const twin = rows.some(
+    (r) => r.item_id !== best.item.id && r.type === best.row.type && sameLabel(r, best.row),
+  );
+  if (twin && lane.thing?.id !== best.item.id) return "same_label_elsewhere";
   return null;
 }
 
@@ -450,6 +495,8 @@ export function suggestions(lane: FastLane | null): Suggestion[] {
       text: row.type === "task" ? (row.value.split(". ")[0] ?? row.value) : row.value,
       page: row.page,
       p: Math.round(p * 100) / 100,
+      // Read from the manual but not checked yet: the page says so next to it.
+      unchecked: row.status === "needs_review",
     }));
 }
 
@@ -462,6 +509,7 @@ export interface Suggestion {
   text: string;
   page: number | null;
   p: number;
+  unchecked: boolean;
 }
 
 /** The model log's tag for a turn: what the fast lane decided and how sure it was. */

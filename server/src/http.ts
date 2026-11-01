@@ -21,6 +21,7 @@ import { authIssuer, type Env } from "./env.js";
 import {
   cachedSnapshot,
   type FastLane,
+  fastAllowed,
   fastTag,
   forgetSnapshot,
   hintFor,
@@ -325,15 +326,27 @@ export function chatHandler(
     const routable =
       via === undefined && last?.role === "user" && !!question && !SETUP_MESSAGE.test(last.content);
     let lane: FastLane | null = null;
-    if (routable && env.router) {
+    // Set when the fast lane's Jev call never came back (down or timed out):
+    // the turn then skips the router instead of waiting for Jev a second time.
+    let jevDown = false;
+    const userId = userFrom(auth).userId;
+    if (routable && env.router && fastAllowed(`chat:${userId}`)) {
+      const watched = (async (...args: Parameters<typeof fetch>) => {
+        try {
+          return await fetchImpl(...args);
+        } catch (err) {
+          jevDown = true;
+          throw err;
+        }
+      }) as typeof fetch;
       try {
         const snapshot = await loadSnapshot(db);
-        rememberSnapshot(userFrom(auth).userId, snapshot);
+        rememberSnapshot(userId, snapshot);
         lane = await quickAnswer(
           env,
           snapshot,
           { message: question, previous, image: image !== undefined },
-          fetchImpl,
+          watched,
         );
       } catch {
         lane = null;
@@ -393,7 +406,7 @@ export function chatHandler(
             ? { route: "setup", confidence: 1, ms: 0, tokens_in: null }
             : lane
               ? lane.route
-              : last?.role === "user" && question
+              : last?.role === "user" && question && !jevDown
                 ? await routeTurn(env, { previous, message: question }, fetchImpl)
                 : null;
     // A photo is never small talk or off topic to Muse: it gets every tool.
@@ -418,8 +431,9 @@ export function chatHandler(
     }
     // Jev's quick look at a photo: a simple, confident yes/no about how
     // something looks reaches Muse as text, so Muse skips the image read.
+    // Skipped when Jev just failed to answer the fast lane.
     let turn = messages;
-    const look = image ? await lookAtPhoto(env, image, question, fetchImpl) : null;
+    const look = image && !jevDown ? await lookAtPhoto(env, image, question, fetchImpl) : null;
     if (image && look?.finding) {
       turn = [...messages.slice(0, -1), { role: "user", content: `${question}\n${look.finding}` }];
       image = undefined;
@@ -466,7 +480,7 @@ export function chatHandler(
       });
       // A turn that changed something makes type-ahead read the facts again.
       if (result.tools_used.some((t) => !READ_ONLY_TOOLS.has(t))) {
-        forgetSnapshot(userFrom(auth).userId);
+        forgetSnapshot(userId);
       }
       if (look?.finding) result.tools_used.unshift("photo_check");
       return Response.json(
@@ -499,22 +513,6 @@ const READ_ONLY_TOOLS = new Set([
   "show_card",
 ]);
 
-/** Type-ahead calls per user a minute, so a stuck key can't run up Jev calls. */
-export const SUGGEST_PER_MINUTE = 60;
-const suggestCalls = new Map<string, number[]>();
-
-function suggestAllowed(userId: string, now = Date.now()): boolean {
-  const recent = (suggestCalls.get(userId) ?? []).filter((t) => now - t < 60_000);
-  if (recent.length >= SUGGEST_PER_MINUTE) {
-    suggestCalls.set(userId, recent);
-    return false;
-  }
-  recent.push(now);
-  suggestCalls.set(userId, recent);
-  if (suggestCalls.size > 1_000) suggestCalls.delete(suggestCalls.keys().next().value as string);
-  return true;
-}
-
 /**
  * Search as you type: the saved facts and tasks Jev thinks answer what the
  * person is typing, before they press Enter. The page keeps one request in
@@ -538,7 +536,8 @@ export function suggestHandler(
     const text = q.trim().slice(0, 200);
     if (text.length < 2 || !env.router) return Response.json({ suggestions: [] });
     const { userId } = userFrom(auth);
-    if (!suggestAllowed(userId)) return Response.json({ suggestions: [], slow_down: true });
+    if (!fastAllowed(`suggest:${userId}`))
+      return Response.json({ suggestions: [], slow_down: true });
     const started = Date.now();
     try {
       const snapshot = await cachedSnapshot(userDb(env, auth.token), userId);

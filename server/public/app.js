@@ -501,7 +501,7 @@ export function typeAhead(input, onPick, { above = false } = {}) {
     list.innerHTML = found
       .map(
         (s) =>
-          `<button type="button" role="option" class="suggest-row"><span class="suggest-item">${esc(s.item)}</span><strong>${esc(s.label)}</strong><span>${esc(s.text)}</span>${s.page ? `<span class="muted">p. ${s.page}</span>` : ""}</button>`,
+          `<button type="button" role="option" class="suggest-row"><span class="suggest-item">${esc(s.item)}</span><strong>${esc(s.label)}</strong><span>${esc(s.text)}</span>${s.page ? `<span class="muted">p. ${s.page}</span>` : ""}${s.unchecked ? '<span class="chip gold strong">To check</span>' : ""}</button>`,
       )
       .join("");
     list.hidden = false;

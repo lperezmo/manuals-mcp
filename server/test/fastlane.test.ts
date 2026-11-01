@@ -2,14 +2,16 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { readEnv } from "../src/env.js";
 import {
   answerFrom,
+  FAST_PER_MINUTE,
   hintFor,
+  isCarSeat,
   quickAnswer,
   type Snapshot,
   type SnapshotItem,
   type SnapshotRow,
   suggestions,
 } from "../src/fastlane.js";
-import { chatHandler, SUGGEST_PER_MINUTE, suggestHandler } from "../src/http.js";
+import { chatHandler, suggestHandler } from "../src/http.js";
 import { testAuth } from "./helpers.js";
 
 const base = {
@@ -93,6 +95,7 @@ function jev(
     safety?: number;
     intent?: string;
     thing?: string;
+    thingP?: number;
   } = {},
 ) {
   const row = over.row ?? "r1";
@@ -108,7 +111,12 @@ function jev(
       },
       exists: { type: "noul", noul: over.exists ?? 0.91 },
       intent: { type: "choice", choice: over.intent ?? "ask", confidence: 0.95, probabilities: {} },
-      thing: { type: "choice", choice: over.thing ?? "i1", confidence: 0.9, probabilities: {} },
+      thing: {
+        type: "choice",
+        choice: over.thing ?? "i1",
+        confidence: over.thingP ?? 0.9,
+        probabilities: {},
+      },
       judgment: { type: "noul", noul: over.judgment ?? 0.08 },
       safety: { type: "noul", noul: over.safety ?? 0.03 },
     },
@@ -201,6 +209,66 @@ describe("quickAnswer", () => {
     expect(photo?.reason).toBe("photo");
   });
 
+  test("a thing Jev names, even unsure, has to be the line's thing", async () => {
+    const lane = await quickAnswer(
+      env,
+      snapshot(),
+      { message: "E4 on the seat?" },
+      answering({ thing: "i2", thingP: 0.5 }),
+    );
+    expect(lane?.answer).toBeNull();
+    expect(lane?.reason).toBe("thing_mismatch");
+    // Too unsure to name it in Muse's hint, though.
+    expect(lane?.thing).toBeNull();
+  });
+
+  test("the same code saved on two things goes to Muse unless Jev knows which", async () => {
+    const DRYER = "44444444-4444-4444-4444-444444444444";
+    const two: Snapshot = {
+      items: [
+        ...items,
+        {
+          id: DRYER,
+          nickname: "Dryer",
+          brand: null,
+          model: null,
+          kind: "appliance",
+          category: "dryer",
+        },
+      ],
+      rows: [fact(), fact({ id: "f-dryer-e4", item_id: DRYER, value: "Lint screen blocked." })],
+      loaded_at: Date.now(),
+    };
+    const vague = await quickAnswer(
+      env,
+      two,
+      { message: "what does E4 mean" },
+      answering({ thing: "none" }),
+    );
+    expect(vague?.answer).toBeNull();
+    expect(vague?.reason).toBe("same_label_elsewhere");
+    const named = await quickAnswer(
+      env,
+      two,
+      { message: "what does E4 mean on the washer" },
+      answering({ thing: "i1" }),
+    );
+    expect(named?.answer?.pick.row.id).toBe("f-e4");
+  });
+
+  test("a seat with limits saved is a car seat, whatever it's called", async () => {
+    const seat = { ...items[0]!, nickname: "Maya's ride", category: null, car_seat: true };
+    expect(isCarSeat(seat)).toBe(true);
+    expect(isCarSeat(items[0]!)).toBe(false);
+    const lane = await quickAnswer(
+      env,
+      { items: [seat], rows: [fact({ item_id: seat.id, kind: "spec" })], loaded_at: Date.now() },
+      { message: "harness height?" },
+      answering(),
+    );
+    expect(lane?.reason).toBe("safety");
+  });
+
   test("fails open: no key, nothing saved, Jev down", async () => {
     expect(
       await quickAnswer(readEnv(base), snapshot(), { message: "E4?" }, answering()),
@@ -249,6 +317,16 @@ describe("quickAnswer", () => {
     expect(suggestions(lane && { ...lane, scores: { ...lane.scores, exists: 0.1 } })).toEqual([]);
   });
 
+  test("type-ahead marks a line nobody has checked yet", async () => {
+    const lane = await quickAnswer(
+      env,
+      snapshot([fact({ status: "needs_review" })]),
+      { message: "e4", mode: "suggest" },
+      answering(),
+    );
+    expect(suggestions(lane)[0]).toMatchObject({ id: "f-e4", unchecked: true });
+  });
+
   test("the hint names the thing and its likely lines for Muse", async () => {
     const lane = await quickAnswer(
       env,
@@ -263,7 +341,7 @@ describe("quickAnswer", () => {
 });
 
 /** Supabase stand-in: the household's lines, the model log, and today's counts. */
-function fakeSupabase(logged: any[], counts = { chat: 0 }) {
+function fakeSupabase(logged: any[], counts = { chat: 0 }, seats: { item_id: string }[] = []) {
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
     if (url.includes("/rpc/model_runs_today_all")) return Response.json(1);
@@ -282,6 +360,7 @@ function fakeSupabase(logged: any[], counts = { chat: 0 }) {
         },
       ]);
     if (url.includes("/rest/v1/tasks")) return Response.json([]);
+    if (url.includes("/rest/v1/seat_modes")) return Response.json(seats);
     if (url.includes("/rest/v1/model_runs")) {
       if (init?.method === "POST") {
         logged.push(JSON.parse(String(init.body)));
@@ -373,6 +452,81 @@ describe("chat with the fast lane", () => {
     expect(logged[0].tools_used).toContain("fast:muse:needs_judgment line 0.92 saved 0.91");
   });
 
+  test("a thing whose seat limits are saved never gets an instant answer", async () => {
+    const { verify, mint } = await testAuth();
+    fakeSupabase([], { chat: 0 }, [{ item_id: WASHER }]);
+    const net = (async (url: string) =>
+      url.includes("typesafe")
+        ? jev()
+        : Response.json({
+            choices: [{ message: { content: "From the manual, p. 31." } }],
+          })) as unknown as typeof fetch;
+    const res = await chatHandler(
+      env,
+      verify,
+      net,
+    )(
+      post(
+        "/api/chat",
+        { messages: [{ role: "user", content: "What does E4 mean?" }] },
+        await mint(),
+      ),
+    );
+    const out = await res.json();
+    expect(out.tools_used).not.toContain("fast_lane");
+    expect(out.reply).toBe("From the manual, p. 31.");
+  });
+
+  test("when Jev is down, the turn waits for it once, not twice", async () => {
+    const { verify, mint } = await testAuth();
+    fakeSupabase([]);
+    let jevCalls = 0;
+    const net = (async (url: string) => {
+      if (url.includes("typesafe")) {
+        jevCalls++;
+        throw new DOMException("The operation timed out.", "TimeoutError");
+      }
+      return Response.json({ choices: [{ message: { content: "Drain error (p. 31)." } }] });
+    }) as unknown as typeof fetch;
+    const res = await chatHandler(
+      env,
+      verify,
+      net,
+    )(
+      post(
+        "/api/chat",
+        { messages: [{ role: "user", content: "What does E4 mean?" }] },
+        await mint(),
+      ),
+    );
+    expect((await res.json()).reply).toBe("Drain error (p. 31).");
+    expect(jevCalls).toBe(1);
+  });
+
+  test("past the chat limit, instant answers are capped per minute too", async () => {
+    const { verify, mint } = await testAuth();
+    fakeSupabase([], { chat: 500 });
+    let jevCalls = 0;
+    const net = (async (url: string) => {
+      if (url.includes("typesafe")) {
+        jevCalls++;
+        return jev({ judgment: 0.9 });
+      }
+      return Response.json({});
+    }) as unknown as typeof fetch;
+    const handler = chatHandler(env, verify, net);
+    const token = await mint();
+    let last: Response | undefined;
+    for (let i = 0; i <= FAST_PER_MINUTE; i++) {
+      last = await handler(
+        post("/api/chat", { messages: [{ role: "user", content: `E4 ${i}?` }] }, token),
+      );
+    }
+    expect(last?.status).toBe(429);
+    // Earlier tests share this user's minute, so some of the cap may be used already.
+    expect(jevCalls).toBeLessThanOrEqual(FAST_PER_MINUTE);
+  });
+
   test("Ask Muse for more skips the fast lane", async () => {
     const { verify, mint } = await testAuth();
     fakeSupabase([]);
@@ -435,6 +589,7 @@ describe("/api/suggest", () => {
         text: "Drain error",
         page: 31,
         p: 0.8,
+        unchecked: false,
       },
     ]);
   });
@@ -452,7 +607,7 @@ describe("/api/suggest", () => {
       (await (await off(post("/api/suggest", { q: "e4 mean" }, token))).json()).suggestions,
     ).toEqual([]);
     let last: any;
-    for (let i = 0; i <= SUGGEST_PER_MINUTE; i++) {
+    for (let i = 0; i <= FAST_PER_MINUTE; i++) {
       last = await (await handler(post("/api/suggest", { q: `e4 ${i}` }, token))).json();
     }
     expect(last).toEqual({ suggestions: [], slow_down: true });
