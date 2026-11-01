@@ -12,7 +12,7 @@
     />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=archive,auto_awesome,build,check,cleaning_services,content_copy,delete,edit,event,fact_check,forum,health_and_safety,history,menu_book,more_horiz,palette,settings,share,tune,unarchive&display=block"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=archive,auto_awesome,build,check,cleaning_services,content_copy,delete,edit,event,fact_check,forum,health_and_safety,history,menu_book,more_horiz,palette,photo_camera,receipt_long,settings,share,tune,unarchive&display=block"
     />
     <link rel="stylesheet" href="/theme.css" />
     <script src="/theme.js"></script>
@@ -289,7 +289,7 @@
         const { data: item, error } = await supa
           .from("items")
           .select(
-            "id, nickname, brand, model, serial, category, kind, icon, tint, pinned, archived_at, uses_per_week, manuals(id, title, page_count, source_url, status, status_detail), manual_facts(id, kind, label, value, source_page, source, status), tasks(id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source, status, active), seat_modes(id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, source, status), item_readings(kind, value, measured_on)",
+            "id, nickname, brand, model, serial, category, kind, icon, tint, pinned, archived_at, uses_per_week, purchased_on, manuals(id, title, page_count, source_url, status, status_detail), manual_facts(id, kind, label, value, source_page, source, status), tasks(id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source, status, active), seat_modes(id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, source, status), item_readings(kind, value, measured_on)",
           )
           .eq("id", id)
           .maybeSingle();
@@ -324,8 +324,17 @@
         const steps = item.tasks.filter((t) => stepIds.has(t.id) && t.active).sort((a, b) => (a.next_due_on ?? "").localeCompare(b.next_due_on ?? ""));
         const planSummary = saved?.catch_up_summary || lastPlan?.summary || "";
 
+        // Read on its own, so the page still works before receipts are set up.
+        const { data: receipts, error: receiptsError } = await supa
+          .from("receipts")
+          .select(RECEIPT_COLUMNS)
+          .eq("item_id", id)
+          .order("created_at", { ascending: false })
+          .limit(1);
+        const receipt = receipts?.[0] ?? null;
+
         const manual = item.manuals?.[0];
-        const readings = [...item.item_readings].sort((a, b) => b.measured_on.localeCompare(a.measured_on));
+        const readings =[...item.item_readings].sort((a, b) => b.measured_on.localeCompare(a.measured_on));
         const cycles = readings.find((r) => r.kind === "cycles");
         const badge = (x) =>
           STATUS[x.status] ? `<span class="chip ${STATUS[x.status][1]} strong">${STATUS[x.status][0]}</span>` : "";
@@ -427,6 +436,8 @@
                 </section>`
           }
 
+          ${warrantySection(item, receipt, !receiptsError)}
+
           ${
             item.tasks.length
               ? `<section aria-labelledby="sched-h" id="upkeep">
@@ -526,6 +537,7 @@
           b.addEventListener("click", () => saveLook({ tint: b.dataset.tint }));
         }
         wireManualForm(item, () => detail(id));
+        wireWarranty(item, receipt, !receiptsError, () => detail(id));
         const markDone = async (taskId) => {
           const { error: e } = await supa.rpc("log_task_done", { p_task: taskId });
           if (e) return toast(e.message);
@@ -537,8 +549,9 @@
             b.disabled = true;
             b.textContent = "Reading, up to a minute…";
             try {
-              const out = await api("/api/ingest", { manual_id: b.dataset.reread });
-              toast(out.distilled ? `Read it: ${out.distilled.tasks} tasks, ${out.distilled.facts} facts.` : out.note || "Saved.");
+              await readManual(b.dataset.reread, (text) => {
+                b.textContent = text;
+              }, true);
             } catch (err) {
               toast(err.message);
             }
@@ -905,8 +918,9 @@
               try {
                 const { manual_id } = await api("/api/attach", { item_id: item.id, url: b.dataset.use, official: b.dataset.official === "true" });
                 status.textContent = "Got it. Muse is reading the manual now, about a minute.";
-                const out = await api("/api/ingest", { manual_id });
-                toast(out.distilled ? `Read it: ${out.distilled.tasks} tasks, ${out.distilled.facts} facts.` : out.note || "Saved.");
+                await readManual(manual_id, (text) => {
+                  status.textContent = text;
+                });
                 after();
               } catch (err) {
                 status.style.color = "var(--coral)";
@@ -975,6 +989,38 @@
         return `<p class="small muted">${esc(manual.title || "Manual")}${manual.page_count ? `, ${manual.page_count} pages` : ""}${detail ? `. ${esc(detail)}` : ""}${button}</p>`;
       }
 
+      /**
+       * Asks Muse to read a manual. If the connection drops (the phone switched apps) or a
+       * read is already running, the server keeps going, so this checks back until it's done.
+       */
+      async function readManual(manualId, say, reread = false) {
+        let out;
+        try {
+          out = await api("/api/ingest", reread ? { manual_id: manualId, reread: true } : { manual_id: manualId });
+        } catch (err) {
+          if (!err.dropped && !err.busy) throw err;
+          // A refused re-read right after a read has nothing to wait for.
+          if (err.busy && reread && /just read/.test(err.message)) throw err;
+          say("Still reading. You can leave this page; it keeps going.");
+          out = await waitForRead(manualId);
+        }
+        toast(out.distilled ? `Read it: ${out.distilled.tasks} tasks, ${out.distilled.facts} facts.` : out.note || "Saved.");
+      }
+
+      /** Checks the manual every few seconds until no read is running, for up to six minutes. */
+      async function waitForRead(manualId) {
+        const supa = await db();
+        const until = Date.now() + 6 * 60_000;
+        while (Date.now() < until) {
+          await new Promise((r) => setTimeout(r, 5000));
+          const { data: m } = await supa.from("manuals").select("status, status_detail, reading_since").eq("id", manualId).maybeSingle();
+          if (m && !m.reading_since && m.status !== "pending") {
+            return { note: m.status === "distilled" ? "Muse finished reading it." : m.status_detail || "Saved." };
+          }
+        }
+        return { note: "Still working on it. Check back in a minute." };
+      }
+
       async function uploadManual(item, file, say) {
         const supa = await db();
         const { data: hid } = await supa.rpc("ensure_household");
@@ -989,11 +1035,167 @@
         if (up.error) throw new Error(up.error.message);
         await supa.from("manuals").update({ storage_path: path }).eq("id", manual.id);
         say("Muse is reading the manual. This takes up to a minute.");
-        const out = await api("/api/ingest", { manual_id: manual.id });
-        toast(out.distilled ? `Read it: ${out.distilled.tasks} tasks, ${out.distilled.facts} facts.` : out.note || "Saved.");
+        await readManual(manual.id, say);
       }
 
       /** Shrinks a photo to at most 1280 px so it stays small to send. */
+
+      // --- Receipt and warranty -----------------------------------------------
+      // A photo of the receipt or warranty card, read by Muse into purchase
+      // date, store, price and warranty length. The end date is worked out the
+      // same way the server does it: a printed end date wins, else the
+      // purchase date plus the warranty length.
+
+      const RECEIPT_COLUMNS = "id, kind, purchased_on, store, price, currency, warranty_months, warranty_ends_on, warranty_note, image_path, read_by, created_at";
+      const ENDING_SOON_DAYS = 60;
+
+      function addMonths(day, months) {
+        const [y, m, d] = day.split("-").map(Number);
+        const first = new Date(Date.UTC(y, m - 1 + months, 1));
+        const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+        first.setUTCDate(Math.min(d, last));
+        return first.toISOString().slice(0, 10);
+      }
+
+      function warrantyEnds(r) {
+        if (r?.warranty_ends_on) return r.warranty_ends_on;
+        if (r?.purchased_on && r.warranty_months) return addMonths(r.purchased_on, r.warranty_months);
+        return null;
+      }
+
+      const howLong = (months) => (months % 12 === 0 ? `${months / 12} year${months === 12 ? "" : "s"}` : `${months} month${months === 1 ? "" : "s"}`);
+      const longDate = (day) => new Date(`${day}T12:00:00`).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+
+      function money(price, currency) {
+        try {
+          return new Intl.NumberFormat(undefined, { style: "currency", currency: currency || "USD" }).format(price);
+        } catch {
+          return String(price);
+        }
+      }
+
+      function warrantySection(item, r, ready) {
+        const ends = warrantyEnds(r);
+        const left = ends ? daysBetween(today(), ends) : null;
+        const chip =
+          left === null ? "" : left < 0 ? '<span class="chip strong">Ended</span>' : left <= ENDING_SOON_DAYS ? '<span class="chip gold strong">Ends soon</span>' : '<span class="chip teal strong">Under warranty</span>';
+        const bought = r?.purchased_on ?? item.purchased_on;
+        const lines = [];
+        const where = [bought && longDate(bought), r?.store && `at ${r.store}`, r?.price != null && `for ${money(r.price, r.currency)}`].filter(Boolean);
+        if (where.length) lines.push(`<strong>Bought ${esc(where.join(" "))}</strong>`);
+        if (ends && left < 0) lines.push(`The warranty ended ${esc(longDate(ends))}, so a repair likely isn't covered.`);
+        else if (ends)
+          lines.push(
+            `Covered until ${esc(longDate(ends))}${r.warranty_months && !r.warranty_ends_on ? ` (${howLong(r.warranty_months)})` : ""}, ${left} day${left === 1 ? "" : "s"} left. If it breaks, contact the maker or store with the receipt before paying for a repair.`,
+          );
+        else if (r) lines.push("The warranty length isn't saved yet. Add it from the card, or check the manual's warranty page.");
+        if (r?.warranty_note) lines.push(`<span class="muted">${esc(r.warranty_note)}</span>`);
+        const v = (x) => esc(x ?? "");
+        return `<section aria-labelledby="warranty-h" id="warranty">
+            <div class="section-head"><h2 id="warranty-h">Warranty</h2>${chip}</div>
+            <div class="card stack">
+              ${lines.length ? lines.map((l) => `<p style="margin:0">${l}</p>`).join("") : '<p class="muted" style="margin:0">Snap the receipt or warranty card. Muse keeps the purchase date, store, price and warranty, and tells you if a repair is likely still covered.</p>'}
+              ${ready ? "" : '<p class="small muted" style="margin:0">Saving receipts needs a database update here. For now only the purchase date is kept.</p>'}
+              <div class="row">
+                <label class="button ${r ? "quiet" : ""}" for="receipt-photo" style="cursor:pointer">${ic("photo_camera")}${r ? "New photo" : "Add a photo"}</label>
+                <button type="button" class="quiet" id="receipt-edit" aria-controls="receipt-form">${ic("edit")}${r ? "Edit" : "Type it in"}</button>
+                ${r?.image_path ? `<a class="button quiet" id="receipt-view" style="display:none" target="_blank" rel="noopener noreferrer">${ic("receipt_long")}See the receipt</a>` : ""}
+              </div>
+              <input id="receipt-photo" type="file" accept="image/*" capture="environment" class="sr-only">
+              <p class="small muted" id="receipt-msg" role="status" style="margin:0"></p>
+              <form class="stack" id="receipt-form" hidden>
+                <label class="small" for="rf-date"><strong>Bought on</strong></label><input id="rf-date" type="date" value="${v(bought)}">
+                <label class="small" for="rf-store"><strong>Store</strong></label><input id="rf-store" maxlength="120" value="${v(r?.store)}">
+                <label class="small" for="rf-price"><strong>Price</strong></label><input id="rf-price" type="number" min="0" step="0.01" value="${v(r?.price)}">
+                <label class="small" for="rf-months"><strong>Warranty length in months</strong> <span class="muted">(1 year is 12)</span></label><input id="rf-months" type="number" min="1" max="1200" step="1" value="${v(r?.warranty_months)}">
+                <label class="small" for="rf-ends"><strong>Ends on</strong> <span class="muted">(only if the card prints a date)</span></label><input id="rf-ends" type="date" value="${v(r?.warranty_ends_on)}">
+                <label class="small" for="rf-note"><strong>What it covers</strong> <span class="muted">(optional)</span></label><input id="rf-note" maxlength="500" placeholder="Parts and labor 1 year" value="${v(r?.warranty_note)}">
+                <div class="row"><button type="submit">Save</button><button type="button" class="quiet" id="receipt-cancel">Cancel</button></div>
+              </form>
+            </div>
+          </section>`;
+      }
+
+      function wireWarranty(item, r, ready, after) {
+        const msg = $("#receipt-msg");
+        const form = $("#receipt-form");
+        $("#receipt-edit").addEventListener("click", () => {
+          form.hidden = !form.hidden;
+          if (!form.hidden) $("#rf-date").focus();
+        });
+        $("#receipt-cancel").addEventListener("click", () => {
+          form.hidden = true;
+        });
+        // The photo is private; a short-lived link opens it.
+        if (r?.image_path) {
+          db()
+            .then((supa) => supa.storage.from("receipts").createSignedUrl(r.image_path, 3600))
+            .then(({ data }) => {
+              const a = $("#receipt-view");
+              if (a && data?.signedUrl) {
+                a.href = data.signedUrl;
+                a.style.display = "";
+              }
+            })
+            .catch(() => {});
+        }
+        const send = async (image, force = false) => {
+          msg.textContent = "Muse is reading it…";
+          const out = await api("/api/receipt", { item_id: item.id, image, ...(force ? { force: true } : {}) });
+          if (out.retake) {
+            msg.textContent = "";
+            const ask = out.retake === "blurry" ? "That photo is a little blurry. Read it anyway?" : "I don't see a receipt or warranty card in that one. Read it anyway?";
+            return window.confirm(ask) ? send(image, true) : null;
+          }
+          if (!out.found) {
+            msg.textContent = "Couldn't read a receipt in that one. Try a closer photo in good light, or type it in.";
+            return null;
+          }
+          toast(out.note || out.warranty?.summary.split(". ")[0] || "Saved.");
+          after();
+        };
+        $("#receipt-photo").addEventListener("change", async (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          try {
+            await send(await shrink(file, 1800));
+          } catch (err) {
+            msg.textContent = err.message;
+          }
+          e.target.value = "";
+        });
+        form.addEventListener("submit", async (e) => {
+          e.preventDefault();
+          const v = (sel) => $(sel).value.trim() || null;
+          const row = {
+            purchased_on: v("#rf-date"),
+            store: v("#rf-store"),
+            price: v("#rf-price") === null ? null : Number(v("#rf-price")),
+            warranty_months: v("#rf-months") === null ? null : Number(v("#rf-months")),
+            warranty_ends_on: v("#rf-ends"),
+            warranty_note: v("#rf-note"),
+            read_by: "user",
+          };
+          const button = form.querySelector("[type=submit]");
+          button.disabled = true;
+          try {
+            const supa = await db();
+            if (row.purchased_on && row.purchased_on !== item.purchased_on) {
+              const { error } = await supa.from("items").update({ purchased_on: row.purchased_on }).eq("id", item.id);
+              if (error) throw new Error(error.message);
+            }
+            if (ready) {
+              const { error } = r ? await supa.from("receipts").update(row).eq("id", r.id) : await supa.from("receipts").insert({ ...row, item_id: item.id });
+              if (error) throw new Error(error.message);
+              toast("Saved.");
+            } else toast("Saved the purchase date. The rest needs a database update first.");
+            after();
+          } catch (err) {
+            button.disabled = false;
+            msg.textContent = err.message;
+          }
+        });
+      }
 
       // --- Add a thing: a short wizard -----------------------------------------
 
@@ -1022,6 +1224,7 @@
         // What we know so far; the photo fills it, the person corrects it.
         const thing = { nickname: "", brand: "", model: "", serial: "", category: null, kind: "appliance", pdf: "" };
         let image = null;
+        let receipt = null;
         let manual = params.get("add") === "pdf";
 
         const head = `<section class="stack">
@@ -1062,6 +1265,7 @@
                 .join("")}</select>
               <label class="small" for="f-pdf"><strong>Link to the manual PDF</strong> <span class="muted">(optional; we'll search for it otherwise)</span></label>
               <input id="f-pdf" type="url" placeholder="https://maker.example/manual.pdf" value="${esc(thing.pdf)}">
+              <div class="stack" data-receipt-slot></div>
               <button type="submit">Continue</button>
               <p class="small muted" data-add-msg role="status"></p>
             </form>
@@ -1072,11 +1276,23 @@
           main.innerHTML = `${head}
             <section class="card wizard" style="max-width:640px">${body}</section>
             <input id="photo" type="file" accept="image/*" capture="environment" class="sr-only">
+            <input id="receipt-photo" type="file" accept="image/*" capture="environment" class="sr-only">
             ${withDetails ? `<div style="max-width:640px">${detailsForm(manual)}</div>` : ""}`;
           $("#photo").addEventListener("change", (e) => {
             const file = e.target.files?.[0];
             if (file) read(file);
           });
+          $("#receipt-photo").addEventListener("change", async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            try {
+              receipt = await shrink(file, 1800);
+              drawReceipt();
+            } catch (err) {
+              toast(err.message);
+            }
+          });
+          drawReceipt();
           for (const b of main.querySelectorAll("[data-what]")) {
             b.addEventListener("click", () => {
               thing.category = b.dataset.what;
@@ -1176,6 +1392,7 @@
             </div>
             <label class="small" for="f-nick-quick"><strong>What do you call it?</strong></label>
             <input id="f-nick-quick" value="${esc(thing.nickname)}" placeholder="Washer">
+            <div class="stack" data-receipt-slot></div>
             <div class="row"><button type="button" data-continue>Continue</button>${photoButton("Retake", true)}</div>
             <p class="small muted">Something off? Fix it in the details below.</p>
             <p class="small muted" data-add-msg role="status"></p>
@@ -1184,6 +1401,23 @@
 
         async function read(file) {
           return readImage(() => shrink(file));
+        }
+
+        // An optional receipt or warranty card photo, read once the thing is saved.
+        function receiptPicker() {
+          return receipt
+            ? `<div class="row small" style="gap:10px;flex-wrap:nowrap"><img src="${receipt}" alt="Your receipt photo" style="width:48px;height:48px;object-fit:cover;border-radius:8px"><span>Receipt added. Muse reads it after the thing is saved.</span><button type="button" class="link small" data-receipt-clear>Remove</button></div>`
+            : `<label class="button outline" for="receipt-photo" style="cursor:pointer;justify-self:start">${ic("receipt_long")}Add the receipt or warranty card <span class="muted small">(optional)</span></label>`;
+        }
+
+        function drawReceipt() {
+          for (const slot of main.querySelectorAll("[data-receipt-slot]")) slot.innerHTML = receiptPicker();
+          for (const b of main.querySelectorAll("[data-receipt-clear]")) {
+            b.addEventListener("click", () => {
+              receipt = null;
+              drawReceipt();
+            });
+          }
         }
 
         async function readImage(getImage, force = false) {
@@ -1279,6 +1513,13 @@
             // The thing's page plans the catch-up once the manual is read.
             if (thing.history) stash(HISTORY_KEY(out.data.item.id), JSON.stringify(thing.history));
             toast(out.summary.split(".")[0]);
+            if (receipt) {
+              // The thing is saved either way; a receipt that can't be read is added again from its page.
+              if (msg) msg.textContent = "Muse is reading the receipt…";
+              await api("/api/receipt", { item_id: out.data.item.id, image: receipt })
+                .then((r) => toast(r.found && !r.retake ? r.note || "Receipt saved." : "Couldn't read the receipt. Add it again from the thing's page."))
+                .catch((err) => toast(`The receipt wasn't saved: ${err.message}`));
+            }
             location.assign(`/things?id=${out.data.item.id}${thing.pdf ? "" : "&find=1"}`);
           } catch (err) {
             button.disabled = false;

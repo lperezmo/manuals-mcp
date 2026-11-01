@@ -76,6 +76,7 @@ describe("MCP endpoint", () => {
         "record_measurement",
         "revise_fact",
         "upcoming",
+        "warranty_status",
       ].sort(),
     );
     expect(names.length).toBe(TOOL_MODULES.length);

@@ -9,6 +9,7 @@ import * as logDone from "./tools/log-done.js";
 import * as recordMeasurement from "./tools/record-measurement.js";
 import * as reviseFact from "./tools/revise-fact.js";
 import * as upcoming from "./tools/upcoming.js";
+import * as warranty from "./tools/warranty.js";
 
 export const SERVER_INFO = { name: "manuals", version: "0.2.0" };
 
@@ -18,6 +19,7 @@ export const INSTRUCTIONS = `Manuals keeps the user's household manuals and upke
 - To set up a new thing: find the official manual PDF on the maker's site, then add_item with pdf_url.
 - Some facts are flagged needs_review. Mention it when you use one, and offer to check it.
 - When the user doubts a fact, read its page with ask_manual (item and page), compare, and fix or confirm it with revise_fact. What the user states themselves wins.
+- When something breaks or needs a repair, check warranty_status first; if it's likely still covered, say so before suggesting a paid repair.
 - For car seats, compare the child's latest measurements with the seat's limits and cite the page. Don't predict growth or give health advice; suggest measuring again, and mention a certified child passenger safety technician can check the fit.
 - For a thing that isn't new (used for years, never maintained, or out of storage), ask what has been done to it and call catch_up once its manual is read.
 - For calendar reminders, use your own calendar tools.`;
@@ -32,6 +34,7 @@ export const TOOL_MODULES = [
   recordMeasurement,
   carSeatStatus,
   catchUp,
+  warranty,
 ];
 
 export function registerTools(server: McpServer, env: Env): void {

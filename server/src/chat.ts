@@ -6,7 +6,7 @@ import { INSTRUCTIONS, registerTools } from "./mcp.js";
 import * as updateItem from "./tools/update-item.js";
 
 // The website's chat: Muse Spark (or any OpenAI-compatible model) with the
-// same 9 tools the MCP server exposes, run as the signed-in user so RLS
+// same 10 tools the MCP server exposes, run as the signed-in user so RLS
 // applies exactly as it does over MCP. Kept small on purpose: a few tool
 // rounds, short answers, and a capped history.
 
@@ -17,9 +17,11 @@ const MAX_TOOL_RESULT_CHARS = 12_000;
 
 const CHAT_INSTRUCTIONS = `${INSTRUCTIONS}
 
-You are Muse, answering inside the Manuals website. Answer in two to five short sentences, plain text, no markdown tables. Use the tools; never guess what a manual says. You can't browse the web here, so to add a manual the user pastes a PDF link or uploads one on the Things page.
+You are Muse, answering inside the Manuals website. Answer in two to five short sentences, plain text, no markdown tables, no em dashes (use a comma, colon or period). Use the tools; never guess what a manual says. You can't browse the web here, so to add a manual the user pastes a PDF link or uploads one on the Things page.
 
-Forms: when you need details from the user, call show_card instead of asking in prose. It shows a small form (date, number with units, choice, checklist, text) under your message and ends your turn; the answers come back as the user's next message, then save them with the tools.
+Photos: the user can attach a photo (an error display, a part, a label, a filter). Say what you see, match it to their things with list_items, and check the manual with ask_manual before giving steps. Older photos show as [photo] in the history; you can't see them anymore. A note like [photo, checked by Jev: ...] means a quick image checker already looked at the photo for you: trust its answer and add what the manual says.
+
+Forms: when you need details from the user, call show_card instead of asking in prose. It shows a small form (date, number with units, choice, checklist, text) under your message and ends your turn; the answers come back as the user's next message, then save them with the tools. Never say you will ask something and then stop: call show_card in the same turn.
 
 Setting up a thing (the user says "set up" or "tell you about" it): call list_items and upcoming for it, then ask at most 4 short questions that change its schedule or safety, one show_card at a time. Car seat: who it's for (offer the household's children, or ask the child's name, birth date, weight and height), and the date of manufacture from the seat's label. Appliance: when it was bought and roughly how often it's used a week, and if it isn't new, what has been done to it (a text field). Save with update_item and record_measurement; for one that isn't new, call catch_up with what they said. Last, if it has many upkeep tasks, offer a checklist card of them (task ids as values, all checked) so the user can untick ones they don't need; turn unticked ones off with revise_fact (type task, active false). Then sum up in two sentences.`;
 
@@ -81,10 +83,28 @@ export const messageSchema = z.object({
     .max(60),
   /** "card" when the message is a filled form: it is answering Muse, no need to route it. */
   via: z.enum(["card"]).optional(),
+  /** A photo (data URL) for the last message only; earlier turns keep "[photo]" as text. */
+  image: z.string().max(3_000_000).optional(),
 });
 
+/** A photo on this turn, already checked by the caller. */
+export interface ChatImage {
+  mime: string;
+  base64: string;
+}
+
+/** What Muse is told when it says it will ask but stops before showing a form. */
+export const ASK_NOW =
+  "Ask your first question now with show_card. Don't announce it, just call show_card.";
+
 type Message =
-  | { role: "system" | "user"; content: string }
+  | { role: "system"; content: string }
+  | {
+      role: "user";
+      content:
+        | string
+        | ({ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } })[];
+    }
   | { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
   | { role: "tool"; tool_call_id: string; content: string };
 
@@ -115,6 +135,12 @@ export async function runChat(
   usage?: ChatUsage,
   /** Tool names to offer (from the router), or null/undefined for all of them. */
   only?: string[] | null,
+  opts: {
+    /** A photo for the last user message. */
+    image?: ChatImage;
+    /** Setting up a thing: the turn must end with a form or a question, not a promise of one. */
+    mustAsk?: boolean;
+  } = {},
 ): Promise<ChatReply> {
   const reader = env.reader;
   if (!reader) throw new Error("The chat model isn't configured (READER_* settings).");
@@ -130,11 +156,25 @@ export async function runChat(
     },
   }));
   const ctx = { http: { authInfo: auth } };
-  const messages: Message[] = [
-    { role: "system", content: CHAT_INSTRUCTIONS },
-    ...history.slice(-MAX_HISTORY),
-  ];
+  const recent: Message[] = history.slice(-MAX_HISTORY);
+  const last = recent[recent.length - 1];
+  if (opts.image && last?.role === "user" && typeof last.content === "string") {
+    // Only this turn carries the picture; the client keeps "[photo]" in history.
+    recent[recent.length - 1] = {
+      role: "user",
+      content: [
+        { type: "text", text: last.content },
+        {
+          type: "image_url",
+          image_url: { url: `data:${opts.image.mime};base64,${opts.image.base64}` },
+        },
+      ],
+    };
+  }
+  const messages: Message[] = [{ role: "system", content: CHAT_INSTRUCTIONS }, ...recent];
   const used: string[] = [];
+  // Set when Muse stopped on a promise to ask and was told to show the form.
+  let intro = "";
 
   for (let step = 0; step < MAX_STEPS; step++) {
     const res = await fetchImpl(`${reader.baseUrl}/chat/completions`, {
@@ -163,8 +203,19 @@ export async function runChat(
     const message = body.choices?.[0]?.message;
     const calls = message?.tool_calls ?? [];
     if (!calls.length) {
+      const reply = message?.content?.trim() ?? "";
+      // Muse sometimes says "I'll ask a few quick things" and stops. In a
+      // setup turn that leaves the user with nothing to answer, so tell it
+      // once to show the form, and keep what it said above the form.
+      if (opts.mustAsk && !intro && byName.has(SHOW_CARD.name) && !reply.includes("?")) {
+        intro = reply || " ";
+        if (reply) messages.push({ role: "assistant", content: reply });
+        messages.push({ role: "user", content: ASK_NOW });
+        continue;
+      }
       return {
-        reply: message?.content?.trim() || "Sorry, I didn't get an answer.",
+        reply:
+          [intro.trim(), reply].filter(Boolean).join("\n\n") || "Sorry, I didn't get an answer.",
         tools_used: used,
       };
     }
@@ -192,7 +243,10 @@ export async function runChat(
       });
       used.push(call.function.name);
     }
-    if (card) return { reply: card.message, tools_used: used, card: card.card };
+    if (card) {
+      const reply = [intro.trim(), card.message].filter(Boolean).join("\n\n");
+      return { reply, tools_used: used, card: card.card };
+    }
   }
   return {
     reply: "That took more steps than I can do at once. Could you ask a narrower question?",

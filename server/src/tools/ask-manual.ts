@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { TaskRow } from "../db.js";
 import type { Env } from "../env.js";
 import { describeInterval, relativeDay } from "../lib/schedule.js";
+import { latestReceipts, warrantyStatus } from "../receipt.js";
 import { findItem, guarded, itemLabel, reply, session } from "./context.js";
 
 const FACT_COLUMNS = "id, item_id, kind, label, value, source_page, source, status";
@@ -90,7 +91,7 @@ export function register(server: McpServer, env: Env) {
         }
 
         if (target) {
-          const [facts, tasks, seats] = await Promise.all([
+          const [facts, tasks, seats, receipts] = await Promise.all([
             db.from("manual_facts").select(FACT_COLUMNS).eq("item_id", target.id).limit(100),
             db
               .from("tasks")
@@ -105,8 +106,15 @@ export function register(server: McpServer, env: Env) {
                 "id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, fit_note, source_page, source, status",
               )
               .eq("item_id", target.id),
+            latestReceipts(db, [target.id]),
           ]);
-          out.item = { id: target.id, name: itemLabel(target) };
+          // A saved receipt rides along, so a question about a fault also learns the warranty.
+          const receipt = receipts?.get(target.id);
+          out.item = {
+            id: target.id,
+            name: itemLabel(target),
+            ...(receipt ? { warranty: warrantyStatus(receipt).summary } : {}),
+          };
           if (facts.data?.length) out.facts = facts.data;
           if (tasks.data?.length) {
             out.schedule = (tasks.data as (TaskRow & { source: string; status: string })[]).map(
