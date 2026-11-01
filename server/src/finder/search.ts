@@ -18,6 +18,8 @@ export interface SearchResult {
   url: string;
   title: string;
   score: number;
+  /** For a PDF link found on a page: that page's title and link. */
+  via?: string;
 }
 
 export interface Candidate {
@@ -169,26 +171,47 @@ export function tidyTitle(raw: string): string {
 
 /** Words that mark a sheet about the model rather than its manual. */
 const SHEET_WORDS =
-  /\b(spec(ification)?s? ?sheet|specsheet|quick ?specs?|feature ?sheet|key features|features (&|and) benefits|energy ?guide|dimension(s| guide)?|install(ation)? (instructions?|guide|sheet)|tech ?sheet|wiring diagram|parts? (list|catalog)|service manual|warranty|brochure)\b/;
+  /\b((spec(ification)?s?|feature|cycle|reference|tech|data|fact|product) ?sheets?|spec(ification)?s? guide|quick ?specs?|key features|features (&|and) benefits|energy ?guide|dimension(s| guide)?|install(ation)? (instructions?|guide|sheet)|wiring diagram|parts? (list|catalog)|service manual|warranty|brochure)\b|specsheet/;
 /** Words that mark the manual itself; a combined "Installation and Use & Care Guide" is a manual. */
 const MANUAL_WORDS =
   /\b(use (&|and) care|owner'?s? (manual|guide)|user'?s? (manual|guide|instructions)|operating instructions|instruction manual)\b/;
 
-/**
- * Whether a title, link or first page reads like a spec sheet, energy guide,
- * dimension guide or the like (Whirlpool's "Key Features & Benefits"), not
- * the owner's or use and care manual.
- */
-export function isSheet(text: string): boolean {
+/** Lower case, link separators as spaces: "WDF330PAHS_quick-specs.pdf" reads "wdf330pahs quick specs pdf". */
+function plain(text: string): string {
   let t = text;
   try {
     t = decodeURIComponent(text);
   } catch {}
-  t = t
+  return t
     .toLowerCase()
     .replace(/[_\-./]+/g, " ")
     .replace(/\s+/g, " ");
+}
+
+/**
+ * Whether a title, link or first page reads like a spec sheet, cycle sheet,
+ * energy guide, dimension guide or the like (Whirlpool's "Key Features &
+ * Benefits"), not the owner's or use and care manual.
+ */
+export function isSheet(text: string): boolean {
+  const t = plain(text);
   return SHEET_WORDS.test(t) && !MANUAL_WORDS.test(t);
+}
+
+/** Whether a title or link says it is the owner's, user or use and care manual. */
+export function looksLikeManual(text: string): boolean {
+  const t = plain(text);
+  return MANUAL_WORDS.test(t) && !isSheet(text);
+}
+
+/**
+ * The model without its trailing revision digits, when it has some:
+ * WDF330PAHS5 is a WDF330PAHS, and pages and PDFs often name only that.
+ */
+export function baseModel(model: string | null | undefined): string | null {
+  const m = (model ?? "").trim();
+  const base = m.replace(/[-\s]*\d{1,2}$/, "");
+  return base !== m && /[A-Za-z]$/.test(base) && squash(base).length >= 6 ? base : null;
 }
 
 /** PDF links from the results, best first: the maker's site, then the model in the link or title. */
@@ -210,7 +233,15 @@ export function rankResults(
     if (seen.has(url.toString())) continue;
     seen.add(url.toString());
     const official = isBrandHost(host, item.brand);
-    const named = modelMatch(`${r.title} ${url.pathname}`, item.model) !== null;
+    // A manual linked from a page for this model counts as naming it (Whirlpool's
+    // owners page for WDF330PAHS links "owners-manual-W10644345.pdf").
+    const named =
+      modelMatch(`${r.title} ${url.pathname}`, item.model) !== null ||
+      Boolean(
+        r.via &&
+          modelMatch(r.via, item.model) !== null &&
+          looksLikeManual(`${r.title} ${url.pathname}`),
+      );
     const hint = suggestModel(`${r.title} ${url.pathname}`, item.model);
     const sheet = isSheet(`${r.title} ${url.pathname}`);
     ranked.push({
@@ -411,6 +442,7 @@ export async function findManual(
   const left = () => deadline - Date.now();
   const queries = searchQueries(item);
   const query = queries[0] as string;
+  const base = baseModel(item.model);
   const answers = await Promise.allSettled(queries.map((q) => searchWeb(env, q, fetchImpl)));
   const ok = answers.flatMap((a) => (a.status === "fulfilled" ? [a.value] : []));
   if (!ok.length) throw (answers[0] as PromiseRejectedResult).reason;
@@ -447,12 +479,21 @@ export async function findManual(
   const tried = await checkAll(ranked.slice(0, check));
   const isManual = (c: Candidate) => !c.problem && !c.sheet && Boolean(c.has_model || c.named);
   const gotStuck = tried.some((c) => c.unchecked || c.sheet);
-  if (!tried.some(isManual) && gotStuck && left() >= SECOND_LOOK_MIN_MS) {
+  if (!tried.some(isManual) && (gotStuck || base) && left() >= SECOND_LOOK_MIN_MS) {
     // Sites that didn't answer won't answer a second time either.
     const away = new Set(tried.filter((c) => c.unchecked).map((c) => c.host));
     const done = new Set(tried.map((c) => c.url));
     const fresh = (list: Candidate[]) => list.filter((c) => !away.has(c.host) && !done.has(c.url));
-    let more = fresh(ranked);
+    // More searches: the model without its revision digit, and one that finds
+    // stores and manual sites carrying a copy.
+    const again = await Promise.allSettled(
+      secondLookQueries(item, base).map((q) => searchWeb(env, q, fetchImpl)),
+    );
+    for (const a of again) {
+      if (a.status !== "fulfilled") continue;
+      for (const r of a.value) if (!best.has(r.url)) best.set(r.url, r);
+    }
+    let more = fresh(rankResults([...best.values()], item));
     if (more.length < check && env.crawl) {
       // Jev's picks, then more of the pages naming the model: a retailer's page often carries the PDF.
       const results = [...best.values()].filter((r) => !away.has(hostOf(r.url)));
@@ -477,20 +518,66 @@ export async function findManual(
   // someone else's (a fictional "BW-4100" found a forklift's "XL4100").
   // A slow maker's site isn't a wrong PDF: keep an unchecked one when it's the
   // maker's own and its link names the model, and let the person decide.
-  const kept = tried.filter((c) =>
-    c.problem ? c.unchecked && c.official && c.named : c.has_model || c.official || c.named,
+  // A real manual on a site that blocks apps is still offered: the person's
+  // phone can open it and save it.
+  const blockedManual = (c: Candidate) =>
+    Boolean(c.blocked) &&
+    !c.sheet &&
+    (c.named || (c.official && looksLikeManual(`${c.title} ${pathOf(c.url)}`)));
+  let kept = tried.filter((c) =>
+    c.problem
+      ? (c.unchecked && c.official && c.named) || blockedManual(c)
+      : c.has_model || c.official || c.named,
   );
-  // A spec sheet isn't offered when a manual that opens is there.
-  const candidates = (kept.some(isManual) ? kept.filter((c) => !c.sheet) : kept).sort(
+  // Several blocked "Owner's Manual" links all look alike: keep the ones found
+  // for this model, or else just the first, and none when one opened.
+  const lookalikes = kept.filter((c) => blockedManual(c) && !c.named);
+  if (lookalikes.length) {
+    const keep = kept.some((c) => isManual(c) || (blockedManual(c) && c.named))
+      ? null
+      : lookalikes[0];
+    kept = kept.filter((c) => !lookalikes.includes(c) || c === keep);
+  }
+  // Opened manuals, then blocked ones, then the rest; sheets last. When a manual
+  // is there, sheets and PDFs that name neither the model nor its page are gone
+  // (a rebate form or a help page from the maker's site).
+  const tier = (c: Candidate) => (isManual(c) ? 0 : blockedManual(c) ? 1 : c.sheet ? 3 : 2);
+  const hasManual = kept.some((c) => isManual(c) || blockedManual(c));
+  const candidates = (
+    hasManual
+      ? kept.filter((c) => tier(c) < 2 || (tier(c) === 2 && (c.has_model || c.named)))
+      : kept
+  ).sort(
     (a, b) =>
+      tier(a) - tier(b) ||
       Number(!b.unchecked) - Number(!a.unchecked) ||
-      Number(!b.sheet) - Number(!a.sheet) ||
       Number(Boolean(b.has_model)) - Number(Boolean(a.has_model)) ||
       Number(b.official) - Number(a.official),
   );
   const picked = await pickBest(env, item, candidates, fetchImpl);
   const strip = ({ excerpt: _, ...c }: Candidate) => c;
   return { query, candidates: picked.map(strip), tried: tried.map(strip) };
+}
+
+/** The second look's searches: the base model's usual two, and a "manual pdf download" one. */
+export function secondLookQueries(
+  item: { brand?: string | null; model?: string | null; nickname?: string | null },
+  base: string | null,
+): string[] {
+  const model = base ?? item.model;
+  if (!model) return [];
+  return [
+    ...(base ? searchQueries({ ...item, model: base }) : []),
+    [item.brand, model, "manual pdf download"].filter(Boolean).join(" "),
+  ];
+}
+
+function pathOf(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return "";
+  }
 }
 
 function hostOf(url: string): string {
@@ -503,7 +590,10 @@ function hostOf(url: string): string {
 
 /** Manual-listing sites: they turn crawlers away (manuals.plus answers 403) and only mirror the maker's PDF. */
 const LISTING_HOSTS =
-  /(^|\.)(manuals\.plus|manualsfile\.com|manualsdir\.com|manualshelf\.com|usermanual\.wiki|manualowl\.com|all-guidesbox\.com|safe-manuals\.com|device\.report)$/;
+  /(^|\.)(manuals\.plus|manualsfile\.com|manualsdir\.com|manualshelf\.com|usermanual\.wiki|manualowl\.com|all-guidesbox\.com|safe-manuals\.com|device\.report|notice-facile\.com|manuals\.ca|manual\.gt)$/;
+/** Parts and repair-help shops: their model pages list parts, not the manual PDF. */
+const PARTS_HOSTS =
+  /(^|\.)(partselect\.(com|ca)|appliancepartspros\.com|repairclinic\.com|reliableparts\.(com|ca)|partsdr\.com|coastparts\.com|justanswer\.com|ifixit\.com|ubuy\.[a-z.]+|whirlpoolparts\.com)$/;
 
 /** Pages (not PDFs) from the maker's site or naming the model, best first, at most `limit`. */
 export function pagesWorthOpening(
@@ -517,7 +607,7 @@ export function pagesWorthOpening(
         const url = new URL(r.url);
         const host = url.hostname.toLowerCase();
         if (url.protocol !== "https:" || SKIP_HOSTS.test(host) || isPdfUrl(url)) return false;
-        if (LISTING_HOSTS.test(host)) return false;
+        if (LISTING_HOSTS.test(host) || PARTS_HOSTS.test(host)) return false;
         return (
           isBrandHost(host, item.brand) ||
           modelMatch(`${r.title} ${url.pathname}`, item.model) !== null
@@ -554,6 +644,7 @@ export async function choosePages(
           url.protocol === "https:" &&
           !SKIP_HOSTS.test(host) &&
           !LISTING_HOSTS.test(host) &&
+          !PARTS_HOSTS.test(host) &&
           !avoid.has(host) &&
           !isPdfUrl(url)
         );
@@ -607,7 +698,8 @@ export async function choosePages(
 
 /**
  * Opens each page with Crawl4AI and keeps the PDF links on it, scored just
- * under the page itself. Slow or failing pages are skipped quietly.
+ * under the page itself. Each page is its own request, so one slow page
+ * doesn't hold up the rest; slow or failing pages are skipped quietly.
  */
 export async function pdfLinksFromPages(
   crawl: NonNullable<Env["crawl"]>,
@@ -616,42 +708,59 @@ export async function pdfLinksFromPages(
   timeoutMs = 20_000,
 ): Promise<SearchResult[]> {
   if (!pages.length || timeoutMs <= 0) return [];
-  const res = await fetchImpl(`${crawl.baseUrl}/crawl`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${crawl.token}`,
-      ...(crawl.accessId && crawl.accessSecret
-        ? { "CF-Access-Client-Id": crawl.accessId, "CF-Access-Client-Secret": crawl.accessSecret }
-        : {}),
-    },
-    body: JSON.stringify({ urls: pages.map((p) => p.url) }),
-    signal: AbortSignal.timeout(timeoutMs),
-  }).catch(() => null);
-  if (!res?.ok) return [];
-  const body = (await res.json().catch(() => ({}))) as {
-    results?: {
-      url?: string;
-      links?: Record<string, { href?: string; text?: string }[]>;
-    }[];
-  };
+  const each = await Promise.all(pages.map((p) => linksOnPage(crawl, p, fetchImpl, timeoutMs)));
   const out: SearchResult[] = [];
-  for (const page of body.results ?? []) {
-    const from = pages.find((p) => p.url === page.url) ?? pages[0];
-    for (const link of Object.values(page.links ?? {}).flat()) {
-      try {
-        const url = new URL(link.href ?? "", page.url);
-        if (url.protocol !== "https:" || !isPdfUrl(url)) continue;
-        if (out.some((r) => r.url === url.toString())) continue;
-        out.push({
-          url: url.toString(),
-          title: (link.text ?? "").trim() || from?.title || "",
-          score: Math.max(0, (from?.score ?? 0) - 0.01),
-        });
-      } catch {}
+  for (const r of each.flat()) if (!out.some((o) => o.url === r.url)) out.push(r);
+  return out;
+}
+
+async function linksOnPage(
+  crawl: NonNullable<Env["crawl"]>,
+  from: SearchResult,
+  fetchImpl: typeof fetch,
+  timeoutMs: number,
+): Promise<SearchResult[]> {
+  try {
+    const res = await fetchImpl(`${crawl.baseUrl}/crawl`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${crawl.token}`,
+        ...(crawl.accessId && crawl.accessSecret
+          ? { "CF-Access-Client-Id": crawl.accessId, "CF-Access-Client-Secret": crawl.accessSecret }
+          : {}),
+      },
+      body: JSON.stringify({ urls: [from.url] }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) return [];
+    const body = (await res.json()) as {
+      results?: {
+        url?: string;
+        links?: Record<string, { href?: string; text?: string }[]>;
+      }[];
+    };
+    const out: SearchResult[] = [];
+    for (const page of body.results ?? []) {
+      const base = page.url ?? from.url;
+      for (const link of Object.values(page.links ?? {}).flat()) {
+        try {
+          const url = new URL(link.href ?? "", base);
+          if (url.protocol !== "https:" || !isPdfUrl(url)) continue;
+          if (out.some((r) => r.url === url.toString())) continue;
+          out.push({
+            url: url.toString(),
+            title: (link.text ?? "").trim() || from.title || "",
+            score: Math.max(0, from.score - 0.01),
+            via: `${from.title} ${base}`.trim(),
+          });
+        } catch {}
+      }
     }
+    return out.slice(0, 10);
+  } catch {
+    return [];
   }
-  return out.slice(0, 10);
 }
 
 /** Jev's "this is the one" must reach this, and beat the next by PICK_MARGIN. */

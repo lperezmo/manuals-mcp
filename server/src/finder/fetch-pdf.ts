@@ -106,6 +106,8 @@ export async function fetchPdf(
     if (declared > MAX_PDF_BYTES) throw new FetchPdfError("That PDF is too big (over 40 MB).");
     const bytes = await readCapped(res, MAX_PDF_BYTES);
     if (!looksLikePdf(bytes)) {
+      // Some sites answer an app with a quick "Access Denied" or robot check page instead of a 403.
+      if (looksLikeBotWall(bytes)) throw new SiteBlockedError(url.hostname, "refused");
       throw new FetchPdfError(
         "That link isn't a PDF. It may be a support page; look for the PDF link on it.",
       );
@@ -113,6 +115,15 @@ export async function fetchPdf(
     return { bytes, finalUrl: url.toString() };
   }
   throw new FetchPdfError("Too many redirects.");
+}
+
+const BOT_WALL =
+  /access denied|request (was )?blocked|you have been blocked|are you a (human|robot)|captcha|attention required|just a moment\.\.\.|unusual traffic|errors\.edgesuite\.net/i;
+
+/** A short web page that says the site turned us away (Akamai, Cloudflare and the like). */
+export function looksLikeBotWall(bytes: Uint8Array): boolean {
+  if (bytes.byteLength > 200_000) return false;
+  return BOT_WALL.test(new TextDecoder("latin1").decode(bytes.subarray(0, 8_000)));
 }
 
 /** One request whose headers must arrive within `ms`; the body may take longer. */

@@ -106,3 +106,24 @@ describe("PDF fetcher", () => {
     expect(headers["user-agent"]).toStartWith("manuals-mcp/");
   });
 });
+
+describe("a quick block page instead of a 403", () => {
+  test("an Access Denied page at 200 is the site turning us away", async () => {
+    const wall = (async () =>
+      new Response(
+        "<HTML><HEAD><TITLE>Access Denied</TITLE></HEAD><BODY>You don't have permission. Reference #18.5c3e1102</BODY></HTML>",
+        { headers: { "content-type": "text/html" } },
+      )) as unknown as typeof fetch;
+    const err = await fetchPdf("https://www.whirlpool.com/m.pdf", wall).catch((e) => e);
+    expect(err).toBeInstanceOf(SiteBlockedError);
+    expect(err.why).toBe("refused");
+  });
+
+  test("an ordinary support page is still just not a PDF", async () => {
+    const page = (async () =>
+      new Response("<html>Support and manuals</html>")) as unknown as typeof fetch;
+    const err = await fetchPdf("https://maker.example.com/support", page).catch((e) => e);
+    expect(err).toBeInstanceOf(FetchPdfError);
+    expect(err).not.toBeInstanceOf(SiteBlockedError);
+  });
+});

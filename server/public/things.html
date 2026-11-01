@@ -911,12 +911,14 @@
         }
       }
 
-      function candidateCard(c) {
+      function candidateCard(c, item) {
+        // A site that blocks apps: the person's own phone can still open and save it.
+        const who = c.official && item?.brand ? item.brand : c.host.replace(/^www[.]/, "");
         const tags = [
           c.best ? '<span class="chip teal strong">Best match</span>' : "",
           c.official ? '<span class="chip teal strong">From the maker</span>' : "",
           c.blocked
-            ? `<span class="chip gold">This site won't let apps download it. Tap Open, save the PDF, then add it with Upload a PDF below</span>`
+            ? ""
             : c.unchecked
               ? `<span class="chip gold">Couldn't open it to check; the link names your model</span>`
               : c.has_model
@@ -924,7 +926,7 @@
                   ? '<span class="chip gold">Nearly your model number; check the label</span>'
                   : `<span class="chip teal">${c.match === "family" ? "Same model family" : "Names your model"}</span>`
                 : c.named
-                  ? `<span class="chip gold">The link names your model; the text doesn't</span>`
+                  ? `<span class="chip gold">Your model number isn't printed in it</span>`
                   : '<span class="chip gold">Model not found in the text</span>',
           c.sheet ? '<span class="chip gold">A spec or install sheet, not the full manual</span>' : "",
         ].join("");
@@ -934,11 +936,12 @@
             <span class="small muted" style="overflow-wrap:anywhere">${esc(c.host)}${c.page_count ? ` · ${c.page_count} pages` : ""}</span>
             <div class="row" style="gap:6px">${tags}</div>
             ${c.models?.length ? `<p class="small muted" style="margin:4px 0 0">Covers ${c.models.length} models: ${esc(c.models.slice(0, 4).join(", "))}${c.models.length > 4 ? ", …" : ""}</p>` : ""}
+            ${c.blocked ? `<p class="small" style="margin:4px 0 0">${esc(who)} won't let apps download it. Tap Open, save the PDF, then Upload a PDF.</p>` : ""}
             ${c.model_hint ? `<p class="small" style="margin:4px 0 0">This manual spells it <strong>${esc(c.model_hint)}</strong>; the label photo may have been misread. <button type="button" class="quiet small" data-fix-model="${esc(c.model_hint)}">Fix the model</button></p>` : ""}
           </div>
           <div class="row">
             ${c.blocked ? "" : `<button type="button" data-use="${esc(c.url)}" data-official="${c.official}">Use this</button>`}
-            <a class="button quiet" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">Open</a>
+            <a class="button${c.blocked ? "" : " quiet"}" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">Open</a>
           </div>
         </div>`;
       }
@@ -977,7 +980,7 @@
             fallback();
             return;
           }
-          found.innerHTML = `<h3>Is this yours?</h3>${out.candidates.map(candidateCard).join("")}`;
+          found.innerHTML = `<h3>Is this yours?</h3>${out.candidates.map((c) => candidateCard(c, item)).join("")}`;
           // Only sites that block apps: the PDF has to come in by hand, so show where.
           if (out.candidates.every((c) => c.blocked)) fallback();
           // The maker's PDF prints the real number; one tap saves it on the thing.

@@ -2,12 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { readEnv } from "../src/env.js";
 import { SiteBlockedError } from "../src/finder/fetch-pdf.js";
 import {
+  baseModel,
   blockedMessage,
   checkCandidate,
   choosePages,
   findManual,
   isBrandHost,
   isSheet,
+  looksLikeManual,
   modelMatch,
   pagesWorthOpening,
   pdfLinksFromPages,
@@ -17,6 +19,7 @@ import {
   searchQueries,
   searchQuery,
   searchWeb,
+  secondLookQueries,
   squash,
   suggestModel,
   tidyTitle,
@@ -403,6 +406,7 @@ describe("opening a maker's page for its PDF links", () => {
         url: "https://www.toshiba-lifestyle.com/files/RAC-PD0811CRU-manual.pdf",
         title: "Owner's Manual",
         score: 0.79,
+        via: "AC https://www.toshiba-lifestyle.com/us/ac",
       },
     ]);
   });
@@ -603,19 +607,18 @@ describe("a maker's site that blocks apps", () => {
     expect(found.tried.some((c) => c.url.endsWith("_quick-specs.pdf") && c.sheet)).toBe(true);
   });
 
-  test("with no copy elsewhere, the maker's link stays, marked as turned away", async () => {
+  test("with no copy elsewhere, the maker's own manual is offered, not its spec sheet", async () => {
     const found = await findManual(
       env,
       item,
       net(() => new Response("down", { status: 502 })),
     );
+    // One of the look-alike "Owner's Manual" links, never the sheet.
     expect(found.candidates).toEqual([
       expect.objectContaining({
-        url: SHEET,
+        url: `${DOCS}/201508/owners-manual-W10717214-RevA.pdf`,
         official: true,
         blocked: true,
-        unchecked: true,
-        sheet: true,
       }),
     ]);
   });
@@ -642,5 +645,169 @@ describe("a maker's site that blocks apps", () => {
     expect(
       blockedMessage(new SiteBlockedError("www.mirror.example", "silent"), "Whirlpool"),
     ).toStartWith("Mirror.example didn't answer.");
+  });
+});
+
+describe("what a sheet is, from its title or link alone", () => {
+  test.each([
+    "55 dBA* Front Control Dishwasher WDF330PAH Key Features & Benefits ...",
+    "https://www.whirlpool.com/content/dam/WDF330PAHSPECSHEET.pdf",
+    "/content/dam/global/documents/202104/cycle-sheet-w11367063-reva.pdf",
+    "/content/dam/global/documents/202104/reference-sheet-w11361755-revb.pdf",
+    "Specification Guide /files/SHPM65Z55N_20specs.pdf",
+  ])("%s is a sheet", (text) => {
+    expect(isSheet(text)).toBe(true);
+    expect(looksLikeManual(text)).toBe(false);
+  });
+
+  test("an Owner's Manual link is the manual", () => {
+    expect(looksLikeManual("Owner's Manual /content/dam/owners-manual-W10644345.pdf")).toBe(true);
+  });
+
+  test("the second look searches the base model and for a copy to download", () => {
+    const item = { brand: "Whirlpool", model: "WDF330PAHS5", nickname: "Dishwasher" };
+    expect(secondLookQueries(item, "WDF330PAHS")).toEqual([
+      "Whirlpool WDF330PAHS owner's manual pdf",
+      "Whirlpool WDF330PAHS Dishwasher manual",
+      "Whirlpool WDF330PAHS manual pdf download",
+    ]);
+    expect(secondLookQueries({ brand: "Galanz", model: "GSWWD09S1A09B" }, null)).toEqual([
+      "Galanz GSWWD09S1A09B manual pdf download",
+    ]);
+  });
+
+  test("the model without its revision digit", () => {
+    expect(baseModel("WDF330PAHS5")).toBe("WDF330PAHS");
+    expect(baseModel("MVWC465HW0")).toBe("MVWC465HW");
+    expect(baseModel("WDF330PAHS")).toBe(null);
+    expect(baseModel("GSWWD09S1A09B")).toBe(null);
+    expect(baseModel("DW80R5060")).toBe(null);
+    expect(baseModel("AB12")).toBe(null);
+  });
+});
+
+describe("a model with a revision digit, on a maker's site that blocks apps", () => {
+  const env = readEnv({
+    SUPABASE_URL: "https://example-ref.supabase.co",
+    SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+    SEARCH_API_KEY: "tvly_test",
+    CRAWL4AI_URL: "https://cr.example.com",
+    CRAWL4AI_API_TOKEN: "tok",
+  });
+  const item = { brand: "Whirlpool", model: "WDF330PAHS5", nickname: "Dishwasher" };
+  const DOCS = "https://www.whirlpool.com/content/dam/global/documents";
+  const OWNERS_PAGE = "https://www.whirlpool.com/owners-center-pdp.WDF330PAHS.html";
+  const OWNERS_PDF = `${DOCS}/201408/owners-manual-W10644345.pdf`;
+  const MIRROR = "https://www.canadianappliance.ca/pdf/whirlpool/dishwasher";
+  const RETAILER =
+    "https://www.canadianappliance.ca/product/Whirlpool_WDF330PAHS_Dishwasher_Whirlpool_WDF330PAHS.html";
+  // Shapes from a real search for WDF330PAHS5, 2026-11-01: the maker's pages
+  // only; the retailer with a copy shows up only for WDF330PAHS.
+  const net = (mirror: boolean) =>
+    (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      const body = String(init?.body ?? "");
+      if (url.includes("tavily"))
+        return Response.json({
+          results: body.includes("WDF330PAHS5")
+            ? [{ url: OWNERS_PAGE, title: "WDF330PAHS - Whirlpool", score: 1 }]
+            : [{ url: RETAILER, title: "Whirlpool WDF330PAHS - Dishwashers", score: 0.4 }],
+        });
+      if (url.startsWith("https://cr.example.com")) {
+        if (body.includes("whirlpool.com"))
+          return Response.json({
+            results: [
+              {
+                url: OWNERS_PAGE,
+                links: {
+                  internal: [
+                    { href: OWNERS_PDF, text: "Owner's Manual" },
+                    { href: `${DOCS}/202104/cycle-sheet-w11367063-reva.pdf`, text: "Cycle Sheet" },
+                    {
+                      href: `${DOCS}/202104/reference-sheet-w11361755-revb.pdf`,
+                      text: "Reference Sheet",
+                    },
+                  ],
+                },
+              },
+            ],
+          });
+        if (mirror && body.includes("canadianappliance"))
+          return Response.json({
+            results: [
+              {
+                url: RETAILER,
+                links: {
+                  internal: [
+                    { href: `${MIRROR}/WDF330PAHS_owners-manual.pdf`, text: "Owner's Manual" },
+                  ],
+                },
+              },
+            ],
+          });
+        return Response.json({ results: [] });
+      }
+      if (url.includes("whirlpool.com")) return new Response("Access Denied", { status: 403 });
+      if (url.endsWith("_owners-manual.pdf"))
+        return new Response(
+          tinyPdf([
+            "W10644345B DISHWASHER USER INSTRUCTIONS",
+            "Load the racks",
+            "Clean the filter",
+          ]),
+        );
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+  test("finds the copy through the base model and offers it first, the maker's manual next", async () => {
+    const found = await findManual(env, item, net(true));
+    expect(found.candidates.map((c) => [c.url, Boolean(c.blocked)])).toEqual([
+      [`${MIRROR}/WDF330PAHS_owners-manual.pdf`, false],
+      [OWNERS_PDF, true],
+    ]);
+    // Found on the model's own page, so it counts as named for this model.
+    expect(found.candidates[1]).toMatchObject({ official: true, named: true });
+    expect(found.candidates.some((c) => c.best)).toBe(false);
+  });
+
+  test("with no copy anywhere, the maker's manual is offered and the sheets are not", async () => {
+    const found = await findManual(env, item, net(false));
+    expect(found.candidates).toEqual([
+      expect.objectContaining({ url: OWNERS_PDF, official: true, blocked: true, named: true }),
+    ]);
+    expect(found.tried.filter((c) => c.sheet)).toHaveLength(2);
+  });
+
+  test("ranks an opened manual, then a blocked manual, then the rest, sheets last", async () => {
+    const env2 = readEnv({
+      SUPABASE_URL: "https://example-ref.supabase.co",
+      SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+      SEARCH_API_KEY: "tvly_test",
+    });
+    const site = "https://www.whirlpool.com/docs";
+    const results = [
+      { url: `${site}/WDF330PAHS-spec-sheet.pdf`, title: "WDF330PAHS Spec Sheet", score: 1 },
+      { url: `${site}/WDF330PAHS-owners-manual.pdf`, title: "Owner's Manual", score: 0.9 },
+      { url: "https://m.example.com/WDF330PAHS-manual.pdf", title: "Manual", score: 0.5 },
+      // The maker's help site: it opens, but it's a help page, not this model's manual.
+      {
+        url: "https://help.whirlpool-docs.example/faq.pdf",
+        title: "Where is my manual?",
+        score: 0.2,
+      },
+    ];
+    const impl = (async (input: RequestInfo | URL) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("tavily")) return Response.json({ results });
+      if (url.includes("whirlpool.com")) return new Response("no", { status: 403 });
+      if (url.includes("faq")) return new Response(tinyPdf(["Find your manual online"]));
+      return new Response(tinyPdf(["Dishwasher WDF330PAHS5 use and care"]));
+    }) as unknown as typeof fetch;
+    const found = await findManual(env2, item, impl);
+    expect(found.candidates.map((c) => c.url)).toEqual([
+      "https://m.example.com/WDF330PAHS-manual.pdf",
+      `${site}/WDF330PAHS-owners-manual.pdf`,
+    ]);
+    expect(found.candidates[0]?.best).toBe(true);
   });
 });
