@@ -15,7 +15,7 @@ Built for the Meta Global AI Developer Hackathon (indie track).
 flowchart LR
   you["You"] --> site["Website\nMuse chat"]
   you --> ai["Claude, ChatGPT\nany MCP client"]
-  site --> tools["12 tools"]
+  site --> tools["14 tools"]
   ai -- "/mcp" --> tools
   tools --> db[("Supabase\nPostgres + RLS")]
   tools -- "add_item" --> muse["Muse Spark\nreads manuals"]
@@ -31,6 +31,7 @@ flowchart LR
 | `list_items`            | What you own, what's next, and what needs review.                                  |
 | `ask_manual`            | Answers with page cites: search (or just fix pages), error codes, the schedule.    |
 | `upcoming`              | Tasks due soon, plus facts a person should check.                                  |
+| `pulse`                 | The few upcoming things worth doing now: safety first, at most three. Jev decides. |
 | `revise_fact`           | Correct or confirm a fact, task or car seat limit, with a reason.                  |
 | `log_done`              | "I just cleaned the filter" moves the next due date.                               |
 | `record_measurement`    | A child's height and weight, or a thing's cycle count or hours.                    |

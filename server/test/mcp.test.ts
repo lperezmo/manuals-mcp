@@ -74,6 +74,7 @@ describe("MCP endpoint", () => {
         "house_atlas",
         "list_items",
         "log_done",
+        "pulse",
         "record_measurement",
         "request_manual_upload",
         "revise_fact",

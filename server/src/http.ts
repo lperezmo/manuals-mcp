@@ -53,6 +53,7 @@ import { blockedMessage, findManual } from "./finder/search.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
 import { isSafetyTurn, memoryTag, noteFrom, notesForMuse, saveNote } from "./memory.js";
 import { checkPhoto, checkRead, lookAtPhoto } from "./photo-check.js";
+import { buildPulse, pulseLog } from "./pulse.js";
 import { readReceipt, saveReceipt, warrantyStatus } from "./receipt.js";
 import {
   pushReport,
@@ -316,6 +317,43 @@ export function upkeepGroupsHandler(
       return Response.json({ groups });
     } catch (err) {
       return Response.json({ error: (err as Error).message }, { status: 502 });
+    }
+  };
+}
+
+/**
+ * Household Pulse for the home page: the few upcoming things worth doing now
+ * (pulse.ts). One Jev call at most, read as the user. Answers {pulse: null}
+ * when Jev is unset or down, and the page then shows no Pulse card.
+ */
+export function pulseHandler(
+  env: Env,
+  verify: Verify = supabaseVerifier(env),
+  fetchImpl: typeof fetch = fetch,
+) {
+  return async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    const auth = await verify(bearer(req));
+    if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
+    if (!env.router) return Response.json({ pulse: null });
+    const { userId } = userFrom(auth);
+    if (!fastAllowed(`pulse:${userId}`)) return Response.json({ pulse: null, slow_down: true });
+    const db = userDb(env, auth.token);
+    try {
+      const pulse = await buildPulse(env, db, userId, fetchImpl);
+      if (pulse?.jev) {
+        await logRun(db, {
+          kind: "pulse",
+          ok: true,
+          model: env.router.model,
+          ms: pulse.jev.ms,
+          tokens_in: pulse.jev.tokens_in,
+          raw_output: pulseLog(pulse),
+        });
+      }
+      return Response.json({ pulse });
+    } catch {
+      return Response.json({ pulse: null });
     }
   };
 }

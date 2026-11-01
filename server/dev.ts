@@ -8,6 +8,7 @@ import {
   ingestHandler,
   mcpHandler,
   publicConfigHandler,
+  pulseHandler,
   receiptHandler,
   reportHandler,
   resourceMetadataHandler,
@@ -31,6 +32,7 @@ const suggest = suggestHandler(config);
 const receipt = receiptHandler(config);
 const attach = attachHandler(config);
 const upkeepGroups = upkeepGroupsHandler(config);
+const pulse = pulseHandler(config);
 const port = Number(process.env.PORT ?? 3000);
 
 Bun.serve({
@@ -50,6 +52,7 @@ Bun.serve({
     if (pathname === "/api/receipt") return receipt(req);
     if (pathname === "/api/attach") return attach(req);
     if (pathname === "/api/upkeep-groups") return upkeepGroups(req);
+    if (pathname === "/api/pulse") return pulse(req);
     const file = Bun.file(
       `./public${pathname === "/" ? "/index.html" : pathname}${pathname.includes(".") || pathname === "/" ? "" : ".html"}`,
     );
