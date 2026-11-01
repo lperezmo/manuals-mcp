@@ -337,8 +337,16 @@
 
       async function detail(id) {
         onJobDone = (job) => {
-          // A finished read, or a search that carried on while the page was paused.
-          if (job.item === id) detail(id);
+          if (job.item !== id) return;
+          if (job.kind === "read") return detail(id);
+          // A search that carried on while the page was paused: show what it found,
+          // or say it didn't finish (never start another one by itself).
+          if (!$("[data-still-searching]")) return;
+          recentSearch(id).then((out) => {
+            const still = $("[data-still-searching]");
+            if (out) detail(id);
+            else if (still) still.textContent = "The search didn't finish. Tap Search again.";
+          });
         };
         const supa = await db();
         const { data: item, error } = await supa
@@ -1031,7 +1039,7 @@
               // searching and saves what it finds. The pill watches for it, and this
               // card fills in when it's done.
               if (err.dropped) {
-                found.innerHTML = '<p class="muted small" role="status">Still searching. The results show up here when it's done.</p>';
+                found.innerHTML = '<p class="muted small" role="status" data-still-searching>Still searching. The results show up here when it is done.</p>';
                 return;
               }
               forgetJob("search", item.id);
