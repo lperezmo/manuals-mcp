@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { historySchema, saveHistory } from "../catch-up.js";
 import type { ItemRow } from "../db.js";
 import type { Env } from "../env.js";
 import { ATTACH_TIMEOUT_MS, FetchPdfError, fetchPdf } from "../finder/fetch-pdf.js";
@@ -60,6 +61,11 @@ export function register(server: McpServer, env: Env) {
           .boolean()
           .optional()
           .describe("True when the PDF is on the manufacturer's own website."),
+        history: historySchema
+          .optional()
+          .describe(
+            "For a thing that isn't new: what the user said about its past. Saved for catch_up, which plans its catch-up once the manual is read.",
+          ),
       }),
       annotations: {
         readOnlyHint: false,
@@ -68,7 +74,7 @@ export function register(server: McpServer, env: Env) {
         openWorldHint: true,
       },
     },
-    async ({ attach_to, pdf_url, official, ...fields }, ctx) =>
+    async ({ attach_to, pdf_url, official, history, ...fields }, ctx) =>
       guarded(async () => {
         const { db, householdId } = await session(env, ctx);
 
@@ -88,11 +94,13 @@ export function register(server: McpServer, env: Env) {
           added = true;
         }
         const label = itemLabel(item);
+        if (history) await saveHistory(db, item.id, history);
+        const notNew = history && history.condition !== "new";
 
         if (!pdf_url) {
           const query = [item.brand, item.model, "owner's manual pdf"].filter(Boolean).join(" ");
           return reply(
-            `${added ? `Added ${label}.` : `${label} is already saved.`} No manual yet: search for "${query}"${item.model ? "" : " (ask the user for the model number first)"} and call add_item again with attach_to and pdf_url.`,
+            `${added ? `Added ${label}.` : `${label} is already saved.`} No manual yet: search for "${query}"${item.model ? "" : " (ask the user for the model number first)"} and call add_item again with attach_to and pdf_url.${notNew ? " It isn't new: once the manual is read, call catch_up to seed its schedule from its history." : ""}`,
             { item, suggested_search: query },
           );
         }
@@ -123,8 +131,11 @@ export function register(server: McpServer, env: Env) {
         const read = d
           ? `Read it: ${d.tasks} upkeep tasks, ${d.facts} facts${d.seat_modes ? `, ${d.seat_modes} car seat modes` : ""}.${d.needs_review ? ` ${d.needs_review} need a person to check (see upcoming).` : ""}`
           : (outcome.note ?? "");
+        const next = notNew
+          ? " It isn't new: call catch_up next to seed its schedule from its history."
+          : "";
         return reply(
-          `${added ? `Added ${label} with` : `Attached`} a ${outcome.page_count ?? "?"}-page manual${added ? "" : ` to ${label}`}. ${read}`,
+          `${added ? `Added ${label} with` : `Attached`} a ${outcome.page_count ?? "?"}-page manual${added ? "" : ` to ${label}`}. ${read}${next}`,
           { item, manual: outcome },
         );
       }),

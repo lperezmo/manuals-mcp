@@ -120,7 +120,7 @@ describe("chat with the router", () => {
     const res = await chatHandler(env, verify, net)(ask("The filter isn't monthly", await mint()));
     expect(res.status).toBe(200);
     expect(toMuse[0].tools.map((t: any) => t.function.name).sort()).toEqual(
-      ["ask_manual", "list_items", "revise_fact", "show_card"].sort(),
+      ["ask_manual", "catch_up", "list_items", "revise_fact", "show_card"].sort(),
     );
     expect(logged[0].tools_used).toEqual(["route:fix 0.88"]);
   });

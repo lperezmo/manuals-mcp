@@ -70,6 +70,7 @@ describe("MCP endpoint", () => {
         "add_item",
         "ask_manual",
         "car_seat_status",
+        "catch_up",
         "list_items",
         "log_done",
         "record_measurement",
