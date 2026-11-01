@@ -22,7 +22,7 @@ import { ATTACH_DOWNLOAD_MS, FetchPdfError, fetchPdf } from "./finder/fetch-pdf.
 import { processStoredManual, ReadingBusyError, storeManual } from "./finder/ingest.js";
 import { findManual } from "./finder/search.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
-import { checkPhoto, lookAtPhoto } from "./photo-check.js";
+import { checkPhoto, checkRead, lookAtPhoto } from "./photo-check.js";
 import { readReceipt, saveReceipt, warrantyStatus } from "./receipt.js";
 import {
   pushReport,
@@ -506,8 +506,19 @@ export function snapHandler(
     }
     try {
       const label = await readLabel(env, photo, fetchImpl);
-      await logRun(db, { kind: "snap", ok: true, model, ms: Date.now() - started });
-      return Response.json(label);
+      // Jev's second look at what Muse read: a doubtful model number sends the
+      // wizard to its "Almost" step instead of finding the wrong manual. Asked
+      // even when found is false, since the wizard still uses a brand or model.
+      const reread = await checkRead(env, photo, label, "label", fetchImpl);
+      const doubtful = reread?.doubtful ?? [];
+      await logRun(db, {
+        kind: "snap",
+        ok: true,
+        model,
+        ms: Date.now() - started,
+        ...(reread ? { raw_output: JSON.stringify({ ...label, check: reread }) } : {}),
+      });
+      return Response.json(doubtful.length ? { ...label, unsure: true, doubtful } : label);
     } catch (err) {
       const error = (err as Error).message;
       await logRun(db, { kind: "snap", ok: false, model, error, ms: Date.now() - started });
@@ -591,13 +602,23 @@ export function receiptHandler(
     }
     try {
       const read = await readReceipt(env, photo, fetchImpl);
+      // The same second look: a doubtful date or price is saved, but the
+      // person is asked to check it against the photo. Anything read is saved
+      // below, found or not, so anything read is checked.
+      const reread = await checkRead(env, photo, read, "receipt", fetchImpl);
+      const doubtful = reread?.doubtful ?? [];
+      if (doubtful.length) read.unsure = true;
       await logRun(db, {
         kind: "snap",
         ok: true,
         model,
         ms: Date.now() - started,
         item_id: item.id,
-        raw_output: JSON.stringify({ photo: "receipt", ...read }),
+        raw_output: JSON.stringify({
+          photo: "receipt",
+          ...read,
+          ...(reread ? { check: reread } : {}),
+        }),
       });
       if (!read.found && !read.purchased_on && !read.store && !read.warranty_months) {
         return Response.json({ found: false });
@@ -620,6 +641,7 @@ export function receiptHandler(
           warranty_ends_on: read.warranty_ends_on ?? null,
         }),
         ...(saved.note ? { note: saved.note } : {}),
+        ...(doubtful.length ? { doubtful } : {}),
       });
     } catch (err) {
       const error = (err as Error).message;
