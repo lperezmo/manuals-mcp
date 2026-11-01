@@ -4,6 +4,8 @@ import {
   findManual,
   isBrandHost,
   modelMatch,
+  pagesWorthOpening,
+  pdfLinksFromPages,
   pickBest,
   rankResults,
   sameLineModels,
@@ -272,5 +274,73 @@ describe("searchWeb", () => {
   test("without Tavily, a SearXNG failure is the error", async () => {
     const { impl } = answer(new Response("no", { status: 403 }));
     await expect(searchWeb(readEnv(base), "lg", impl)).rejects.toThrow("403");
+  });
+});
+
+describe("opening a maker's page for its PDF links", () => {
+  const crawl = {
+    baseUrl: "https://cr.example.com",
+    token: "tok",
+    accessId: "id",
+    accessSecret: "s",
+  };
+  const item = { brand: "Toshiba", model: "RAC-PD0811CRU" };
+
+  test("only the maker's pages or ones naming the model, never PDFs or listing sites", () => {
+    const picked = pagesWorthOpening(
+      [
+        { url: "https://www.toshiba-lifestyle.com/us/support/ac", title: "Support", score: 0.5 },
+        { url: "https://shop.example.com/rac-pd0811cru", title: "Buy it", score: 0.9 },
+        { url: "https://www.toshiba-lifestyle.com/m.pdf", title: "PDF", score: 1 },
+        { url: "https://www.manualslib.com/x/RAC-PD0811CRU.html", title: "x", score: 1 },
+        { url: "https://blog.example.com/ac-tips", title: "Tips", score: 1 },
+      ],
+      item,
+    );
+    expect(picked.map((r) => r.url)).toEqual([
+      "https://shop.example.com/rac-pd0811cru",
+      "https://www.toshiba-lifestyle.com/us/support/ac",
+    ]);
+  });
+
+  test("keeps the PDF links on the page, scored just under it", async () => {
+    let sent: { headers: Record<string, string>; body: string } | undefined;
+    const impl = (async (_u: string, init: RequestInit) => {
+      sent = { headers: init.headers as Record<string, string>, body: String(init.body) };
+      return Response.json({
+        results: [
+          {
+            url: "https://www.toshiba-lifestyle.com/us/ac",
+            links: {
+              internal: [
+                { href: "/files/RAC-PD0811CRU-manual.pdf", text: "Owner's Manual" },
+                { href: "/us/contact", text: "Contact" },
+              ],
+              external: [{ href: "http://insecure.example/m.pdf", text: "old" }],
+            },
+          },
+        ],
+      });
+    }) as unknown as typeof fetch;
+    const out = await pdfLinksFromPages(
+      crawl,
+      [{ url: "https://www.toshiba-lifestyle.com/us/ac", title: "AC", score: 0.8 }],
+      impl,
+    );
+    expect(sent?.headers.authorization).toBe("Bearer tok");
+    expect(sent?.headers["CF-Access-Client-Id"]).toBe("id");
+    expect(out).toEqual([
+      {
+        url: "https://www.toshiba-lifestyle.com/files/RAC-PD0811CRU-manual.pdf",
+        title: "Owner's Manual",
+        score: 0.79,
+      },
+    ]);
+  });
+
+  test("a crawler that's down finds nothing instead of failing the search", async () => {
+    const down = (async () => new Response("no", { status: 502 })) as unknown as typeof fetch;
+    const page = { url: "https://www.toshiba-lifestyle.com/us/ac", title: "AC", score: 1 };
+    expect(await pdfLinksFromPages(crawl, [page], down)).toEqual([]);
   });
 });

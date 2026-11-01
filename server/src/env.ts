@@ -38,6 +38,11 @@ export interface Env {
     searxng?: { baseUrl: string; accessId?: string; accessSecret?: string };
     tavily?: { apiKey: string };
   };
+  /**
+   * Self-hosted Crawl4AI, for opening a maker's product page when the search
+   * found too few PDFs. Shares SearXNG's Cloudflare Access service token.
+   */
+  crawl?: { baseUrl: string; token: string; accessId?: string; accessSecret?: string };
   /** Where issue reports are pushed (an ntfy.sh topic); reports are saved either way. */
   notify?: { url: string; topic: string };
   /** Jev (TypeSafe AI) sorts each chat message so Muse only gets the tools it needs. */
@@ -97,6 +102,15 @@ export function readEnv(source: Record<string, string | undefined> = process.env
                 }
               : {}),
             ...(source.SEARCH_API_KEY ? { tavily: { apiKey: source.SEARCH_API_KEY } } : {}),
+          }
+        : undefined,
+    crawl:
+      source.CRAWL4AI_URL && source.CRAWL4AI_API_TOKEN
+        ? {
+            baseUrl: trimSlash(source.CRAWL4AI_URL),
+            token: source.CRAWL4AI_API_TOKEN,
+            accessId: source.SEARXNG_ACCESS_ID || undefined,
+            accessSecret: source.SEARXNG_ACCESS_SECRET || undefined,
           }
         : undefined,
     notify: source.NTFY_TOPIC

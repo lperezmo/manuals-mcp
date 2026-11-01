@@ -345,7 +345,19 @@ export async function findManual(
     const seen = best.get(r.url);
     if (!seen || r.score > seen.score) best.set(r.url, r);
   }
-  const ranked = rankResults([...best.values()], item);
+  let ranked = rankResults([...best.values()], item);
+  // Too few PDFs: the maker's product page often links the manual without the search seeing it.
+  if (ranked.length < check && env.crawl) {
+    const found = await pdfLinksFromPages(
+      env.crawl,
+      pagesWorthOpening([...best.values()], item),
+      fetchImpl,
+    );
+    if (found.length) {
+      for (const r of found) if (!best.has(r.url)) best.set(r.url, r);
+      ranked = rankResults([...best.values()], item);
+    }
+  }
   const tried = await Promise.all(
     ranked.slice(0, check).map((c) => checkCandidate(c, item.model, fetchImpl)),
   );
@@ -366,6 +378,77 @@ export async function findManual(
   const picked = await pickBest(env, item, candidates, fetchImpl);
   const strip = ({ excerpt: _, ...c }: Candidate) => c;
   return { query, candidates: picked.map(strip), tried: tried.map(strip) };
+}
+
+/** Pages (not PDFs) from the maker's site or naming the model, best first, at most two. */
+export function pagesWorthOpening(
+  results: SearchResult[],
+  item: { brand?: string | null; model?: string | null },
+): SearchResult[] {
+  return results
+    .filter((r) => {
+      try {
+        const url = new URL(r.url);
+        const host = url.hostname.toLowerCase();
+        if (url.protocol !== "https:" || SKIP_HOSTS.test(host) || isPdfUrl(url)) return false;
+        return (
+          isBrandHost(host, item.brand) ||
+          modelMatch(`${r.title} ${url.pathname}`, item.model) !== null
+        );
+      } catch {
+        return false;
+      }
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 2);
+}
+
+/**
+ * Opens each page with Crawl4AI and keeps the PDF links on it, scored just
+ * under the page itself. Slow or failing pages are skipped quietly.
+ */
+export async function pdfLinksFromPages(
+  crawl: NonNullable<Env["crawl"]>,
+  pages: SearchResult[],
+  fetchImpl: typeof fetch = fetch,
+): Promise<SearchResult[]> {
+  if (!pages.length) return [];
+  const res = await fetchImpl(`${crawl.baseUrl}/crawl`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${crawl.token}`,
+      ...(crawl.accessId && crawl.accessSecret
+        ? { "CF-Access-Client-Id": crawl.accessId, "CF-Access-Client-Secret": crawl.accessSecret }
+        : {}),
+    },
+    body: JSON.stringify({ urls: pages.map((p) => p.url) }),
+    signal: AbortSignal.timeout(20_000),
+  }).catch(() => null);
+  if (!res?.ok) return [];
+  const body = (await res.json().catch(() => ({}))) as {
+    results?: {
+      url?: string;
+      links?: Record<string, { href?: string; text?: string }[]>;
+    }[];
+  };
+  const out: SearchResult[] = [];
+  for (const page of body.results ?? []) {
+    const from = pages.find((p) => p.url === page.url) ?? pages[0];
+    for (const link of Object.values(page.links ?? {}).flat()) {
+      try {
+        const url = new URL(link.href ?? "", page.url);
+        if (url.protocol !== "https:" || !isPdfUrl(url)) continue;
+        if (out.some((r) => r.url === url.toString())) continue;
+        out.push({
+          url: url.toString(),
+          title: (link.text ?? "").trim() || from?.title || "",
+          score: Math.max(0, (from?.score ?? 0) - 0.01),
+        });
+      } catch {}
+    }
+  }
+  return out.slice(0, 10);
 }
 
 /** Jev's "this is the one" must reach this, and beat the next by PICK_MARGIN. */
