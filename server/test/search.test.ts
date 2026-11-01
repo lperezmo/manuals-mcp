@@ -1,14 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { readEnv } from "../src/env.js";
 import {
+  choosePages,
   findManual,
   isBrandHost,
   modelMatch,
+  pagesWorthOpening,
+  pdfLinksFromPages,
   pickBest,
   rankResults,
   sameLineModels,
   searchQueries,
   searchQuery,
+  searchWeb,
   squash,
   suggestModel,
   tidyTitle,
@@ -212,10 +216,233 @@ describe("narrowing the options", () => {
     expect(out[1]?.best).toBeUndefined();
   });
 
+  test("a tie between two right manuals goes to the one covering fewer models", async () => {
+    const wide = { ...cand("P08", "x"), models: ["A1", "A2", "A3", "A4", "A5", "A6"] };
+    const narrow = { ...cand("RT", "y"), models: ["A1", "A2", "A3", "A4", "A5"] };
+    const out = await pickBest(jevEnv, item, [wide, narrow], jev([0.9, 0.9]));
+    expect(out[0]?.title).toBe("RT");
+    expect(out[0]?.best).toBe(true);
+  });
+
+  test("a tie on the model goes to the more specific, complete manual", async () => {
+    const list = [cand("Series", "x"), cand("Own", "y")];
+    const answers = (async () =>
+      Response.json({
+        answers: {
+          m0: { noul: 0.9 },
+          m0_specific: { noul: 0.2 },
+          m0_full: { noul: 0.9 },
+          m1: { noul: 0.9 },
+          m1_specific: { noul: 0.9 },
+          m1_full: { noul: 0.9 },
+        },
+      })) as unknown as typeof fetch;
+    const out = await pickBest(jevEnv, item, list, answers);
+    expect(out[0]?.title).toBe("Own");
+    expect(out[0]?.best).toBe(true);
+  });
+
+  test("Jev chooses which pages to crawl, at most two it believes in", async () => {
+    let asked = 0;
+    const answers = (async (_u: string, init: RequestInit) => {
+      asked = Object.keys(JSON.parse(String(init.body)).questions).length;
+      return Response.json({
+        answers: { p0: { noul: 0.1 }, p1: { noul: 0.8 }, p2: { noul: 0.6 }, p3: { noul: 0.7 } },
+      });
+    }) as unknown as typeof fetch;
+    const pages = await choosePages(
+      jevEnv,
+      item,
+      [
+        { url: "https://forum.example.com/ac", title: "Forum", score: 0.9 },
+        { url: "https://www.toshiba-lifestyle.com/us/ac", title: "Toshiba AC", score: 0.8 },
+        { url: "https://store.example.com/ac", title: "Store", score: 0.7 },
+        { url: "https://www.toshiba-lifestyle.com/support", title: "Support", score: 0.6 },
+        { url: "https://manuals.plus/toshiba/ac", title: "Listing", score: 1 },
+        { url: "https://x.example.com/m.pdf", title: "PDF", score: 1 },
+      ],
+      answers,
+    );
+    expect(asked).toBe(4);
+    expect(pages.map((r) => r.title)).toEqual(["Toshiba AC", "Support"]);
+  });
+
+  test("without Jev, the maker's and model-named pages are crawled", async () => {
+    const noJev = readEnv({
+      SUPABASE_URL: "https://example-ref.supabase.co",
+      SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+    });
+    const pages = await choosePages(noJev, item, [
+      { url: "https://forum.example.com/ac", title: "Forum", score: 0.9 },
+      { url: "https://www.toshiba-lifestyle.com/us/ac", title: "Toshiba AC", score: 0.8 },
+    ]);
+    expect(pages.map((r) => r.title)).toEqual(["Toshiba AC"]);
+  });
+
   test("a close call leaves the order alone", async () => {
     const list = [cand("A", "a"), cand("B", "b")];
     const out = await pickBest(jevEnv, item, list, jev([0.7, 0.65]));
     expect(out.map((c) => c.title)).toEqual(["A", "B"]);
     expect(out.some((c) => c.best)).toBe(false);
+  });
+});
+
+describe("searchWeb", () => {
+  const base = {
+    SUPABASE_URL: "https://example-ref.supabase.co",
+    SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+    SEARXNG_URL: "https://search.example.com/",
+    SEARXNG_ACCESS_ID: "id.access",
+    SEARXNG_ACCESS_SECRET: "secret",
+  };
+  const answer = (searx: Response) => {
+    const calls: { url: string; headers: Record<string, string> }[] = [];
+    const impl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, headers: (init?.headers ?? {}) as Record<string, string> });
+      if (url.startsWith("https://search.example.com")) return searx.clone();
+      return Response.json({
+        results: [{ url: "https://t.example/a.pdf", title: "T", score: 0.9 }],
+      });
+    }) as unknown as typeof fetch;
+    return { calls, impl };
+  };
+  const SEARX = Response.json({
+    results: [
+      { url: "https://a.example/one.pdf", title: "One" },
+      { url: "https://b.example/two.pdf", title: "Two" },
+    ],
+  });
+
+  test("asks SearXNG first, through Cloudflare Access, and ranks by position", async () => {
+    const { calls, impl } = answer(SEARX);
+    const out = await searchWeb(readEnv({ ...base, SEARCH_API_KEY: "tvly" }), "lg manual", impl);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://search.example.com/search?q=lg+manual&format=json");
+    expect(calls[0]?.headers["CF-Access-Client-Id"]).toBe("id.access");
+    expect(out.map((r) => r.score)).toEqual([1, 0.5]);
+  });
+
+  test("falls back to Tavily when SearXNG is blocked or finds nothing", async () => {
+    for (const searx of [new Response("no", { status: 403 }), Response.json({ results: [] })]) {
+      const { calls, impl } = answer(searx);
+      const out = await searchWeb(readEnv({ ...base, SEARCH_API_KEY: "tvly" }), "lg", impl);
+      expect(calls.map((c) => new URL(c.url).hostname)).toEqual([
+        "search.example.com",
+        "api.tavily.com",
+      ]);
+      expect(out[0]?.url).toBe("https://t.example/a.pdf");
+    }
+  });
+
+  test("without Tavily, a SearXNG failure is the error", async () => {
+    const { impl } = answer(new Response("no", { status: 403 }));
+    await expect(searchWeb(readEnv(base), "lg", impl)).rejects.toThrow("403");
+  });
+});
+
+describe("opening a maker's page for its PDF links", () => {
+  const crawl = {
+    baseUrl: "https://cr.example.com",
+    token: "tok",
+    accessId: "id",
+    accessSecret: "s",
+  };
+  const item = { brand: "Toshiba", model: "RAC-PD0811CRU" };
+
+  test("only the maker's pages or ones naming the model, never PDFs or listing sites", () => {
+    const picked = pagesWorthOpening(
+      [
+        { url: "https://www.toshiba-lifestyle.com/us/support/ac", title: "Support", score: 0.5 },
+        { url: "https://shop.example.com/rac-pd0811cru", title: "Buy it", score: 0.9 },
+        { url: "https://www.toshiba-lifestyle.com/m.pdf", title: "PDF", score: 1 },
+        { url: "https://www.manualslib.com/x/RAC-PD0811CRU.html", title: "x", score: 1 },
+        { url: "https://blog.example.com/ac-tips", title: "Tips", score: 1 },
+      ],
+      item,
+    );
+    expect(picked.map((r) => r.url)).toEqual([
+      "https://shop.example.com/rac-pd0811cru",
+      "https://www.toshiba-lifestyle.com/us/support/ac",
+    ]);
+  });
+
+  test("keeps the PDF links on the page, scored just under it", async () => {
+    let sent: { headers: Record<string, string>; body: string } | undefined;
+    const impl = (async (_u: string, init: RequestInit) => {
+      sent = { headers: init.headers as Record<string, string>, body: String(init.body) };
+      return Response.json({
+        results: [
+          {
+            url: "https://www.toshiba-lifestyle.com/us/ac",
+            links: {
+              internal: [
+                { href: "/files/RAC-PD0811CRU-manual.pdf", text: "Owner's Manual" },
+                { href: "/us/contact", text: "Contact" },
+              ],
+              external: [{ href: "http://insecure.example/m.pdf", text: "old" }],
+            },
+          },
+        ],
+      });
+    }) as unknown as typeof fetch;
+    const out = await pdfLinksFromPages(
+      crawl,
+      [{ url: "https://www.toshiba-lifestyle.com/us/ac", title: "AC", score: 0.8 }],
+      impl,
+    );
+    expect(sent?.headers.authorization).toBe("Bearer tok");
+    expect(sent?.headers["CF-Access-Client-Id"]).toBe("id");
+    expect(out).toEqual([
+      {
+        url: "https://www.toshiba-lifestyle.com/files/RAC-PD0811CRU-manual.pdf",
+        title: "Owner's Manual",
+        score: 0.79,
+      },
+    ]);
+  });
+
+  test("a crawler that's down finds nothing instead of failing the search", async () => {
+    const down = (async () => new Response("no", { status: 502 })) as unknown as typeof fetch;
+    const page = { url: "https://www.toshiba-lifestyle.com/us/ac", title: "AC", score: 1 };
+    expect(await pdfLinksFromPages(crawl, [page], down)).toEqual([]);
+  });
+});
+
+describe("the pick without asking Jev", () => {
+  test("the only PDF that prints the model is the best match", async () => {
+    const env = readEnv({
+      SUPABASE_URL: "https://example-ref.supabase.co",
+      SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+    });
+    const c = (title: string, has_model: boolean) => ({
+      url: `https://e.example/${title}.pdf`,
+      title,
+      host: "e.example",
+      official: false,
+      named: false,
+      has_model,
+      match: has_model ? ("exact" as const) : undefined,
+      excerpt: "text",
+    });
+    const out = await pickBest(env, { model: "RAC-PD0811CRU" }, [c("P14", false), c("P08", true)]);
+    expect(out.map((x) => [x.title, x.best ?? false])).toEqual([
+      ["P08", true],
+      ["P14", false],
+    ]);
+  });
+
+  test("listing sites aren't opened with the crawler", () => {
+    const picked = pagesWorthOpening(
+      [
+        {
+          url: "https://manuals.plus/toshiba/rac-pd0811cru-manual",
+          title: "RAC-PD0811CRU",
+          score: 1,
+        },
+      ],
+      { brand: "Toshiba", model: "RAC-PD0811CRU" },
+    );
+    expect(picked).toEqual([]);
   });
 });
