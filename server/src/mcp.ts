@@ -4,10 +4,12 @@ import * as addItem from "./tools/add-item.js";
 import * as askManual from "./tools/ask-manual.js";
 import * as carSeatStatus from "./tools/car-seat-status.js";
 import * as catchUp from "./tools/catch-up.js";
+import * as houseAtlas from "./tools/house-atlas.js";
 import * as listItems from "./tools/list-items.js";
 import * as logDone from "./tools/log-done.js";
 import * as recordMeasurement from "./tools/record-measurement.js";
 import * as reviseFact from "./tools/revise-fact.js";
+import * as saveView from "./tools/save-view.js";
 import * as upcoming from "./tools/upcoming.js";
 import * as warranty from "./tools/warranty.js";
 
@@ -22,6 +24,7 @@ export const INSTRUCTIONS = `Manuals keeps the user's household manuals and upke
 - When something breaks or needs a repair, check warranty_status first; if it's likely still covered, say so before suggesting a paid repair.
 - For car seats, compare the child's latest measurements with the seat's limits and cite the page. Don't predict growth or give health advice; suggest measuring again, and mention a certified child passenger safety technician can check the fit.
 - For a thing that isn't new (used for years, never maintained, or out of storage), ask what has been done to it and call catch_up once its manual is read.
+- For questions across the house ("what's in the nursery", "what uses water", "what can I do in five minutes", "what's due before winter"), use house_atlas with a lens, and a view in the user's words when the lenses don't cover it.
 - For calendar reminders, use your own calendar tools.`;
 
 export const TOOL_MODULES = [
@@ -35,6 +38,8 @@ export const TOOL_MODULES = [
   carSeatStatus,
   catchUp,
   warranty,
+  houseAtlas,
+  saveView,
 ];
 
 export function registerTools(server: McpServer, env: Env): void {
