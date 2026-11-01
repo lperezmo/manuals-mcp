@@ -240,7 +240,11 @@ export async function boot(current, { open = false } = {}) {
     return null;
   }
   // Pick up anything still reading or searching from an earlier page.
-  if (data.session) startWatching();
+  if (data.session) {
+    startWatching();
+    // Signs the household's thing photos while the page loads its data.
+    loadItemPhotos();
+  }
   return data.session;
 }
 
@@ -863,9 +867,148 @@ export function iconSvg(key, px) {
   return `<svg width="${px}" height="${px}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[key][2]}"></path></svg>`;
 }
 
-/** A tinted icon badge for a thing, as HTML. */
+/**
+ * A thing's badge, as HTML: its photo when it has one, else its tinted icon.
+ * Before the photos are signed it draws the icon and swaps the photo in after.
+ */
 export function itemIcon(item, size = 44) {
-  return `<span class="icon-badge ${tintKey(item)}" style="--s:${size}px" aria-hidden="true">${iconSvg(iconKey(item), Math.round(size * 0.6))}</span>`;
+  const url = item?.id ? photos?.get(item.id)?.url : null;
+  if (url)
+    return `<span class="icon-badge photo" style="--s:${size}px" aria-hidden="true">${photoImg(url)}</span>`;
+  if (!photos && item?.id) loadItemPhotos();
+  const mark = item?.id ? ` data-photo-for="${esc(item.id)}"` : "";
+  return `<span class="icon-badge ${tintKey(item)}"${mark} style="--s:${size}px" aria-hidden="true">${iconSvg(iconKey(item), Math.round(size * 0.6))}</span>`;
+}
+
+// --- Thing photos ------------------------------------------------------------
+// A thing can have a real photo (items.photo_path in the private "item-photos"
+// bucket) shown instead of its icon. Each page load reads which things have
+// one and signs the paths in one batch; signed links are kept in
+// sessionStorage until near their expiry, so moving between pages signs
+// nothing new.
+const PHOTO_BUCKET = "item-photos";
+const PHOTO_SIGNED = "manuals-photo-links";
+const SIGN_SECONDS = 3600;
+const PHOTO_PX = 512;
+let photos = null; // item id -> { path, url }; null until loaded
+let photosLoading = null;
+let photosReady = false; // false where the database has no photo_path yet
+
+const photoImg = (url) => `<img src="${esc(url)}" alt="" decoding="async">`;
+
+function readSigned() {
+  try {
+    return JSON.parse(sessionStorage.getItem(PHOTO_SIGNED)) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function keepSigned(map) {
+  try {
+    sessionStorage.setItem(
+      PHOTO_SIGNED,
+      JSON.stringify(Object.fromEntries([...map.values()].map((p) => [p.path, p]))),
+    );
+  } catch {}
+}
+
+/** Signs the paths with no link, or one about to run out, in one call. */
+async function signPaths(supa, paths) {
+  const cached = readSigned();
+  const soon = Date.now() + 10 * 60 * 1000;
+  const out = {};
+  const need = [];
+  for (const path of paths) {
+    if (cached[path]?.exp > soon) out[path] = cached[path];
+    else need.push(path);
+  }
+  if (need.length) {
+    const { data } = await supa.storage.from(PHOTO_BUCKET).createSignedUrls(need, SIGN_SECONDS);
+    const exp = Date.now() + SIGN_SECONDS * 1000;
+    for (const s of data ?? [])
+      if (s.signedUrl && !s.error) out[s.path] = { path: s.path, url: s.signedUrl, exp };
+  }
+  return out;
+}
+
+/** Puts photos into icons drawn before they were signed. */
+function fillPhotos() {
+  for (const el of document.querySelectorAll("[data-photo-for]")) {
+    const url = photos?.get(el.dataset.photoFor)?.url;
+    if (!url) continue;
+    el.className = "icon-badge photo";
+    el.innerHTML = photoImg(url);
+  }
+}
+
+/**
+ * Which things have a photo, with signed links, once per page load. Resolves
+ * to the map (item id -> { path, url }), or null where photos aren't set up.
+ */
+export function loadItemPhotos() {
+  photosLoading ??= (async () => {
+    const supa = await db();
+    const { data, error } = await supa
+      .from("items")
+      .select("id, photo_path")
+      .not("photo_path", "is", null);
+    photosReady = !error;
+    const rows = data ?? [];
+    const signed = rows.length
+      ? await signPaths(
+          supa,
+          rows.map((r) => r.photo_path),
+        )
+      : {};
+    photos = new Map(
+      rows.filter((r) => signed[r.photo_path]).map((r) => [r.id, signed[r.photo_path]]),
+    );
+    keepSigned(photos);
+    fillPhotos();
+    return photosReady ? photos : null;
+  })().catch(() => {
+    photos = new Map();
+    return null;
+  });
+  return photosLoading;
+}
+
+/**
+ * Sets a thing's photo from a picked file (shrunk to about 512 px, JPEG), or
+ * takes it away with `null`. The old picture is removed from storage either way.
+ */
+export async function setItemPhoto(item, file) {
+  const supa = await db();
+  const { data: row, error: readError } = await supa
+    .from("items")
+    .select("household_id, photo_path")
+    .eq("id", item.id)
+    .maybeSingle();
+  if (readError || !row) throw new Error(readError?.message ?? "That thing is gone.");
+  let path = null;
+  if (file) {
+    const blob = await (await fetch(await shrink(file, PHOTO_PX))).blob();
+    path = `${row.household_id}/${item.id}-${Date.now()}.jpg`;
+    const up = await supa.storage
+      .from(PHOTO_BUCKET)
+      .upload(path, blob, { contentType: "image/jpeg" });
+    if (up.error) throw new Error(`The photo didn't upload: ${up.error.message}`);
+  }
+  const { error } = await supa.from("items").update({ photo_path: path }).eq("id", item.id);
+  if (error) {
+    if (path) await supa.storage.from(PHOTO_BUCKET).remove([path]);
+    throw new Error(error.message);
+  }
+  if (row.photo_path) await supa.storage.from(PHOTO_BUCKET).remove([row.photo_path]);
+  await loadItemPhotos();
+  if (path) {
+    const signed = await signPaths(supa, [path]);
+    if (signed[path]) photos.set(item.id, signed[path]);
+  } else {
+    photos.delete(item.id);
+  }
+  keepSigned(photos);
 }
 
 /**

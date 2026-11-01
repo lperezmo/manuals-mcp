@@ -25,7 +25,7 @@
     </main>
 
     <script type="module">
-      import { $, ago, api, boot, daysBetween, db, esc, forgetJob, howOften, ICONS, iconKey, iconSvg, itemIcon, openChat, relDay, shareLink, shrink, TINTS, takePendingPhoto, tintKey, toast, today, tool, watchJob } from "/app.js";
+      import { $, ago, api, boot, daysBetween, db, esc, forgetJob, howOften, ICONS, iconKey, iconSvg, itemIcon, loadItemPhotos, openChat, relDay, setItemPhoto, shareLink, shrink, TINTS, takePendingPhoto, tintKey, toast, today, tool, watchJob } from "/app.js";
       import { JOB_MAX_MS } from "/jobs.js";
 
       const main = $("#main");
@@ -71,13 +71,14 @@
         toast(on ? `Archived the ${item.nickname}. Find it under Manage things.` : `The ${item.nickname} is back.`);
       }
 
-      /** Asks first; removes the stored PDFs, then the item (its manual, tasks, facts and history go with it). */
+      /** Asks first; removes the stored PDFs and photo, then the item (its manual, tasks, facts and history go with it). */
       async function deleteForever(item) {
         if (!confirm(`Delete the ${item.nickname} for good, with its manual, upkeep, facts and history? This can't be undone.`)) return false;
         const supa = await db();
         const { data: files } = await supa.from("manuals").select("storage_path").eq("item_id", item.id);
         const paths = (files ?? []).map((f) => f.storage_path).filter(Boolean);
         if (paths.length) await supa.storage.from("manuals").remove(paths);
+        if ((await loadItemPhotos())?.has(item.id)) await setItemPhoto(item, null).catch(() => {});
         const { error } = await supa.from("items").delete().eq("id", item.id);
         if (error) throw new Error(error.message);
         toast(`Deleted the ${item.nickname}.`);
@@ -397,6 +398,9 @@
 
         const manual = item.manuals?.[0];
         const strip = await manualStrip(supa, manual);
+        // Null where the database has no photos yet: the Photo row stays hidden.
+        const photoMap = await loadItemPhotos();
+        const hasPhoto = !!photoMap?.has(id);
         const readings =[...item.item_readings].sort((a, b) => b.measured_on.localeCompare(a.measured_on));
         const cycles = readings.find((r) => r.kind === "cycles");
         const badge = (x) =>
@@ -410,7 +414,7 @@
             <a href="/things" style="font-weight:700;text-decoration:none">← Your things</a>
             ${item.archived_at ? `<div class="card flat archived-banner"><span>${ic("archive")}Archived. It's hidden from your list, your upcoming tasks and Muse.</span><div class="row"><button type="button" class="small" id="restore-item">${ic("unarchive")}Restore</button><button type="button" class="quiet small danger" id="delete-item">${ic("delete")}Delete for good</button></div></div>` : ""}
             <div class="row" style="gap:16px;align-items:center;flex-wrap:nowrap">
-              <div class="icon-wrap">${itemIcon(item, 72)}<button type="button" class="corner-btn" id="look-btn" aria-label="Change name, icon or color" title="Change name, icon or color" aria-controls="look">${ic("palette")}</button></div>
+              <div class="icon-wrap">${itemIcon(item, 72)}<button type="button" class="corner-btn" id="look-btn" aria-label="Change name, photo, icon or color" title="Change name, photo, icon or color" aria-controls="look">${ic("palette")}</button></div>
               <div style="flex:1 1 auto;min-width:0">
                 <h1 style="margin:0;cursor:pointer" id="name-h" title="Rename">${esc(item.nickname)}</h1>
                 <p class="muted" style="margin:0">${esc([item.brand, item.model, item.serial && `serial ${item.serial}`].filter(Boolean).join(" · "))}</p>
@@ -426,12 +430,27 @@
             </div>
             ${strip}
             <details class="card panel" id="look">
-              <summary style="font-weight:700;cursor:pointer">Change name, icon or color</summary>
+              <summary style="font-weight:700;cursor:pointer">Change name, photo, icon or color</summary>
               <div class="stack" style="margin-top:14px">
                 <form class="stack" style="gap:8px" id="name-form">
                   <label class="small" style="font-weight:700" for="name-input">Name</label>
                   <div class="row"><input id="name-input" value="${esc(item.nickname)}" maxlength="80" required autocomplete="off" style="flex:1;min-width:12ch"><button type="submit">Save</button></div>
                 </form>
+                ${
+                  photoMap
+                    ? `<div class="stack" style="gap:8px">
+                  <span class="small" style="font-weight:700">Photo</span>
+                  <div class="row">
+                    <label class="button outline" for="look-camera" style="cursor:pointer">${ic("photo_camera")}Take a photo</label>
+                    <label class="button outline" for="look-upload" style="cursor:pointer">Upload a photo</label>
+                    ${hasPhoto ? '<button type="button" class="quiet" id="photo-clear">Back to the icon</button>' : ""}
+                  </div>
+                  <input id="look-camera" type="file" accept="image/*" capture="environment" class="sr-only">
+                  <input id="look-upload" type="file" accept="image/*" class="sr-only">
+                  <p class="small muted" id="photo-msg" role="status" style="margin:0">A photo shows in place of the icon and color.</p>
+                </div>`
+                    : ""
+                }
                 <div class="stack" style="gap:8px">
                   <span class="small" style="font-weight:700">Icon</span>
                   <div class="choices" role="group" aria-label="Icon">${Object.keys(ICONS)
@@ -617,6 +636,29 @@
         for (const b of main.querySelectorAll("[data-tint]")) {
           b.addEventListener("click", () => saveLook({ tint: b.dataset.tint }));
         }
+        // A real photo of the thing in place of its icon, or back to the icon.
+        const savePhoto = async (file, done) => {
+          const busy = [...main.querySelectorAll("#look-camera, #look-upload, #photo-clear")];
+          for (const b of busy) b.disabled = true;
+          $("#photo-msg").textContent = file ? "Saving the photo…" : "Removing the photo…";
+          try {
+            await setItemPhoto(item, file);
+            await detail(id);
+            $("#look").open = true;
+            toast(done);
+          } catch (err) {
+            for (const b of busy) b.disabled = false;
+            $("#photo-msg").textContent = err.message;
+          }
+        };
+        for (const input of ["#look-camera", "#look-upload"]) {
+          $(input)?.addEventListener("change", (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) savePhoto(file, "Photo saved.");
+          });
+        }
+        $("#photo-clear")?.addEventListener("click", () => savePhoto(null, "Back to the icon."));
         wireManualForm(item, () => detail(id));
         wireWarranty(item, receipt, !receiptsError, () => detail(id));
         const markDone = async (taskId) => {
