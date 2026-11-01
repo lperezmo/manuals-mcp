@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readEnv } from "../src/env.js";
 import { snapHandler } from "../src/http.js";
-import { labelSchema, modelGuess, radioSticker, splitCode } from "../src/snap.js";
+import {
+  GARBLED,
+  labelSchema,
+  modelGuess,
+  parseLabel,
+  radioSticker,
+  splitCode,
+} from "../src/snap.js";
 import midea from "./fixtures/labels/midea-wifi-sticker.json" with { type: "json" };
 import { testAuth } from "./helpers.js";
 
@@ -120,5 +127,38 @@ describe("/api/snap on a Wi-Fi sticker", () => {
     expect(out).toMatchObject({ model: "MDF24P3AST", category: "dishwasher" });
     expect(out.model_guess).toBeUndefined();
     expect(out.radio).toBeUndefined();
+  });
+});
+
+describe("parseLabel", () => {
+  test("finds the JSON in a fenced or chatty answer", () => {
+    expect(parseLabel('```json\n{"found":true,"brand":"Midea"}\n```').brand).toBe("Midea");
+    expect(parseLabel('Here it is: {"found":true,"model":"R0698201"} Hope that helps.').model).toBe(
+      "R0698201",
+    );
+  });
+
+  test("one odd field is dropped, not the whole read", () => {
+    const label = parseLabel(
+      JSON.stringify({
+        found: true,
+        brand: "Midea",
+        model: 12345,
+        kind: "dishwasher",
+        nickname: "x".repeat(200),
+      }),
+    );
+    expect(label).toMatchObject({
+      found: true,
+      brand: "Midea",
+      model: null,
+      kind: null,
+      nickname: null,
+    });
+  });
+
+  test("an answer with no JSON says so in plain words", () => {
+    expect(() => parseLabel("Sorry, I can't read that.")).toThrow(GARBLED);
+    expect(() => parseLabel('{"found": true, "brand": "Mid')).toThrow(GARBLED);
   });
 });

@@ -6,15 +6,19 @@ import type { Env } from "./env.js";
 
 export const MAX_IMAGE_BYTES = 2_000_000;
 
+// One odd field (a number for a string, an unknown kind, a long name) drops
+// that field instead of failing the whole read.
+const text = (max: number) => z.string().max(max).nullish().catch(null);
+
 export const labelSchema = z.object({
-  found: z.boolean().default(false),
-  brand: z.string().max(80).nullish(),
-  model: z.string().max(80).nullish(),
-  serial: z.string().max(80).nullish(),
-  category: z.string().max(40).nullish(),
-  kind: z.enum(["appliance", "baby_gear", "vehicle", "other"]).nullish(),
-  nickname: z.string().max(80).nullish(),
-  unsure: z.boolean().default(false),
+  found: z.boolean().default(false).catch(false),
+  brand: text(80),
+  model: text(80),
+  serial: text(80),
+  category: text(40),
+  kind: z.enum(["appliance", "baby_gear", "vehicle", "other"]).nullish().catch(null),
+  nickname: text(80),
+  unsure: z.boolean().default(false).catch(false),
   // Other tagged codes on the sticker ("FCC ID: 2ADQOMDNA23", "MO: R0698201"),
   // so a label with no "Model" line can still offer a likely model number.
   codes: z.array(z.string().max(120)).max(20).nullish().catch(null),
@@ -102,6 +106,22 @@ export async function readLabel(
   });
   if (!res.ok) throw new Error(`The photo reader answered ${res.status}.`);
   const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-  const text = (body.choices?.[0]?.message?.content ?? "").replace(/^```(?:json)?\s*|\s*```$/g, "");
-  return labelSchema.parse(JSON.parse(text));
+  return parseLabel(body.choices?.[0]?.message?.content ?? "");
+}
+
+export const GARBLED = "Muse's answer about that photo came back garbled. Try it once more.";
+
+/** Muse's answer as a Label: the JSON object in it, even with a fence or words around it. */
+export function parseLabel(answer: string): Label {
+  const start = answer.indexOf("{");
+  const end = answer.lastIndexOf("}");
+  let json: unknown;
+  try {
+    json = JSON.parse(answer.slice(start, end + 1));
+  } catch {
+    throw new Error(GARBLED);
+  }
+  const label = labelSchema.safeParse(json);
+  if (!label.success) throw new Error(GARBLED);
+  return label.data;
 }

@@ -637,6 +637,13 @@ const DATA_URL = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/;
  */
 const BOX_BY_MS = 45_000;
 
+/** What the person sees when reading a photo failed: Muse's timeout in plain words. */
+function photoError(err: Error): string {
+  return err.name === "TimeoutError"
+    ? "Muse took too long with that photo. Try it once more."
+    : err.message;
+}
+
 /** Reads a label photo (JSON with a data URL) into brand, model and serial. */
 export function snapHandler(
   env: Env,
@@ -733,7 +740,7 @@ export function snapHandler(
     } catch (err) {
       const error = (err as Error).message;
       await logRun(db, { kind: "snap", ok: false, model, error, ms: Date.now() - started });
-      return Response.json({ error }, { status: 502 });
+      return Response.json({ error: photoError(err as Error) }, { status: 502 });
     }
   };
 }
@@ -859,7 +866,7 @@ export function receiptHandler(
     } catch (err) {
       const error = (err as Error).message;
       await logRun(db, { kind: "snap", ok: false, model, error, ms: Date.now() - started });
-      return Response.json({ error }, { status: 502 });
+      return Response.json({ error: photoError(err as Error) }, { status: 502 });
     }
   };
 }
