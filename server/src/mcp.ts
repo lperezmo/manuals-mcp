@@ -3,6 +3,7 @@ import type { Env } from "./env.js";
 import * as addItem from "./tools/add-item.js";
 import * as askManual from "./tools/ask-manual.js";
 import * as carSeatStatus from "./tools/car-seat-status.js";
+import * as catchUp from "./tools/catch-up.js";
 import * as listItems from "./tools/list-items.js";
 import * as logDone from "./tools/log-done.js";
 import * as recordMeasurement from "./tools/record-measurement.js";
@@ -18,6 +19,7 @@ export const INSTRUCTIONS = `Manuals keeps the user's household manuals and upke
 - Some facts are flagged needs_review. Mention it when you use one, and offer to check it.
 - When the user doubts a fact, read its page with ask_manual (item and page), compare, and fix or confirm it with revise_fact. What the user states themselves wins.
 - For car seats, compare the child's latest measurements with the seat's limits and cite the page. Don't predict growth or give health advice; suggest measuring again, and mention a certified child passenger safety technician can check the fit.
+- For a thing that isn't new (used for years, never maintained, or out of storage), ask what has been done to it and call catch_up once its manual is read.
 - For calendar reminders, use your own calendar tools.`;
 
 export const TOOL_MODULES = [
@@ -29,6 +31,7 @@ export const TOOL_MODULES = [
   logDone,
   recordMeasurement,
   carSeatStatus,
+  catchUp,
 ];
 
 export function registerTools(server: McpServer, env: Env): void {

@@ -6,7 +6,7 @@ import { INSTRUCTIONS, registerTools } from "./mcp.js";
 import * as updateItem from "./tools/update-item.js";
 
 // The website's chat: Muse Spark (or any OpenAI-compatible model) with the
-// same 8 tools the MCP server exposes, run as the signed-in user so RLS
+// same 9 tools the MCP server exposes, run as the signed-in user so RLS
 // applies exactly as it does over MCP. Kept small on purpose: a few tool
 // rounds, short answers, and a capped history.
 
@@ -21,7 +21,7 @@ You are Muse, answering inside the Manuals website. Answer in two to five short 
 
 Forms: when you need details from the user, call show_card instead of asking in prose. It shows a small form (date, number with units, choice, checklist, text) under your message and ends your turn; the answers come back as the user's next message, then save them with the tools.
 
-Setting up a thing (the user says "set up" or "tell you about" it): call list_items and upcoming for it, then ask at most 4 short questions that change its schedule or safety, one show_card at a time. Car seat: who it's for (offer the household's children, or ask the child's name, birth date, weight and height), and the date of manufacture from the seat's label. Appliance: when it was bought and roughly how often it's used a week. Save with update_item and record_measurement. Last, if it has many upkeep tasks, offer a checklist card of them (task ids as values, all checked) so the user can untick ones they don't need; turn unticked ones off with revise_fact (type task, active false). Then sum up in two sentences.`;
+Setting up a thing (the user says "set up" or "tell you about" it): call list_items and upcoming for it, then ask at most 4 short questions that change its schedule or safety, one show_card at a time. Car seat: who it's for (offer the household's children, or ask the child's name, birth date, weight and height), and the date of manufacture from the seat's label. Appliance: when it was bought and roughly how often it's used a week, and if it isn't new, what has been done to it (a text field). Save with update_item and record_measurement; for one that isn't new, call catch_up with what they said. Last, if it has many upkeep tasks, offer a checklist card of them (task ids as values, all checked) so the user can untick ones they don't need; turn unticked ones off with revise_fact (type task, active false). Then sum up in two sentences.`;
 
 type ToolHandler = (input: unknown, ctx: unknown) => Promise<CallToolResult>;
 

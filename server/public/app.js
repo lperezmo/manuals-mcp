@@ -83,7 +83,7 @@ export async function api(path, body) {
   return json;
 }
 
-/** Runs one of the 8 tools, exactly as an AI would. */
+/** Runs one of the 9 tools, exactly as an AI would. */
 export const tool = (name, args = {}) => api("/api/tool", { name, args });
 
 const NAV = [

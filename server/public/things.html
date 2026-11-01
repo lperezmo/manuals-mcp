@@ -12,7 +12,7 @@
     />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=archive,auto_awesome,build,check,cleaning_services,content_copy,delete,edit,event,fact_check,forum,health_and_safety,menu_book,more_horiz,palette,settings,share,tune,unarchive&display=block"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=archive,auto_awesome,build,check,cleaning_services,content_copy,delete,edit,event,fact_check,forum,health_and_safety,history,menu_book,more_horiz,palette,settings,share,tune,unarchive&display=block"
     />
     <link rel="stylesheet" href="/theme.css" />
     <script src="/theme.js"></script>
@@ -205,6 +205,53 @@
         }
       }
 
+      // --- Back history ----------------------------------------------------------
+      // A thing that isn't new (used for years, or out of storage) shouldn't
+      // start its schedule as if it was serviced today. What the owner says
+      // about it goes to Muse, which plans the catch-up (the catch_up tool).
+      const CONDITIONS = [["used", "Used for a while"], ["stored", "Coming out of storage"], ["new", "Brand new"]];
+      const IDLE = [["0", "It's in use now"], ["3", "A few months ago"], ["12", "About a year ago"], ["24", "Two years ago or more"], ["", "Not sure"]];
+      const GOALS = [["keep_running", "Just keep it running"], ["like_new", "Get it back to like new"], ["bare_minimum", "The bare minimum"]];
+      // Kept for this visit too, so the page can plan from it before the database has the history columns.
+      const HISTORY_KEY = (id) => `manuals-history-${id}`;
+      const PLAN_KEY = (id) => `manuals-plan-${id}`;
+      const PLANNED_KEY = (id) => `manuals-planned-${id}`;
+      const stash = (key, value) => {
+        try {
+          sessionStorage.setItem(key, value);
+        } catch {}
+      };
+      const unstash = (key) => {
+        try {
+          return JSON.parse(sessionStorage.getItem(key) || "null");
+        } catch {
+          return null;
+        }
+      };
+
+      function historyFields(h = {}, withCondition = true) {
+        const opt = (list, value) => list.map(([v, t]) => `<option value="${v}" ${String(value ?? "") === v ? "selected" : ""}>${t}</option>`).join("");
+        return `${withCondition ? `<label class="small" for="h-condition"><strong>Is it new?</strong></label><select id="h-condition">${opt(CONDITIONS, h.condition)}</select>` : ""}
+          <label class="small" for="h-age"><strong>About how old is it?</strong> <span class="muted">(years, optional)</span></label>
+          <input id="h-age" type="number" min="0" max="100" step="0.5" inputmode="decimal" value="${h.age_years ?? ""}">
+          <label class="small" for="h-idle"><strong>When was it last used?</strong></label>
+          <select id="h-idle">${opt(IDLE, h.idle_months)}</select>
+          <label class="small" for="h-done"><strong>What has been done to it?</strong> <span class="muted">In your own words</span></label>
+          <textarea id="h-done" rows="3" maxlength="1000" placeholder="In storage two years, never touched. Or: I clean the lint trap but nothing else. Or: no idea.">${esc(h.done ?? "")}</textarea>
+          <label class="small" for="h-goal"><strong>Going forward</strong></label>
+          <select id="h-goal">${opt(GOALS, h.goal ?? "keep_running")}</select>`;
+      }
+
+      /** The history form's answers, in the catch_up tool's terms; blanks are left out. */
+      function readHistory(condition) {
+        const h = { condition: condition ?? $("#h-condition").value, goal: $("#h-goal").value };
+        if ($("#h-age").value !== "") h.age_years = Number($("#h-age").value);
+        if ($("#h-idle").value !== "") h.idle_months = Number($("#h-idle").value);
+        const done = $("#h-done").value.trim();
+        if (done) h.done = done;
+        return h;
+      }
+
       // --- One thing -----------------------------------------------------------
 
       // Someone with the same thing gets a copy of its schedule, facts and pages.
@@ -263,6 +310,19 @@
               .in("target_id", ids)
               .order("created_at", { ascending: false })
           : { data: [] };
+        // Back history and catch-up steps. Read on their own, so the page still
+        // works where the database doesn't have these columns yet.
+        const [{ data: saved }, { data: marked }] = await Promise.all([
+          supa.from("items").select("condition, age_years, idle_months, history_note, upkeep_goal, caught_up_at, catch_up_summary").eq("id", id).maybeSingle(),
+          supa.from("tasks").select("id").eq("item_id", id).eq("catch_up", true),
+        ]);
+        const lastPlan = unstash(PLAN_KEY(id));
+        const past = saved?.condition
+          ? { condition: saved.condition, age_years: saved.age_years ?? undefined, idle_months: saved.idle_months ?? undefined, done: saved.history_note ?? undefined, goal: saved.upkeep_goal ?? undefined }
+          : unstash(HISTORY_KEY(id));
+        const stepIds = new Set([...(marked ?? []).map((t) => t.id), ...(lastPlan?.ids ?? [])]);
+        const steps = item.tasks.filter((t) => stepIds.has(t.id) && t.active).sort((a, b) => (a.next_due_on ?? "").localeCompare(b.next_due_on ?? ""));
+        const planSummary = saved?.catch_up_summary || lastPlan?.summary || "";
 
         const manual = item.manuals?.[0];
         const readings = [...item.item_readings].sort((a, b) => b.measured_on.localeCompare(a.measured_on));
@@ -289,6 +349,7 @@
             <div class="row">
               <button type="button" id="ask">${ic("forum")}Ask about the ${esc(item.nickname.toLowerCase())}</button>
               ${manual ? `<button type="button" class="quiet" id="setup">${ic("auto_awesome")}Set it up with Muse</button>` : ""}
+              ${item.archived_at ? "" : `<button type="button" class="quiet" id="catchup-btn" aria-controls="catchup">${ic("history")}${past && past.condition !== "new" ? "Catch it up again" : "Not new? Catch it up"}</button>`}
               ${manual?.source_url && !isExample(manual.source_url) ? `<a class="button quiet" href="${esc(manual.source_url)}" rel="noopener noreferrer" target="_blank">${ic("menu_book")}Open the manual</a>` : manual?.source_url ? '<span class="small muted">Example manual, no PDF to open</span>' : ""}
             </div>
             <details class="card panel" id="look">
@@ -315,7 +376,46 @@
               <summary style="font-weight:700;cursor:pointer">Share this manual</summary>
               <div class="stack" id="share-body" style="margin-top:14px"><p class="muted small">One moment…</p></div>
             </details>
+            ${
+              item.archived_at
+                ? ""
+                : `<details class="card panel" id="catchup">
+                    <summary style="font-weight:700;cursor:pointer">Catch up a thing that isn't new</summary>
+                    <form class="stack" id="catchup-form" style="margin-top:14px">
+                      <p class="muted small" style="margin:0">Been in use for years, or sat in storage? Tell Muse what has been done and it plans the catch-up: steps to do first (with the manual's page where it says so), tasks you already do dated from when you last did them, and the rest due over the next few weeks, a couple at a time.</p>
+                      ${historyFields(past ?? { condition: "used" })}
+                      <div class="row"><button type="submit">Make a catch-up plan</button></div>
+                    </form>
+                  </details>`
+            }
           </section>
+
+          <div id="catchup-live" aria-live="polite"></div>
+          ${
+            steps.length || planSummary
+              ? `<section class="card" id="catchup-card" aria-labelledby="catchup-h">
+                  <h2 id="catchup-h" style="font-size:22px;margin:0 0 6px">Getting it back on track</h2>
+                  ${planSummary ? `<p style="margin:0 0 10px">${esc(planSummary)}</p>` : ""}
+                  ${
+                    steps.length
+                      ? `<div class="lines">${steps
+                          .map(
+                            (t) => `<details class="line">
+                              <summary><span class="line-title">${esc(t.title)}</span><span class="small ${t.next_due_on && t.next_due_on < today() ? "late" : "muted"}">${t.next_due_on ? esc(relDay(t.next_due_on)) : "once"}</span></summary>
+                              <div class="stack line-body">
+                                ${t.details ? `<div>${esc(t.details)}</div>` : ""}
+                                <div class="row">${source(t)}${badge(t)}</div>
+                                <div class="row"><button type="button" class="small" data-done="${t.id}">${ic("check")}Done</button><button type="button" class="quiet small" data-fix="task:${t.id}">${ic("edit")}Fix</button></div>
+                              </div>
+                            </details>`,
+                          )
+                          .join("")}</div>
+                        <p class="small muted" style="margin:10px 0 0">One-time steps. Ones marked To check are general advice, not from the manual.</p>`
+                      : '<p class="small muted" style="margin:0">Every catch-up step is done. Its regular upkeep carries on below.</p>'
+                  }
+                </section>`
+              : ""
+          }
 
           ${
             manual
@@ -505,6 +605,44 @@
               if (document.body.contains(upkeep)) drawUpkeep();
             })
             .catch(() => {});
+        }
+
+        // --- Catch-up plan: from the button, or on its own once the manual is read ---
+        $("#catchup-btn")?.addEventListener("click", () => {
+          const d = $("#catchup");
+          d.open = !d.open;
+          if (d.open) d.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        });
+        $("#catchup-card")?.addEventListener("click", (e) => {
+          const done = e.target.closest("[data-done]");
+          if (done) markDone(done.dataset.done);
+        });
+        const live = $("#catchup-live");
+        const say = (text, bad = false) => {
+          live.innerHTML = `<section class="card flat"><p class="small" style="margin:0${bad ? ";color:var(--coral)" : ""}">${esc(text)}</p></section>`;
+        };
+        const planCatchUp = async (h) => {
+          remember(PLANNED_KEY(id), "1");
+          stash(HISTORY_KEY(id), JSON.stringify(h));
+          say(`Muse is reading the ${item.nickname.toLowerCase()}'s storage and startup pages and planning the catch-up. About half a minute.`);
+          try {
+            const out = await tool("catch_up", { item: id, ...h });
+            const plan = out.data?.plan;
+            if (plan) stash(PLAN_KEY(id), JSON.stringify({ summary: plan.summary, ids: plan.steps.map((s) => s.id) }));
+            toast(out.summary.split(": ")[0].split(". ")[0]);
+            detail(id);
+          } catch (err) {
+            say(err.message, true);
+          }
+        };
+        $("#catchup-form")?.addEventListener("submit", (e) => {
+          e.preventDefault();
+          $("#catchup").open = false;
+          planCatchUp(readHistory());
+        });
+        // Told the wizard it isn't new: plan once the manual is read, without asking again.
+        if (past && past.condition !== "new" && !saved?.caught_up_at && !recall(PLANNED_KEY(id)) && manual?.status === "distilled" && !item.archived_at) {
+          planCatchUp(past);
         }
 
         const facts = $("#facts");
@@ -924,17 +1062,17 @@
                 .join("")}</select>
               <label class="small" for="f-pdf"><strong>Link to the manual PDF</strong> <span class="muted">(optional; we'll search for it otherwise)</span></label>
               <input id="f-pdf" type="url" placeholder="https://maker.example/manual.pdf" value="${esc(thing.pdf)}">
-              <button type="submit">Add it</button>
+              <button type="submit">Continue</button>
               <p class="small muted" data-add-msg role="status"></p>
             </form>
           </details>`;
         }
 
-        function step(body) {
+        function step(body, withDetails = true) {
           main.innerHTML = `${head}
             <section class="card wizard" style="max-width:640px">${body}</section>
             <input id="photo" type="file" accept="image/*" capture="environment" class="sr-only">
-            <div style="max-width:640px">${detailsForm(manual)}</div>`;
+            ${withDetails ? `<div style="max-width:640px">${detailsForm(manual)}</div>` : ""}`;
           $("#photo").addEventListener("change", (e) => {
             const file = e.target.files?.[0];
             if (file) read(file);
@@ -952,9 +1090,9 @@
             redraw();
             $("#f-nick").focus();
           });
-          $("[data-continue]")?.addEventListener("click", () => save(main.querySelector("[data-continue]")));
+          $("[data-continue]")?.addEventListener("click", askHistory);
           $("[data-anyway]")?.addEventListener("click", () => readImage(async () => image, true));
-          $("#add-form").addEventListener("submit", (e) => {
+          $("#add-form")?.addEventListener("submit", (e) => {
             e.preventDefault();
             thing.nickname = $("#f-nick").value.trim();
             thing.brand = $("#f-brand").value.trim();
@@ -962,7 +1100,7 @@
             thing.serial = $("#f-serial").value.trim();
             thing.kind = $("#f-kind").value;
             thing.pdf = $("#f-pdf").value.trim();
-            save($("#add-form [type=submit]"));
+            askHistory();
           });
           $("#f-nick-quick")?.addEventListener("input", (e) => {
             thing.nickname = e.target.value;
@@ -970,6 +1108,7 @@
         }
 
         let redraw = start;
+        let beforeHistory = start;
 
         function start() {
           redraw = start;
@@ -1037,7 +1176,7 @@
             </div>
             <label class="small" for="f-nick-quick"><strong>What do you call it?</strong></label>
             <input id="f-nick-quick" value="${esc(thing.nickname)}" placeholder="Washer">
-            <div class="row"><button type="button" data-continue>Add it and find the manual</button>${photoButton("Retake", true)}</div>
+            <div class="row"><button type="button" data-continue>Continue</button>${photoButton("Retake", true)}</div>
             <p class="small muted">Something off? Fix it in the details below.</p>
             <p class="small muted" data-add-msg role="status"></p>
           </div>`);
@@ -1072,22 +1211,73 @@
           }
         }
 
+        /** Gives it a name from what it is, or opens the details form to type one. False when it still has none. */
+        function named() {
+          if (!thing.nickname) thing.nickname = thing.category ? ICONS[iconKey(thing)][0] : "";
+          if (thing.nickname) return true;
+          manual = true;
+          redraw();
+          $("#f-nick").focus();
+          return false;
+        }
+
+        // Is it new? A used or stored thing gets a catch-up plan once its manual is read,
+        // instead of a schedule that starts as if it was serviced today.
+        function askHistory() {
+          if (!named()) return;
+          if (redraw !== askHistory) beforeHistory = redraw;
+          redraw = askHistory;
+          const h = thing.history;
+          step(
+            `<div class="stack">
+              <h2>Is it new?</h2>
+              <p class="muted">If it has been in use or in storage, Muse plans what to catch up on, so its schedule doesn't start as if it was serviced today.</p>
+              <div class="row" role="group" aria-label="Is it new?">${CONDITIONS.slice()
+                .reverse()
+                .map(([v, t]) => `<button type="button" class="${h?.condition === v ? "" : "quiet"}" data-cond="${v}" aria-pressed="${h?.condition === v}">${t}</button>`)
+                .join("")}</div>
+              ${
+                h && h.condition !== "new"
+                  ? `<form class="stack" id="history-form">${historyFields(h, false)}<div class="row"><button type="submit">Add it and find the manual</button></div></form>`
+                  : ""
+              }
+              <div class="row"><button type="button" class="link" data-back>Back</button></div>
+              <p class="small muted" data-add-msg role="status"></p>
+            </div>`,
+            false,
+          );
+          for (const b of main.querySelectorAll("[data-cond]")) {
+            b.addEventListener("click", () => {
+              if (b.dataset.cond === "new") {
+                thing.history = null;
+                return save(b);
+              }
+              thing.history = { ...(thing.history ?? {}), condition: b.dataset.cond };
+              askHistory();
+              $("#h-done")?.focus();
+            });
+          }
+          $("[data-back]").addEventListener("click", () => beforeHistory());
+          $("#history-form")?.addEventListener("submit", (e) => {
+            e.preventDefault();
+            thing.history = readHistory(thing.history.condition);
+            save($("#history-form [type=submit]"));
+          });
+        }
+
         async function save(button) {
           const msg = main.querySelector("[data-add-msg]");
-          if (!thing.nickname) thing.nickname = thing.category ? ICONS[iconKey(thing)][0] : "";
-          if (!thing.nickname) {
-            manual = true;
-            redraw();
-            $("#f-nick").focus();
-            return;
-          }
+          if (!named()) return;
           button.disabled = true;
           if (msg) msg.textContent = thing.pdf ? "Adding it. Muse is reading the manual, up to a minute." : "Adding it…";
           const args = { nickname: thing.nickname, kind: thing.kind, ...(thing.category ? { category: thing.category } : {}) };
           for (const key of ["brand", "model", "serial"]) if (thing[key]) args[key] = thing[key];
           if (thing.pdf) args.pdf_url = thing.pdf;
+          if (thing.history) args.history = thing.history;
           try {
             const out = await tool("add_item", args);
+            // The thing's page plans the catch-up once the manual is read.
+            if (thing.history) stash(HISTORY_KEY(out.data.item.id), JSON.stringify(thing.history));
             toast(out.summary.split(".")[0]);
             location.assign(`/things?id=${out.data.item.id}${thing.pdf ? "" : "&find=1"}`);
           } catch (err) {

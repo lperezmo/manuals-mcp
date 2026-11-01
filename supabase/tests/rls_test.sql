@@ -163,4 +163,47 @@ begin
 end;
 $$;
 
+-- Back history: user A saves a washer's past and a catch-up step, logs a
+-- plan run, and user B sees none of it.
+set role authenticated;
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","role":"authenticated"}', false);
+
+do $$
+declare
+  wid uuid;
+  n integer;
+begin
+  select id into wid from public.items where nickname = 'Washer' limit 1;
+  update public.items set condition = 'stored', idle_months = 24, history_note = 'never touched',
+    upkeep_goal = 'keep_running', caught_up_at = now(), catch_up_summary = 'Flush it first.'
+  where id = wid;
+  insert into public.tasks (item_id, title, interval_unit, next_due_on, catch_up, status)
+  values (wid, 'Flush the drain pump before the first load', 'once', current_date, true, 'needs_review');
+  insert into public.model_runs (kind, ok, item_id) values ('plan', true, wid);
+  select count(*) into n from public.tasks where catch_up;
+  assert n = 1, 'catch-up step missing';
+  begin
+    update public.items set condition = 'broken' where id = wid;
+    raise exception 'condition should only take new, used or stored';
+  exception when check_violation then
+    null;
+  end;
+end;
+$$;
+
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","role":"authenticated"}', false);
+
+do $$
+declare
+  n integer;
+begin
+  select count(*) into n from public.tasks where catch_up;
+  assert n = 0, 'user B should not see A''s catch-up steps';
+  select count(*) into n from public.items where condition is not null;
+  assert n = 0, 'user B should not see A''s history';
+end;
+$$;
+
+reset role;
+
 \echo 'rls_test: all checks passed'

@@ -12,7 +12,7 @@ export const ROUTES = {
   fix: "Says a saved fact, task or limit is wrong, or doubts what the manual says.",
   add: "Wants to add a new thing they own, or attach a manual or PDF link.",
   setup:
-    "Wants to set up or tell Muse about a thing they already added: when it was bought, who it is for, how often it is used.",
+    "Wants to set up or tell Muse about a thing they already added: when it was bought, who it is for, how often it is used, or how it was kept and what upkeep it has had.",
   answer: "Answers a question Muse just asked, or sends the answers from a form Muse showed.",
   smalltalk: "Greets, thanks or chats, with nothing to look up or save.",
   off_topic:
@@ -26,7 +26,7 @@ const LOOKUP = ["list_items"];
 export const ROUTE_TOOLS: Record<Route, string[]> = {
   ask: [...LOOKUP, "ask_manual", "car_seat_status", "upcoming"],
   log: [...LOOKUP, "log_done", "record_measurement", "upcoming"],
-  fix: [...LOOKUP, "revise_fact", "ask_manual"],
+  fix: [...LOOKUP, "revise_fact", "ask_manual", "catch_up"],
   add: [...LOOKUP, "add_item", "update_item"],
   setup: [
     ...LOOKUP,
@@ -35,6 +35,7 @@ export const ROUTE_TOOLS: Record<Route, string[]> = {
     "revise_fact",
     "upcoming",
     "car_seat_status",
+    "catch_up",
   ],
   answer: [
     ...LOOKUP,
@@ -44,6 +45,7 @@ export const ROUTE_TOOLS: Record<Route, string[]> = {
     "log_done",
     "car_seat_status",
     "upcoming",
+    "catch_up",
   ],
   smalltalk: [],
   off_topic: [],

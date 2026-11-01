@@ -23,7 +23,9 @@ export interface Env {
   chatDailyLimit: number;
   /** Most label photos one household can have read per day. */
   snapDailyLimit: number;
-  /** Most model calls (reads, chats, photos) across every household per day: the budget's ceiling. */
+  /** Most catch-up plans (back history for things that aren't new) one household can have a day. */
+  planDailyLimit: number;
+  /** Most model calls (reads, chats, photos, plans) across every household per day: the budget's ceiling. */
   globalDailyLimit: number;
   /** Web search for finding manuals from the website (Tavily). */
   search?: { provider: "tavily"; apiKey: string; dailyLimit: number };
@@ -67,6 +69,7 @@ export function readEnv(source: Record<string, string | undefined> = process.env
     chatModel: source.CHAT_MODEL || undefined,
     chatDailyLimit: positive(source.CHAT_DAILY_LIMIT, 100),
     snapDailyLimit: positive(source.SNAP_DAILY_LIMIT, 20),
+    planDailyLimit: positive(source.PLAN_DAILY_LIMIT, 20),
     globalDailyLimit: positive(source.GLOBAL_DAILY_LIMIT, 400),
     search: source.SEARCH_API_KEY
       ? {
