@@ -79,6 +79,11 @@
 * {
   box-sizing: border-box;
 }
+/* Nothing may widen the page past the phone: a wider page also widens the full-screen chat */
+html,
+body {
+  overflow-x: clip;
+}
 body {
   margin: 0;
   min-height: 100vh;
@@ -796,7 +801,36 @@ button:disabled {
   flex-wrap: nowrap;
 }
 .chat form.field input {
-  flex: 1 1 auto;
+  flex: 1 1 0;
+  min-width: 0;
+}
+.chat-icon {
+  flex: none;
+  min-width: 40px;
+  padding: 0;
+}
+/* One previous chat: its first question and when */
+.chat-pick {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  text-align: left;
+  font-weight: 500;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+.chat-pick > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-pick.open {
+  border-color: var(--accent);
 }
 /* Search as you type: saved answers under the box, before Enter */
 .suggest {
