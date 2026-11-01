@@ -1400,8 +1400,9 @@
           </div>`;
         }
 
+        // The camera opens straight away; Upload picks one already in the gallery, like the home page.
         function photoButton(text, quiet = false) {
-          return `<label class="button ${quiet ? "outline" : ""}" for="photo" style="cursor:pointer">${text}</label>`;
+          return `<label class="button ${quiet ? "outline" : ""}" for="photo-camera" style="cursor:pointer">${text}</label><label class="button outline" for="photo" style="cursor:pointer">Upload a photo</label>`;
         }
 
         function detailsForm(open) {
@@ -1429,13 +1430,16 @@
         function step(body, withDetails = true) {
           main.innerHTML = `${head}
             <section class="card wizard" style="max-width:640px">${body}</section>
+            <input id="photo-camera" type="file" accept="image/*" capture="environment" class="sr-only">
             <input id="photo" type="file" accept="image/*" class="sr-only">
             <input id="receipt-photo" type="file" accept="image/*" class="sr-only">
             ${withDetails ? `<div style="max-width:640px">${detailsForm(manual)}</div>` : ""}`;
-          $("#photo").addEventListener("change", (e) => {
-            const file = e.target.files?.[0];
-            if (file) read(file);
-          });
+          for (const id of ["#photo-camera", "#photo"]) {
+            $(id).addEventListener("change", (e) => {
+              const file = e.target.files?.[0];
+              if (file) read(file);
+            });
+          }
           $("#receipt-photo").addEventListener("change", async (e) => {
             const file = e.target.files?.[0];
             if (!file) return;
@@ -1485,7 +1489,7 @@
           step(`<div class="stack" style="justify-items:start">
             <h2>Take a photo of its label</h2>
             <p class="muted">Muse reads the brand and model off it, then finds the manual for you. The label is usually ${esc(where())}.</p>
-            ${photoButton(`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg> Take or choose a photo`)}
+            <div class="row">${photoButton(`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg> Take a photo`)}</div>
             <div class="row"><button type="button" class="link" data-type>Type it in instead</button><span class="muted">·</span><a href="/things?add=pdf" class="link">I already have the PDF</a></div>
           </div>`);
         }
@@ -1504,7 +1508,7 @@
             <h2>Couldn't read a label in that one</h2>
             <p class="muted">Get close enough that the text fills most of the photo, in good light, without glare. ${thing.category ? `On a ${esc(ICONS[iconKey({ category: thing.category })][0].toLowerCase())} it's usually ${esc(where())}.` : "Tell me what it is and I'll say where to look."}</p>
             ${picker("What is it?")}
-            <div class="row">${photoButton("Try another photo")}<button type="button" class="quiet" data-type>Type it in</button></div>
+            <div class="row">${photoButton("Take another photo")}<button type="button" class="quiet" data-type>Type it in</button></div>
           </div>`);
         }
 
