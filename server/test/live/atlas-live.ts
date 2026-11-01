@@ -1,5 +1,6 @@
 // Live check of House Atlas against the real TypeSafe (Jev) service.
 // Not part of `bun test`: it needs JEV_API_KEY and spends a fraction of a cent.
+// Without the key it says so and exits 0, so it never fails a local run.
 // Run it with `JEV_API_KEY=... bun run server/test/live/atlas-live.ts`, or let
 // the jev-atlas-live workflow run it with the repo secret.
 //
@@ -19,6 +20,7 @@ import {
   VIEW_BAR,
 } from "../../src/atlas.js";
 import { readEnv } from "../../src/env.js";
+import { pageKinds } from "../../src/finder/page-kinds.js";
 
 const env = readEnv({
   ...process.env,
@@ -27,8 +29,8 @@ const env = readEnv({
 });
 const router = env.router;
 if (!router) {
-  console.error("JEV_API_KEY is not set, so there is nothing to test.");
-  process.exit(1);
+  console.log("SKIP  JEV_API_KEY is not set, so the live atlas checks didn't run.");
+  process.exit(0);
 }
 
 const thing = (id: string, nickname: string, extra: Partial<AtlasItem> = {}): AtlasItem => ({
@@ -198,6 +200,56 @@ const floodMap = buildAtlas("room", input, { scores: flood.scores });
 console.log(
   `map room + flood view: ${floodMap.map((g) => `${g.label} [${g.entries.map((e) => `${e.name}${e.maybe ? "?" : ""}`).join("; ")}]`).join("  ")}`,
 );
+
+// 5. Manual atlas: each page of a manual gets a kind.
+{
+  const page = (page_number: number, content: string) => ({ page_number, content });
+  const manual = [
+    page(
+      2,
+      "IMPORTANT SAFETY INSTRUCTIONS. WARNING: To reduce the risk of fire, electric shock, or injury to persons, read all instructions before using this washer. Do not allow children to play on or in the washer.",
+    ),
+    page(
+      7,
+      "Installation. Level the washer: adjust the front leveling legs until the washer is steady. Connect the inlet hoses to the hot and cold water faucets, then route the drain hose into a standpipe.",
+    ),
+    page(
+      18,
+      "Cleaning the drain pump filter. Once a month, open the access panel at the lower front, place a shallow pan under it, unscrew the filter counterclockwise, rinse it under running water and screw it back in.",
+    ),
+    page(
+      31,
+      "Troubleshooting. Error code F9 E1: the washer is draining too slowly. Check that the drain hose is not kinked and the drain pump filter is not clogged. Error code F5 E2: the lid will not lock.",
+    ),
+    page(
+      40,
+      "LIMITED WARRANTY. For one year from the date of purchase, when this major appliance is installed, operated and maintained according to the instructions, the maker will pay for factory specified parts and repair labor.",
+    ),
+  ];
+  const t0 = Date.now();
+  const got = await pageKinds(env, manual, fetch);
+  const took = Date.now() - t0;
+  const want: Record<number, string[]> = {
+    2: ["safety"],
+    7: ["setup"],
+    18: ["care", "fix"],
+    31: ["fix"],
+    40: ["warranty"],
+  };
+  pass(
+    "page kinds call",
+    got.failed === 0 && got.kinds.size === manual.length,
+    `${got.kinds.size}/${manual.length} in ${took} ms, ${got.tokens_in} input tokens`,
+  );
+  for (const [n, ok] of Object.entries(want)) {
+    const k = got.kinds.get(Number(n));
+    pass(
+      `  page ${n}`,
+      !!k && ok.includes(k.kind),
+      `${k?.kind ?? "(none)"} ${k?.p ?? ""} (want ${ok.join("|")})`,
+    );
+  }
+}
 
 console.log(failed ? `\n${failed} check(s) failed.` : "\nAll checks passed.");
 process.exit(failed ? 1 : 0);

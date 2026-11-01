@@ -357,7 +357,9 @@
 
       async function start() {
         if (!(await boot("/atlas"))) return;
-        await load(null);
+        // The home page's view chips land here with ?view=<the saved phrase>.
+        const asked = new URLSearchParams(location.search).get("view");
+        await load(asked && asked.trim().length >= 2 ? asked.trim().slice(0, 120) : null);
       }
       start().catch((err) => {
         main.innerHTML = `<p class="card">Something went wrong: ${esc(err.message)}</p>`;

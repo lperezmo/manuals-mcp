@@ -9,6 +9,7 @@ on:
     branches: [claude/project-thread-ohf9pg]
     paths:
       - "server/src/atlas.ts"
+      - "server/src/finder/page-kinds.ts"
       - "server/test/live/atlas-live.ts"
       - ".github/workflows/jev-atlas-live.yml"
   workflow_dispatch:

@@ -311,6 +311,34 @@ mark {
 .chip.strong {
   font-weight: 700;
 }
+/* House Atlas views saved by the household, as chips on the home page */
+.view-chips {
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.view-chips .chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  text-decoration: none;
+  font-weight: 600;
+}
+/* Manual atlas: jump links to the manual's pages by kind */
+.page-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.page-strip .chip {
+  overflow-wrap: anywhere;
+}
+.page-strip a {
+  color: inherit;
+  font-weight: 600;
+  display: inline-block;
+  padding: 4px 2px;
+}
 button.chip {
   font-weight: 600;
   cursor: pointer;

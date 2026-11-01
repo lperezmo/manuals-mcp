@@ -86,6 +86,47 @@ begin
 end;
 $$;
 
+-- Manual atlas: page kinds, and searching only one kind of page.
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000f1","role":"authenticated"}', false);
+do $$
+declare
+  wid uuid;
+  mid uuid;
+  n integer;
+begin
+  select id into wid from public.items where nickname = 'Washer';
+  insert into public.manuals (item_id, title, source) values (wid, 'Washer manual', 'pdf_upload')
+    returning id into mid;
+  insert into public.manual_pages (manual_id, page_number, content) values
+    (mid, 18, 'Clean the drain pump filter once a month, the filter is behind the lower panel.'),
+    (mid, 31, 'Troubleshooting: if the drain pump filter is clogged the washer shows F9 E1.'),
+    (mid, 40, 'Warranty: parts and labor for one year.');
+  update public.manual_pages set kind = 'care', kind_p = 0.9 where manual_id = mid and page_number = 18;
+  update public.manual_pages set kind = 'fix', kind_p = 0.85 where manual_id = mid and page_number = 31;
+
+  select count(*) into n from public.search_manual_pages_of_kind('drain pump filter', 'fix', wid);
+  assert n = 1, format('a fix search found %s pages, not just the troubleshooting one', n);
+  select count(*) into n from public.search_manual_pages('drain pump filter', wid);
+  assert n = 2, 'the plain search changed';
+
+  begin
+    update public.manual_pages set kind = 'recipe' where manual_id = mid and page_number = 40;
+    raise exception 'an unknown page kind was accepted';
+  exception when check_violation then null;
+  end;
+end;
+$$;
+
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000f2","role":"authenticated"}', false);
+do $$
+declare
+  n integer;
+begin
+  select count(*) into n from public.search_manual_pages_of_kind('drain pump filter', 'fix');
+  assert n = 0, 'household 2 finds household 1''s manual pages';
+end;
+$$;
+
 -- Deleting the thing deletes its sort.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000f1","role":"authenticated"}', false);
 do $$

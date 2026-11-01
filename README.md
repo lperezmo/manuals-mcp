@@ -28,7 +28,7 @@ flowchart LR
 | -------------------- | ---------------------------------------------------------------------------------- |
 | `add_item`           | Add a thing and its manual PDF. Muse reads it into tasks and facts.                |
 | `list_items`         | What you own, what's next, and what needs review.                                  |
-| `ask_manual`         | Answers with page cites: search, exact error codes and specs, the schedule.        |
+| `ask_manual`         | Answers with page cites: search (or just fix pages), error codes, the schedule.    |
 | `upcoming`           | Tasks due soon, plus facts a person should check.                                  |
 | `revise_fact`        | Correct or confirm a fact, task or car seat limit, with a reason.                  |
 | `log_done`           | "I just cleaned the filter" moves the next due date.                               |

@@ -288,6 +288,48 @@
       let onJobDone = null;
       window.addEventListener("manuals:job-done", (e) => onJobDone?.(e.detail));
 
+      // Manual atlas: the manual's pages by kind, as jump links ("Fix p. 31, 32").
+      const PAGE_KINDS = [
+        ["safety", "Safety"],
+        ["setup", "Setup"],
+        ["use", "Use"],
+        ["care", "Care"],
+        ["fix", "Fix"],
+        ["parts", "Parts"],
+        ["warranty", "Warranty"],
+      ];
+      async function manualStrip(supa, manual) {
+        if (!manual) return "";
+        // Read on its own, so the page still works before pages have kinds.
+        const { data: rows, error } = await supa
+          .from("manual_pages")
+          .select("page_number, kind")
+          .eq("manual_id", manual.id)
+          .not("kind", "is", null)
+          .order("page_number")
+          .limit(1000);
+        if (error || !rows?.length) return "";
+        let pdf = manual.source_url && !isExample(manual.source_url) ? manual.source_url : null;
+        if (!pdf && manual.storage_path) {
+          const { data } = await supa.storage.from("manuals").createSignedUrl(manual.storage_path, 3600);
+          pdf = data?.signedUrl ?? null;
+        }
+        const groups = PAGE_KINDS.map(([kind, label]) => {
+          const pages = rows.filter((r) => r.kind === kind).map((r) => r.page_number);
+          if (!pages.length) return "";
+          const shown = pages.slice(0, 4).map((n) =>
+            pdf
+              ? `<a href="${esc(`${pdf.split("#")[0]}#page=${n}`)}" target="_blank" rel="noopener noreferrer" aria-label="${esc(label)}, page ${n}">p. ${n}</a>`
+              : `p. ${n}`,
+          );
+          const more = pages.length > 4 ? ` +${pages.length - 4}` : "";
+          return `<span class="chip page-kind"><strong>${esc(label)}</strong> ${shown.join(", ")}${more}</span>`;
+        }).filter(Boolean);
+        return groups.length
+          ? `<div class="page-strip" role="group" aria-label="In the manual, by kind of page"><span class="small muted">In the manual</span>${groups.join("")}</div>`
+          : "";
+      }
+
       async function detail(id) {
         onJobDone = (job) => {
           if (job.item === id && job.kind === "read") detail(id);
@@ -296,7 +338,7 @@
         const { data: item, error } = await supa
           .from("items")
           .select(
-            "id, nickname, brand, model, serial, category, kind, icon, tint, pinned, archived_at, uses_per_week, purchased_on, manuals(id, title, page_count, source_url, status, status_detail), manual_facts(id, kind, label, value, source_page, source, status), tasks(id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source, status, active), seat_modes(id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, source, status), item_readings(kind, value, measured_on)",
+            "id, nickname, brand, model, serial, category, kind, icon, tint, pinned, archived_at, uses_per_week, purchased_on, manuals(id, title, page_count, source_url, storage_path, status, status_detail), manual_facts(id, kind, label, value, source_page, source, status), tasks(id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source, status, active), seat_modes(id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, source, status), item_readings(kind, value, measured_on)",
           )
           .eq("id", id)
           .maybeSingle();
@@ -341,6 +383,7 @@
         const receipt = receipts?.[0] ?? null;
 
         const manual = item.manuals?.[0];
+        const strip = await manualStrip(supa, manual);
         const readings =[...item.item_readings].sort((a, b) => b.measured_on.localeCompare(a.measured_on));
         const cycles = readings.find((r) => r.kind === "cycles");
         const badge = (x) =>
@@ -368,6 +411,7 @@
               ${item.archived_at ? "" : `<button type="button" class="quiet" id="catchup-btn" aria-controls="catchup">${ic("history")}${past && past.condition !== "new" ? "Catch it up again" : "Not new? Catch it up"}</button>`}
               ${manual?.source_url && !isExample(manual.source_url) ? `<a class="button quiet" href="${esc(manual.source_url)}" rel="noopener noreferrer" target="_blank">${ic("menu_book")}Open the manual</a>` : manual?.source_url ? '<span class="small muted">Example manual, no PDF to open</span>' : ""}
             </div>
+            ${strip}
             <details class="card panel" id="look">
               <summary style="font-weight:700;cursor:pointer">Change icon or color</summary>
               <div class="stack" style="margin-top:14px">
