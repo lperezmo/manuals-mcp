@@ -30,13 +30,18 @@ export async function logRun(db: Db, run: ModelRun): Promise<void> {
   } catch {}
 }
 
-/** How many runs of this kind the household made in the last 24 hours. */
+/**
+ * How many runs of this kind the household made in the last 24 hours. Only
+ * rows that called a model count: a download a site refused is logged (so the
+ * page's pill can end) but costs no model call and uses up no reads.
+ */
 export async function runsToday(db: Db, kind: ModelRun["kind"]): Promise<number> {
   const since = new Date(Date.now() - 86_400_000).toISOString();
   const { count, error } = await db
     .from("model_runs")
     .select("id", { count: "exact", head: true })
     .eq("kind", kind)
+    .not("model", "is", null)
     .gte("created_at", since);
   if (error) throw new Error(`Couldn't check today's usage: ${error.message}`);
   return count ?? 0;
