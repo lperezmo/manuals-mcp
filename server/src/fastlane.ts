@@ -275,7 +275,15 @@ export interface FastLane {
   thing: SnapshotItem | null;
   /** The likeliest lines, best first, for Muse's hint or for type-ahead. */
   top: FastPick[];
-  scores: { row: number; exists: number; judgment: number; safety: number; thing: number };
+  scores: {
+    row: number;
+    exists: number;
+    judgment: number;
+    safety: number;
+    thing: number;
+    /** "States a lasting fact about the household" (memory.ts); 0 in suggest mode. */
+    remember: number;
+  };
   ms: number;
   tokens_in: number | null;
 }
@@ -348,6 +356,17 @@ export async function quickAnswer(
         instructions:
           "Is `question` about safety: a child's car seat or its limits, gas, electrical or fire hazards, burns, chemicals, or anything where a wrong answer could hurt someone?",
       },
+      // House memory (memory.ts): reads only the person's words, never Muse's.
+      remember: {
+        type: "noul",
+        instructions:
+          "Judging only `question`, the person's own words (ignore `muse_said_last`): do they state a lasting fact about their home or household, one worth remembering next time? For example: the water is hard, how or where a thing is installed, how often they use it, who lives there, a habit that won't change soon.",
+        criteria: {
+          true: "States a lasting fact about the home, its things or the people in it that makes sense on its own",
+          false:
+            "A question, a request, greetings, something happening right now, a one-off event, upkeep just done, a new reading or measurement, or a fact quoted from a manual",
+        },
+      },
     });
   }
   const started = Date.now();
@@ -411,6 +430,7 @@ export async function quickAnswer(
       judgment: a.judgment?.noul ?? 1,
       safety: a.safety?.noul ?? 1,
       thing: thingP,
+      remember: a.remember?.noul ?? 0,
     };
     const lane: FastLane = {
       route,

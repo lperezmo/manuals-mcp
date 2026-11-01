@@ -6,7 +6,7 @@ import { INSTRUCTIONS, registerTools } from "./mcp.js";
 import * as updateItem from "./tools/update-item.js";
 
 // The website's chat: Muse Spark (or any OpenAI-compatible model) with the
-// same 10 tools the MCP server exposes, run as the signed-in user so RLS
+// same 12 tools the MCP server exposes, run as the signed-in user so RLS
 // applies exactly as it does over MCP. Kept small on purpose: a few tool
 // rounds, short answers, and a capped history.
 
@@ -147,6 +147,8 @@ export async function runChat(
     image?: ChatImage;
     /** Setting up a thing: the turn must end with a form or a question, not a promise of one. */
     mustAsk?: boolean;
+    /** Background about this household (house memory), added after the instructions. */
+    context?: string | null;
   } = {},
 ): Promise<ChatReply> {
   const reader = env.reader;
@@ -178,7 +180,8 @@ export async function runChat(
       ],
     };
   }
-  const messages: Message[] = [{ role: "system", content: CHAT_INSTRUCTIONS }, ...recent];
+  const system = opts.context ? `${CHAT_INSTRUCTIONS}\n\n${opts.context}` : CHAT_INSTRUCTIONS;
+  const messages: Message[] = [{ role: "system", content: system }, ...recent];
   const used: string[] = [];
   // Set when Muse stopped on a promise to ask and was told to show the form.
   let intro = "";

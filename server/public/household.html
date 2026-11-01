@@ -32,7 +32,7 @@
         const supa = await db();
         const { data: hid, error: e1 } = await supa.rpc("ensure_household");
         if (e1) throw new Error(e1.message);
-        const [{ data: people, error: e2 }, { data: home }, { data: invites, error: e3 }] = await Promise.all([
+        const [{ data: people, error: e2 }, { data: home }, { data: invites, error: e3 }, { data: notes }] = await Promise.all([
           supa.rpc("household_people"),
           supa.from("households").select("is_demo").eq("id", hid).maybeSingle(),
           supa
@@ -42,6 +42,12 @@
             .is("used_at", null)
             .gt("expires_at", new Date().toISOString())
             .order("created_at"),
+          // Lasting facts said in chat, in the person's own words (house memory).
+          supa
+            .from("household_notes")
+            .select("id, note, safety, created_at, items(nickname)")
+            .order("created_at", { ascending: false })
+            .limit(100),
         ]);
         if (e2 || e3) throw new Error((e2 || e3).message);
         const owner = people.find((p) => p.is_me)?.role === "owner";
@@ -59,12 +65,22 @@
             ${invites.map(inviteRow).join("")}
             <div class="row"><button type="button" id="invite" ${invites.length ? 'class="quiet"' : ""}>${invites.length ? "Make another link" : "Make an invite link"}</button></div>`;
 
+        const remembered = (n) => `<div class="fact">
+            <div>“${esc(n.note)}”
+              <div class="small muted">${n.items?.nickname ? `${esc(n.items.nickname)} · ` : ""}${ago(n.created_at)}${n.safety ? " · kept as a note, not used in answers" : ""}</div></div>
+            <div><button type="button" class="quiet small" data-forget="${n.id}" aria-label="Forget this" title="Forget this">×</button></div>
+          </div>`;
+        const memory = notes?.length
+          ? `<div>${notes.map(remembered).join("")}</div>`
+          : `<p class="muted" style="margin:0">Nothing yet. Mention things like “we have really hard water” in chat and Muse keeps them here.</p>`;
+
         main.innerHTML = `
           <section class="stack">
             <h1>Your household</h1>
             <p class="muted">Everyone here sees and updates the same things, schedule and manuals, each signed in as themselves.</p>
           </section>
           <section class="card" aria-label="People">${people.map(person).join("")}</section>
+          <section class="card stack"><h2>Things Muse remembers</h2>${memory}</section>
           <section class="card stack"><h2>Invite someone</h2>${inviting}</section>
           ${
             owner
@@ -90,6 +106,19 @@
             const { error } = await supa.from("household_invites").delete().eq("code", b.dataset.cancel);
             if (error) return toast(error.message);
             start();
+          });
+        }
+        for (const b of main.querySelectorAll("[data-forget]")) {
+          b.addEventListener("click", async () => {
+            b.disabled = true;
+            const { error } = await supa.from("household_notes").delete().eq("id", b.dataset.forget);
+            if (error) {
+              b.disabled = false;
+              return toast(error.message);
+            }
+            const list = b.closest(".fact").parentElement;
+            b.closest(".fact").remove();
+            if (!list.children.length) start();
           });
         }
         for (const b of main.querySelectorAll("[data-remove]")) {

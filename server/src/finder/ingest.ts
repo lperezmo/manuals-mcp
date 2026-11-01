@@ -3,6 +3,7 @@ import type { Env } from "../env.js";
 import { BUDGET_USED, logRun, modelRunsTodayAll } from "../runs.js";
 import { itemLabel } from "../tools/context.js";
 import { saveKnowledge } from "./knowledge.js";
+import { pageKinds } from "./page-kinds.js";
 import { type PageText, pdfPages } from "./pdf-text.js";
 import { distill, ReaderError } from "./reader.js";
 import { trimTrivia } from "./trim.js";
@@ -177,6 +178,45 @@ async function readsLeft(env: Env, db: Db): Promise<boolean> {
   return (await modelRunsTodayAll(db)) < env.globalDailyLimit;
 }
 
+/**
+ * Manual atlas: Jev sorts the pages by kind (safety, setup, use, care, fix...).
+ * Written on its own after the pages, so a failed call, or a database without
+ * the kind columns yet, only means no jump links for this manual.
+ */
+export async function savePageKinds(
+  env: Env,
+  db: Db,
+  manualId: string,
+  pages: PageText[],
+  fetchImpl: typeof fetch = fetch,
+): Promise<number> {
+  if (!env.router || !pages.length) return 0;
+  const { kinds } = await pageKinds(env, pages, fetchImpl);
+  if (!kinds.size) return 0;
+  // One update per kind and rounded sureness, so a 200-page manual is a few dozen small writes.
+  const groups = new Map<string, number[]>();
+  for (const [page, { kind, p }] of kinds) {
+    const key = `${kind}|${Math.round(p * 20) / 20}`;
+    groups.set(key, [...(groups.get(key) ?? []), page]);
+  }
+  try {
+    const results = await Promise.all(
+      [...groups].map(([key, pageNumbers]) => {
+        const [kind, p] = key.split("|");
+        return db
+          .from("manual_pages")
+          .update({ kind, kind_p: Number(p) })
+          .eq("manual_id", manualId)
+          .in("page_number", pageNumbers);
+      }),
+    );
+    if (results.some((r) => r.error)) return 0;
+  } catch {
+    return 0;
+  }
+  return kinds.size;
+}
+
 async function processPdf(args: {
   env: Env;
   db: Db;
@@ -260,6 +300,7 @@ async function processPdf(args: {
       .upsert(rows, { onConflict: "manual_id,page_number" });
     if (error) throw new Error(`Couldn't save pages: ${error.message}`);
   }
+  await savePageKinds(env, db, manualId, pages);
 
   const scanned = pages.length < Math.max(1, pageCount * 0.2);
   const transcribed = visionPages.size;
