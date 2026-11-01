@@ -322,7 +322,6 @@ export async function askForPlan(
     body: JSON.stringify({
       model: reader.model,
       response_format: { type: "json_object" },
-      max_tokens: 2500,
       messages: [
         { role: "system", content: PLAN_INSTRUCTIONS },
         {
