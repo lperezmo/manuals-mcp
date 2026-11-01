@@ -8,9 +8,10 @@
 // small fixture images and compares Jev's answers with what the photo shows.
 // Each check runs through a fetch that remembers how its call went, so a null
 // says why (an HTTP status, a timeout, a network error) instead of just
-// "returned null". Now and then one call in the burst comes back null within
-// 50 ms (not the 5 s timeout), so a null is tried once more before it fails and
-// the RETRY line stays in the log. A wrong answer is never retried.
+// "returned null". Now and then Jev answers a call with HTTP 503 "Image
+// processing is unavailable." in about 12 ms, and a second later the same call
+// works. So a null (or a 429/5xx on a raw call) is tried once more before it
+// fails, and the RETRY line stays in the log. A wrong answer is never retried.
 // It never prints the key or request headers.
 
 import { readFileSync } from "node:fs";
@@ -89,8 +90,19 @@ async function live<T>(call: (f: typeof fetch) => Promise<T | null>): Promise<T 
   return second;
 }
 
-/** One raw call, so a bad key, model or size shows as a status instead of a silent null. */
+/**
+ * One raw call, so a bad key, model or size shows as a status instead of a silent null.
+ * A 429 or 5xx says nothing about the photo, so it gets one more try, like a null check.
+ */
 async function probe(image: { base64: string }, format: "jpg" | "png") {
+  const first = await probeOnce(image, format);
+  if (first.status !== 429 && first.status < 500) return first;
+  console.log(`RETRY in 1000 ms, the raw call got HTTP ${first.status}: ${first.text}`);
+  await new Promise((r) => setTimeout(r, 1_000));
+  return probeOnce(image, format);
+}
+
+async function probeOnce(image: { base64: string }, format: "jpg" | "png") {
   const started = Date.now();
   const res = await fetch(`${router?.baseUrl}/v1/systemone`, {
     method: "POST",
@@ -132,7 +144,11 @@ g.fillRect(0, 0, 600, 1800);
 const oversize = await probe({ base64: tall.toBuffer("image/png").toString("base64") }, "png");
 console.log(`INFO  1800 px tall photo gets HTTP ${oversize.status} (the old receipt size)`);
 const fits = await probe(receipt, "jpg");
-pass("1568 px tall receipt is accepted", fits.status === 200, `HTTP ${fits.status}`);
+pass(
+  "1568 px tall receipt is accepted",
+  fits.status === 200,
+  `HTTP ${fits.status}${fits.status === 200 ? "" : `: ${fits.text}`}`,
+);
 
 const labelPhoto = await live((f) => checkPhoto(env, label, f));
 pass(
