@@ -338,6 +338,7 @@ const TOOL_NAMES = {
   update_item: "Updated the details",
   catch_up: "Planned the catch-up",
   warranty_status: "Checked the warranty",
+  fast_lane: "Instant answer",
 };
 // Tools that are part of how Muse talks, not something it did for you.
 const QUIET_TOOLS = new Set(["show_card"]);
@@ -375,7 +376,12 @@ function renderChat(messages, busy) {
         const photo = m.photo?.startsWith("data:image/")
           ? `<img class="msg-photo" src="${esc(m.photo)}" alt="Your photo">`
           : "";
-        return `<div class="msg ${m.role === "user" ? "user" : "muse"}">${photo}${esc(m.content)}${tools}${card}</div>`;
+        // An instant answer from a saved line: one tap asks Muse to go further.
+        const more =
+          m.fast && i === messages.length - 1 && !busy
+            ? '<div class="row" style="margin-top:8px"><button type="button" class="quiet small" data-more>Ask Muse for more</button></div>'
+            : "";
+        return `<div class="msg ${m.role === "user" ? "user" : "muse"}">${photo}${esc(m.content)}${tools}${card}${more}</div>`;
       })
       .join("") + (busy ? '<div class="msg muse muted">Reading…</div>' : "");
   if (!messages.length && !busy) {
@@ -467,6 +473,77 @@ function cardAnswer(card, form) {
   return [card.title, ...lines].join("\n");
 }
 
+/**
+ * Search as you type: under `input`, the saved facts and tasks that answer
+ * what's being typed ("E4 · Drain error · p. 31"), before Enter. One request
+ * in flight; when it comes back and the text has changed, it asks again.
+ * Picking one sends the typed question with `onPick`. The list goes under the
+ * input's form, or over it with `above` (the chat drawer, whose box is at the bottom).
+ */
+export function typeAhead(input, onPick, { above = false } = {}) {
+  const list = document.createElement("div");
+  list.className = "suggest";
+  list.setAttribute("role", "listbox");
+  list.setAttribute("aria-label", "Saved answers");
+  list.hidden = true;
+  input.setAttribute("aria-autocomplete", "list");
+  const box = input.form ?? input;
+  if (above) box.before(list);
+  else box.after(list);
+  let asked = "";
+  let busy = false;
+  let timer = 0;
+  const clear = () => {
+    list.hidden = true;
+    list.innerHTML = "";
+  };
+  const draw = (found) => {
+    if (!found.length || !input.value.trim()) return clear();
+    list.innerHTML = found
+      .map(
+        (s) =>
+          `<button type="button" role="option" class="suggest-row"><span class="suggest-item">${esc(s.item)}</span><strong>${esc(s.label)}</strong><span>${esc(s.text)}</span>${s.page ? `<span class="muted">p. ${s.page}</span>` : ""}${s.unchecked ? '<span class="chip gold strong">To check</span>' : ""}</button>`,
+      )
+      .join("");
+    list.hidden = false;
+  };
+  const ask = async () => {
+    const text = input.value.trim();
+    if (busy || text === asked) return;
+    if (text.length < 3) {
+      asked = text;
+      return clear();
+    }
+    busy = true;
+    asked = text;
+    try {
+      const { suggestions = [] } = await api("/api/suggest", { q: text });
+      if (input.value.trim() === text) draw(suggestions);
+    } catch {
+      clear();
+    } finally {
+      busy = false;
+    }
+    // The text moved on while Jev was answering: ask about the new text.
+    if (input.value.trim() !== asked) ask();
+  };
+  input.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(ask, 180);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") clear();
+    if (e.key === "Enter") clear();
+  });
+  input.form?.addEventListener("submit", clear);
+  list.addEventListener("click", (e) => {
+    if (!e.target.closest(".suggest-row")) return;
+    const text = input.value.trim();
+    clear();
+    if (text) onPick(text);
+  });
+}
+
 /** Opens the chat drawer, optionally sending a message right away. */
 export function openChat(text, onChange) {
   if (!drawer) {
@@ -494,6 +571,14 @@ export function openChat(text, onChange) {
         <button type="submit">Send</button>
       </form>`;
     document.body.append(drawer);
+    typeAhead(
+      $("#chat-input", drawer),
+      (text) => {
+        $("#chat-input", drawer).value = "";
+        send(text, onChange);
+      },
+      { above: true },
+    );
     $("[data-close]", drawer).addEventListener("click", () => drawer.classList.add("hidden"));
     $("[data-clear]", drawer).addEventListener("click", () => {
       saveChat([]);
@@ -515,6 +600,10 @@ export function openChat(text, onChange) {
       if (!exact.hidden) exact.focus();
     });
     log.addEventListener("click", (e) => {
+      if (e.target.closest("[data-more]")) {
+        send("Tell me more.", onChange, "more");
+        return;
+      }
       const form = e.target.closest("[data-skip]")?.closest("form[data-card]");
       if (form) answerCard(Number(form.dataset.card), () => "Skip that for now.", onChange);
     });
@@ -585,6 +674,7 @@ async function send(text, onChange, via, photo) {
       reply,
       tools_used,
       card,
+      fast,
       history: remembered,
     } = await api("/api/chat", {
       messages: history,
@@ -596,12 +686,20 @@ async function send(text, onChange, via, photo) {
       content: reply,
       tools: tools_used,
       card,
+      ...(fast ? { fast: true } : {}),
       history: remembered,
     });
     if (
       tools_used.some(
         (t) =>
-          !["list_items", "ask_manual", "upcoming", "car_seat_status", "photo_check"].includes(t),
+          ![
+            "list_items",
+            "ask_manual",
+            "upcoming",
+            "car_seat_status",
+            "photo_check",
+            "fast_lane",
+          ].includes(t),
       )
     ) {
       onChange?.();
@@ -814,7 +912,11 @@ export function reportIssue({ runId, debug, about } = {}) {
   $("#report-text", dialog).focus();
 }
 
-/** A photo as a JPEG data URL, at most 1280 px (or `max`) on its long side. */
+/**
+ * A photo as a JPEG data URL, at most 1280 px (or `max`) on its long side.
+ * Jev takes images up to 1568 px a side and fails the whole request past it,
+ * so photos it checks (labels, receipts, chat) stay at or under that.
+ */
 export function shrink(file, max = 1280) {
   return new Promise((resolve, reject) => {
     const img = new Image();

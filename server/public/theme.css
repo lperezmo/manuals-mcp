@@ -776,6 +776,38 @@ button:disabled {
 .chat form.field input {
   flex: 1 1 auto;
 }
+/* Search as you type: saved answers under the box, before Enter */
+.suggest {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+.suggest[hidden] {
+  display: none;
+}
+.chat .suggest {
+  margin: 0 12px 6px;
+}
+.suggest-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  text-align: left;
+  font-weight: 400;
+  color: var(--ink);
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.suggest-item {
+  color: var(--ink2);
+  font-size: 14px;
+}
 /* Photos in the chat: the camera button, the one waiting to send, and in a bubble. */
 .chat-attach {
   flex: none;

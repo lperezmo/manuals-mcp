@@ -39,6 +39,7 @@
         toast,
         today,
         tool,
+        typeAhead,
       } from "/app.js";
 
       const main = $("#main");
@@ -456,6 +457,10 @@
           }`;
 
         wireHero();
+        typeAhead($("#ask-input"), (text) => {
+          $("#ask-input").value = "";
+          openChat(text, load);
+        });
         $("#ask").addEventListener("submit", (e) => {
           e.preventDefault();
           const text = $("#ask-input").value.trim();

@@ -29,6 +29,7 @@
         ["all", "All"],
         ["read", "Manual reads"],
         ["chat", "Chats"],
+        ["fast", "Instant answers"],
         ["search", "Searches"],
         ["snap", "Label photos"],
         ["plan", "Catch-up plans"],
@@ -48,6 +49,7 @@
         if (r.kind === "snap") return "Read a label photo";
         if (r.kind === "plan") return `Made a catch-up plan for the ${names.get(r.item_id) ?? "thing"}`;
         if (r.kind === "search") return `Searched for the ${names.get(r.item_id) ?? "thing's"} manual`;
+        if (r.kind === "fast") return `Instant answer about the ${names.get(r.item_id) ?? "thing"}, no Muse`;
         return r.tools_used?.length ? `Chat: ${r.tools_used.join(", ")}` : "Chat, no tools";
       }
 
@@ -114,6 +116,7 @@
           </section>
           <section class="run-stats" aria-label="Last 24 hours">
             <div class="card"><strong>${count("chat")}</strong><span class="small muted">chat questions today</span></div>
+            <div class="card"><strong>${count("fast") + count("chat") ? `${Math.round((100 * count("fast")) / (count("fast") + count("chat")))}%` : "0%"}</strong><span class="small muted">answered without Muse</span></div>
             <div class="card"><strong>${count("read")}</strong><span class="small muted">manual reads today</span></div>
             <div class="card"><strong>${num(tokens)}</strong><span class="small muted">tokens today</span></div>
             <div class="card"><strong ${failed ? 'style="color:var(--coral)"' : ""}>${failed}</strong><span class="small muted">failed today</span></div>

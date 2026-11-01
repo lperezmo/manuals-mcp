@@ -150,6 +150,35 @@ describe("MCP endpoint", () => {
   });
 });
 
+describe("ask_manual with only a question", () => {
+  test("doesn't claim the manuals were searched when they weren't", async () => {
+    const { verify, mint } = await testAuth();
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("/rpc/ensure_household"))
+        return Response.json("11111111-1111-1111-1111-111111111111");
+      return new Response("unexpected", { status: 500 });
+    }) as typeof fetch;
+    const res = await mcpHandler(
+      testEnv,
+      verify,
+    )(
+      rpc(
+        {
+          jsonrpc: "2.0",
+          id: 3,
+          method: "tools/call",
+          params: { name: "ask_manual", arguments: { question: "What does E4 mean?" } },
+        },
+        await mint({ client_id: "claude" }),
+      ),
+    );
+    const text = (await result(res)).result.content[0].text as string;
+    expect(text).not.toContain("Nothing in the saved manuals matches");
+    expect(text).toContain("query");
+  });
+});
+
 describe("protected resource metadata", () => {
   test("names Supabase Auth as the authorization server for /mcp", async () => {
     const res = resourceMetadataHandler(testEnv)(

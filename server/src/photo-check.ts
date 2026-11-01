@@ -160,3 +160,101 @@ export async function lookAtPhoto(
     return null;
   }
 }
+
+// A second look at what Muse read off a label or receipt photo, after the
+// pattern in TypeSafe's "OCR confidence and bounding boxes" cookbook
+// (https://docs.typesafe.ai/cookbooks/ocr_confidence_bounding_boxes): Jev
+// answers one yes/no per value, "is this what the photo shows?", in a single
+// call with the photo sent once. A confident no marks the value doubtful, so
+// the person checks it (a misread model number finds the wrong manual, a
+// misread date moves the warranty). Nothing is changed or thrown away, and
+// Jev being unset or down leaves the read as it was.
+
+/** Below this, a value counts as doubtful: the cookbook's review bar. */
+export const DOUBT_BELOW = 0.25;
+
+/** One question per value Muse can read, keyed by the field it read it into. */
+const READ_QUESTIONS = {
+  label: {
+    brand: (v: string) => `Is "${v}" the brand name shown in \`photo\`?`,
+    model: (v: string) =>
+      `Is "${v}" the model number printed in \`photo\`, character for character? Answer no if any letter or digit differs, such as S read as 5, O as 0, I as 1 or B as 8.`,
+    serial: (v: string) =>
+      `Is "${v}" the serial number printed in \`photo\`, character for character? Answer no if any letter or digit differs.`,
+  },
+  receipt: {
+    store: (v: string) => `Is the store or seller in \`photo\` "${v}"?`,
+    purchased_on: (v: string) =>
+      `Is ${v} (year-month-day) the purchase date printed in \`photo\`? It may be written in another date format; answer no if the day, month or year differs.`,
+    price: (v: string) => `Does \`photo\` show ${v} as the price paid for the product?`,
+    warranty_months: (v: string) =>
+      `Does \`photo\` state a warranty of ${v} months, or the same length in years?`,
+  },
+} satisfies Record<keyof typeof SHOWS, Record<string, (v: string) => string>>;
+
+export interface ReadCheck {
+  /** Fields whose value Jev confidently says the photo doesn't show. */
+  doubtful: string[];
+  /** Jev's P(yes) per field it was asked about. */
+  scores: Record<string, number>;
+  tokens_in: number | null;
+  ms: number;
+}
+
+export async function checkRead(
+  env: Env,
+  image: { mime: string; base64: string },
+  read: Record<string, unknown>,
+  what: keyof typeof SHOWS = "label",
+  fetchImpl: typeof fetch = fetch,
+): Promise<ReadCheck | null> {
+  const router = env.router;
+  const format = { "image/jpeg": "jpg", "image/png": "png" }[image.mime];
+  if (!router || !format) return null;
+  const builders: Record<string, (v: string) => string> = READ_QUESTIONS[what];
+  const questions: Record<string, { type: "noul"; instructions: string }> = {};
+  for (const [field, ask] of Object.entries(builders)) {
+    const value = read[field];
+    if ((typeof value === "string" && value.trim()) || typeof value === "number") {
+      questions[field] = { type: "noul", instructions: ask(String(value).trim().slice(0, 120)) };
+    }
+  }
+  if (!Object.keys(questions).length) return null;
+  const started = Date.now();
+  try {
+    const res = await fetchImpl(`${router.baseUrl}/v1/systemone`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${router.apiKey}`,
+        "TypeSafe-Danger-Zone-Images": "true",
+      },
+      body: JSON.stringify({
+        model: router.model,
+        state: { photo: `${what}-read` },
+        assets: { [`${what}-read`]: { type: "image", format, data_base64: image.base64 } },
+        questions,
+      }),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      answers?: Record<string, { noul?: number }>;
+      usage?: { input_tokens?: number };
+    };
+    const scores: Record<string, number> = {};
+    for (const field of Object.keys(questions)) {
+      const p = body.answers?.[field]?.noul;
+      if (typeof p === "number") scores[field] = p;
+    }
+    if (!Object.keys(scores).length) return null;
+    return {
+      doubtful: Object.keys(scores).filter((f) => (scores[f] ?? 1) < DOUBT_BELOW),
+      scores,
+      tokens_in: body.usage?.input_tokens ?? null,
+      ms: Date.now() - started,
+    };
+  } catch {
+    return null;
+  }
+}
