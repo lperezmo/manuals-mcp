@@ -30,6 +30,12 @@ export interface Candidate {
   problem?: string;
   /** The check didn't finish (slow site, network); the PDF may still be fine. */
   unchecked?: boolean;
+  /** Other models of the same line this PDF also covers (RAC-PD1011CRU, ...), when it covers several. */
+  models?: string[];
+  /** Jev's pick among the candidates that name the model. */
+  best?: boolean;
+  /** The first pages' text, for picking; never sent to the browser. */
+  excerpt?: string;
 }
 
 /** Sites that list manuals but rarely serve the PDF itself, or aren't manuals at all. */
@@ -132,6 +138,24 @@ export function isBrandHost(host: string, brand: string | null | undefined): boo
   return b.length >= 2 && squash(host.replace(/\.[a-z]+$/, "")).includes(b);
 }
 
+/**
+ * A result title a person can read. PDFs often carry their work file's name as
+ * the title ("PORTABLE PD_USER MANUAL TOSHIBA US (P14).indd"): drop the file
+ * extension and underscores, and calm all-caps down. Short words like "US" stay.
+ */
+export function tidyTitle(raw: string): string {
+  let t = raw
+    .replace(/\.(indd|pdf|docx?|qxp|qxd|ai|idml|pub|rtf|txt)\b/gi, "")
+    .replace(/_+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const letters = t.replace(/[^A-Za-z]/g, "");
+  if (letters.length >= 6 && letters === letters.toUpperCase()) {
+    t = t.replace(/[A-Z]{4,}/g, (w) => w[0] + w.slice(1).toLowerCase());
+  }
+  return t;
+}
+
 /** PDF links from the results, best first: the maker's site, then the model in the link or title. */
 export function rankResults(
   results: SearchResult[],
@@ -155,7 +179,7 @@ export function rankResults(
     const hint = suggestModel(`${r.title} ${url.pathname}`, item.model);
     ranked.push({
       url: url.toString(),
-      title: r.title,
+      title: tidyTitle(r.title) || url.pathname.split("/").pop() || host,
       host,
       official,
       named,
@@ -189,6 +213,24 @@ export async function searchWeb(
     .map((r) => ({ url: r.url as string, title: r.title ?? "", score: r.score ?? 0 }));
 }
 
+/**
+ * The model numbers of the same line a text mentions, spelled as printed: a
+ * manual for "RAC-PD0811CRU" that also lists RAC-PD1011CRU covers several sizes.
+ * The line is the model's letters before its first digit (RAC-PD), at least 3.
+ */
+export function sameLineModels(text: string, model: string | null | undefined): string[] {
+  const prefix = squash((model ?? "").match(/^[^0-9]*/)?.[0] ?? "");
+  if (prefix.length < 3) return [];
+  const found = new Map<string, string>();
+  for (const word of text.match(/[A-Za-z][A-Za-z-]*\d[A-Za-z0-9-]*/g) ?? []) {
+    const key = squash(word);
+    if (key.startsWith(prefix) && key.length > prefix.length + 1 && !found.has(key)) {
+      found.set(key, word.replace(/-+$/, ""));
+    }
+  }
+  return [...found.values()];
+}
+
 /** Downloads a candidate and checks it is a PDF that names the model. */
 export async function checkCandidate(
   candidate: Candidate,
@@ -202,12 +244,19 @@ export async function checkCandidate(
     const text = pages.map((p) => p.content).join(" ");
     const match = modelMatch(text, model);
     const hint = match === "lookalike" ? suggestModel(text, model) : null;
+    const models = sameLineModels(text, model);
     return {
       ...candidate,
       page_count: pageCount,
       has_model: match !== null,
       ...(match ? { match } : {}),
       ...(hint ? { model_hint: hint } : {}),
+      ...(models.length > 1 ? { models: models.slice(0, 8) } : {}),
+      excerpt: pages
+        .slice(0, 3)
+        .map((p) => p.content)
+        .join(" ")
+        .slice(0, 3_000),
     };
   } catch (err) {
     // A FetchPdfError is a definite answer (not a PDF, 404, too big); anything
@@ -265,5 +314,73 @@ export async function findManual(
         Number(!b.unchecked) - Number(!a.unchecked) ||
         Number(b.official) - Number(a.official),
     );
-  return { query, candidates, tried };
+  const picked = await pickBest(env, item, candidates, fetchImpl);
+  const strip = ({ excerpt: _, ...c }: Candidate) => c;
+  return { query, candidates: picked.map(strip), tried: tried.map(strip) };
+}
+
+/** Jev's "this is the one" must reach this, and beat the next by PICK_MARGIN. */
+export const PICK_FLOOR = 0.5;
+export const PICK_MARGIN = 0.15;
+
+/**
+ * When two or more PDFs name the model, Jev reads the first pages of each and
+ * says which one is written for this exact model (not a sibling size, not a
+ * whole product line). The clear winner is marked best and moved first; a
+ * close call, or Jev being away, leaves the order as it was.
+ */
+export async function pickBest(
+  env: Env,
+  item: { brand?: string | null; model?: string | null; nickname?: string | null },
+  candidates: Candidate[],
+  fetchImpl: typeof fetch = fetch,
+): Promise<Candidate[]> {
+  const router = env.router;
+  const named = candidates.filter((c) => c.has_model && c.excerpt);
+  if (!router || !item.model || named.length < 2) return candidates;
+  const thing = [item.brand, item.nickname, item.model].filter(Boolean).join(" ");
+  try {
+    const res = await fetchImpl(`${router.baseUrl}/v1/systemone`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${router.apiKey}` },
+      body: JSON.stringify({
+        model: router.model,
+        state: {
+          thing,
+          manuals: Object.fromEntries(
+            named.map((c, i) => [
+              `m${i}`,
+              { title: c.title, pages: c.page_count, also_lists: c.models ?? [], text: c.excerpt },
+            ]),
+          ),
+        },
+        questions: Object.fromEntries(
+          named.map((_, i) => [
+            `m${i}`,
+            {
+              type: "noul",
+              instructions: `Is manual m${i} the owner's manual for the ${thing} itself?`,
+              criteria: {
+                true: "It is written for this model: its own size and version, or a short list where this model is one of a few close variants.",
+                false:
+                  "It is for a different size or model, or a long catalog where this model is only mentioned.",
+              },
+            },
+          ]),
+        ),
+      }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return candidates;
+    const body = (await res.json()) as { answers?: Record<string, { noul?: number }> };
+    const scored = named
+      .map((c, i) => ({ c, p: body.answers?.[`m${i}`]?.noul ?? 0 }))
+      .sort((a, b) => b.p - a.p);
+    const [top, next] = scored;
+    if (!top || top.p < PICK_FLOOR || (next && top.p - next.p < PICK_MARGIN)) return candidates;
+    const winner = { ...top.c, best: true };
+    return [winner, ...candidates.filter((c) => c !== top.c)];
+  } catch {
+    return candidates;
+  }
 }

@@ -836,6 +836,7 @@
 
       function candidateCard(c) {
         const tags = [
+          c.best ? '<span class="chip teal strong">Best match</span>' : "",
           c.official ? '<span class="chip teal strong">From the maker</span>' : "",
           c.unchecked
             ? `<span class="chip gold">Couldn't open it to check; the link names your model</span>`
@@ -850,6 +851,7 @@
             <strong style="overflow-wrap:anywhere">${esc(c.title || c.url.split("/").pop())}</strong>
             <span class="small muted" style="overflow-wrap:anywhere">${esc(c.host)}${c.page_count ? ` · ${c.page_count} pages` : ""}</span>
             <div class="row" style="gap:6px">${tags}</div>
+            ${c.models?.length ? `<p class="small muted" style="margin:4px 0 0">Covers ${c.models.length} models: ${esc(c.models.slice(0, 4).join(", "))}${c.models.length > 4 ? ", …" : ""}</p>` : ""}
             ${c.model_hint ? `<p class="small" style="margin:4px 0 0">This manual spells it <strong>${esc(c.model_hint)}</strong>; the label photo may have been misread. <button type="button" class="quiet small" data-fix-model="${esc(c.model_hint)}">Fix the model</button></p>` : ""}
           </div>
           <div class="row">
