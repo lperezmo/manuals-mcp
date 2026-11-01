@@ -51,7 +51,9 @@ export async function readReceipt(
     body: JSON.stringify({
       model: env.chatModel ?? reader.model,
       response_format: { type: "json_object" },
-      max_tokens: 1500,
+      // Muse thinks before it answers, and that counts here: about 1,000 tokens or more on a
+      // busy photo. Too low a cap cuts the JSON off partway.
+      max_tokens: 6000,
       messages: [
         { role: "system", content: INSTRUCTIONS },
         {
