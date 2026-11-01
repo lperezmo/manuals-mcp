@@ -295,8 +295,11 @@ export interface Box {
 
 /** The "is it there" answer must be at least this sure to use the box. */
 export const PRESENT_AT = 0.6;
-/** And Box's own confidence at least this. TypeSafe has no recommended bar yet. */
-export const BOX_AT = 0.5;
+/**
+ * And Box's own confidence at least this. TypeSafe has no recommended bar yet;
+ * on the live fixtures, boxes that sat right on the value scored 0.4 to 0.69.
+ */
+export const BOX_AT = 0.4;
 /** A box covering more of the photo than this shows nothing a crop would add. */
 const MOST_OF_PHOTO = 0.8;
 /** The box call's own cap; it runs after Muse, so it is kept short. */
