@@ -11,7 +11,7 @@ import { type ChatUsage, callTool, messageSchema, runChat, withCard } from "./ch
 import { householdId, type ItemRow, userDb } from "./db.js";
 import { authIssuer, type Env } from "./env.js";
 import { ATTACH_DOWNLOAD_MS, FetchPdfError, fetchPdf } from "./finder/fetch-pdf.js";
-import { processStoredManual, storeManual } from "./finder/ingest.js";
+import { processStoredManual, ReadingBusyError, storeManual } from "./finder/ingest.js";
 import { findManual } from "./finder/search.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
 import { checkPhoto } from "./photo-check.js";
@@ -89,13 +89,13 @@ export function ingestHandler(env: Env, verify: Verify = supabaseVerifier(env)) 
     if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
     const auth = await verify(bearer(req));
     if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
-    let manualId: unknown;
+    let body: { manual_id?: unknown; reread?: unknown };
     try {
-      manualId = ((await req.json()) as { manual_id?: unknown }).manual_id;
+      body = (await req.json()) as typeof body;
     } catch {
       return Response.json({ error: "Send JSON with manual_id." }, { status: 400 });
     }
-    if (typeof manualId !== "string")
+    if (typeof body.manual_id !== "string")
       return Response.json({ error: "manual_id is required." }, { status: 400 });
     try {
       const db = userDb(env, auth.token);
@@ -103,10 +103,13 @@ export function ingestHandler(env: Env, verify: Verify = supabaseVerifier(env)) 
         env,
         db,
         householdId: await householdId(db),
-        manualId,
+        manualId: body.manual_id,
+        reread: body.reread === true,
       });
       return Response.json(outcome);
     } catch (err) {
+      if (err instanceof ReadingBusyError)
+        return Response.json({ error: err.message, busy: true }, { status: 409 });
       return Response.json({ error: (err as Error).message }, { status: 422 });
     }
   };
@@ -144,6 +147,20 @@ export function attachHandler(
       if (error) throw new Error(error.message);
       if (!item)
         return Response.json({ error: "That thing isn't in your household." }, { status: 404 });
+      // A second tap, or a retry after a dropped connection, reuses the stored copy.
+      const stored = async (url: string) => {
+        const { data } = await db
+          .from("manuals")
+          .select("id")
+          .eq("item_id", body.item_id as string)
+          .eq("source_url", url)
+          .not("storage_path", "is", null)
+          .limit(1)
+          .maybeSingle();
+        return (data?.id as string | undefined) ?? null;
+      };
+      const before = await stored(body.url);
+      if (before) return Response.json({ manual_id: before, existing: true });
       let fetched: Awaited<ReturnType<typeof fetchPdf>>;
       try {
         fetched = await fetchPdf(body.url, fetchImpl, ATTACH_DOWNLOAD_MS);
@@ -154,6 +171,8 @@ export function attachHandler(
             : "The maker's site is too slow right now. Try again in a bit, or open the PDF, save it and upload it.";
         return Response.json({ error: message }, { status: 422 });
       }
+      const after = fetched.finalUrl === body.url ? null : await stored(fetched.finalUrl);
+      if (after) return Response.json({ manual_id: after, existing: true });
       const manualId = await storeManual({
         db,
         householdId: await householdId(db),

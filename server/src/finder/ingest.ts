@@ -88,18 +88,31 @@ export async function storeManual(args: StoreArgs): Promise<string> {
   return manual.id as string;
 }
 
-/** Processes a manual whose PDF is already in storage (the app's upload path). */
+/** A read past this is taken as dead (the function limit is 300 s), so the lock frees itself. */
+export const READING_STALE_MS = 6 * 60_000;
+/** "Read it again" right after a read is refused: the same pages give the same answer. */
+export const REREAD_COOLDOWN_MS = 2 * 60_000;
+
+/** Another read of this manual is running, or one just finished. Nothing was sent to Muse. */
+export class ReadingBusyError extends Error {}
+
+/**
+ * Processes a manual whose PDF is already in storage (the app's upload path).
+ * A manual that is already read comes back as it is unless `reread` is set,
+ * and only one read of a manual runs at a time, so repeated taps cost one read.
+ */
 export async function processStoredManual(args: {
   env: Env;
   db: Db;
   householdId: string;
   manualId: string;
+  reread?: boolean;
 }): Promise<IngestOutcome> {
   const { db } = args;
   const { data, error } = await db
     .from("manuals")
     .select(
-      "id, storage_path, items(id, household_id, kind, category, nickname, brand, model, serial, purchased_on, uses_per_week, child_id, notes)",
+      "id, storage_path, status, page_count, reader_at, items(id, household_id, kind, category, nickname, brand, model, serial, purchased_on, uses_per_week, child_id, notes)",
     )
     .eq("id", args.manualId)
     .single();
@@ -107,10 +120,49 @@ export async function processStoredManual(args: {
   if (!data.storage_path) throw new Error("That manual has no PDF uploaded yet.");
   const item = (Array.isArray(data.items) ? data.items[0] : data.items) as ItemRow | undefined;
   if (!item) throw new Error("That manual isn't attached to an item.");
-  const file = await db.storage.from(BUCKET).download(data.storage_path);
-  if (file.error || !file.data) throw new Error(`Couldn't read the PDF: ${file.error?.message}`);
-  const bytes = new Uint8Array(await file.data.arrayBuffer());
-  return processPdf({ ...args, item, bytes });
+  if (data.status === "distilled" && !args.reread) {
+    return {
+      manual_id: data.id,
+      status: "distilled",
+      page_count: data.page_count,
+      pages_with_text: 0,
+      distilled: null,
+      note: "Already read.",
+    };
+  }
+  if (
+    args.reread &&
+    data.reader_at &&
+    Date.now() - Date.parse(data.reader_at) < REREAD_COOLDOWN_MS
+  ) {
+    throw new ReadingBusyError(
+      "Muse just read this manual. Give it a couple of minutes before reading it again.",
+    );
+  }
+
+  // One UPDATE claims the manual: a second caller's row no longer matches the filter.
+  const now = new Date();
+  const stale = new Date(now.getTime() - READING_STALE_MS).toISOString();
+  const { data: claimed, error: claimError } = await db
+    .from("manuals")
+    .update({ reading_since: now.toISOString() })
+    .eq("id", data.id)
+    .or(`reading_since.is.null,reading_since.lt.${stale}`)
+    .select("id");
+  if (claimError) throw new Error(`Couldn't start the read: ${claimError.message}`);
+  if (!claimed?.length) {
+    throw new ReadingBusyError(
+      "Muse is already reading this manual. It shows up here when it's done.",
+    );
+  }
+  try {
+    const file = await db.storage.from(BUCKET).download(data.storage_path);
+    if (file.error || !file.data) throw new Error(`Couldn't read the PDF: ${file.error?.message}`);
+    const bytes = new Uint8Array(await file.data.arrayBuffer());
+    return await processPdf({ ...args, item, bytes });
+  } finally {
+    await db.from("manuals").update({ reading_since: null }).eq("id", data.id);
+  }
 }
 
 /** Whether the household's daily manual reads and the site's model budget both have room. */
