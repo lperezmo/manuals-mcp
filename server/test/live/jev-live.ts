@@ -17,7 +17,7 @@
 import { readFileSync } from "node:fs";
 import { createCanvas } from "@napi-rs/canvas";
 import { readEnv } from "../../src/env.js";
-import { checkPhoto, checkRead, DOUBT_BELOW } from "../../src/photo-check.js";
+import { BOX_AT, checkPhoto, checkRead, DOUBT_BELOW, PRESENT_AT } from "../../src/photo-check.js";
 
 const env = readEnv({
   ...process.env,
@@ -94,15 +94,25 @@ async function live<T>(call: (f: typeof fetch) => Promise<T | null>): Promise<T 
  * One raw call, so a bad key, model or size shows as a status instead of a silent null.
  * A 429 or 5xx says nothing about the photo, so it gets one more try, like a null check.
  */
-async function probe(image: { base64: string }, format: "jpg" | "png") {
-  const first = await probeOnce(image, format);
+const ANY_TEXT = { any: { type: "noul", instructions: "Is there any text in `photo`?" } };
+
+async function probe(
+  image: { base64: string },
+  format: "jpg" | "png",
+  questions: Record<string, { type: string; instructions: string }> = ANY_TEXT,
+) {
+  const first = await probeOnce(image, format, questions);
   if (first.status !== 429 && first.status < 500) return first;
   console.log(`RETRY in 1000 ms, the raw call got HTTP ${first.status}: ${first.text}`);
   await new Promise((r) => setTimeout(r, 1_000));
-  return probeOnce(image, format);
+  return probeOnce(image, format, questions);
 }
 
-async function probeOnce(image: { base64: string }, format: "jpg" | "png") {
+async function probeOnce(
+  image: { base64: string },
+  format: "jpg" | "png",
+  questions: Record<string, { type: string; instructions: string }>,
+) {
   const started = Date.now();
   const res = await fetch(`${router?.baseUrl}/v1/systemone`, {
     method: "POST",
@@ -115,12 +125,12 @@ async function probeOnce(image: { base64: string }, format: "jpg" | "png") {
       model: router?.model,
       state: { photo: "probe" },
       assets: { probe: { type: "image", format, data_base64: image.base64 } },
-      questions: { any: { type: "noul", instructions: "Is there any text in `photo`?" } },
+      questions,
     }),
     signal: AbortSignal.timeout(15_000),
   });
   const text = await res.text();
-  return { status: res.status, ms: Date.now() - started, text: text.slice(0, 300) };
+  return { status: res.status, ms: Date.now() - started, text: text.slice(0, 300), full: text };
 }
 
 console.log(`Jev at ${router.baseUrl}, model ${router.model}`);
@@ -205,6 +215,23 @@ pass(
   wrongModel ? `${round(wrongModel.scores)} doubtful=[${wrongModel.doubtful}]` : nullWhy,
 );
 
+// Where the doubtful model is on the photo. Box is "dreamer-ready" with no
+// recommended bar, so the boxes are printed to tune PRESENT_AT and BOX_AT, and
+// only the raw call itself has to pass (the app fails open, so a refused Box
+// call would otherwise just mean no crop, silently).
+const boxCall = await probe(label, "jpg", {
+  box_model: { type: "box", instructions: "the model number printed in `photo`" },
+  present_model: { type: "noul", instructions: "Does `photo` clearly show the model number?" },
+});
+pass(
+  "raw Box call with the label photo",
+  boxCall.status === 200 && boxCall.full.includes('"box"'),
+  `HTTP ${boxCall.status} in ${boxCall.ms} ms: ${boxCall.text}`,
+);
+console.log(
+  `INFO  doubtful model located=${JSON.stringify(wrongModel?.located ?? null)} boxes=${JSON.stringify(wrongModel?.boxes ?? null)} (bars present ${PRESENT_AT}, box ${BOX_AT})`,
+);
+
 const rightReceipt = await live((f) =>
   checkRead(
     env,
@@ -234,6 +261,9 @@ pass(
   (wrongReceipt?.doubtful.includes("purchased_on") && wrongReceipt.doubtful.includes("price")) ===
     true,
   wrongReceipt ? `${round(wrongReceipt.scores)} doubtful=[${wrongReceipt.doubtful}]` : nullWhy,
+);
+console.log(
+  `INFO  doubtful receipt located=${JSON.stringify(wrongReceipt?.located ?? null)} boxes=${JSON.stringify(wrongReceipt?.boxes ?? null)}`,
 );
 
 console.log(`\nDoubt bar ${DOUBT_BELOW}. ${failed ? `${failed} failed.` : "All passed."}`);

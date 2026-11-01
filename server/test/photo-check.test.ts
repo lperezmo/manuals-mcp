@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readEnv } from "../src/env.js";
 import { receiptHandler, snapHandler } from "../src/http.js";
-import { checkPhoto, checkRead, DOUBT_BELOW } from "../src/photo-check.js";
+import {
+  BOX_AT,
+  checkPhoto,
+  checkRead,
+  DOUBT_BELOW,
+  PRESENT_AT,
+  RETRY_WAIT_MS,
+} from "../src/photo-check.js";
 import { testAuth } from "./helpers.js";
 
 const base = {
@@ -271,7 +278,8 @@ describe("receipt with the second look", () => {
       return Response.json({ answers: { purchased_on: { noul: 0.01 } } });
     }) as unknown as typeof fetch;
     const out = await (await receiptHandler(env, verify, net)(post(await mint()))).json();
-    expect(asked).toEqual([["purchased_on"]]);
+    // The second look, then where the doubtful date is on the photo.
+    expect(asked).toEqual([["purchased_on"], ["box_purchased_on", "present_purchased_on"]]);
     expect(out).toMatchObject({ saved: true, doubtful: ["purchased_on"] });
   });
 });
@@ -332,5 +340,285 @@ describe("checkRead", () => {
       await checkRead(env, { ...PHOTO, mime: "image/webp" }, read, "label", answers({ model: 0 })),
     ).toBeNull();
     expect(await checkRead(env, PHOTO, { model: " " }, "label", answers({ model: 0 }))).toBeNull();
+  });
+});
+
+describe("where a doubtful value is on the photo", () => {
+  const MODEL_BOX = { top: 0.4, bottom: 0.48, left: 0.2, right: 0.7 };
+  /** Jev doubts the model on the first call, then answers the box call with `where`. */
+  const jevSays = (where: object | (() => Response), calls: any[] = []) =>
+    (async (_u: string, init: RequestInit) => {
+      const sent = JSON.parse(String(init.body));
+      calls.push(sent);
+      if ("brand" in sent.questions) {
+        return Response.json({ answers: { brand: { noul: 0.97 }, model: { noul: 0.05 } } });
+      }
+      if (typeof where === "function") return where();
+      return Response.json({ answers: where });
+    }) as unknown as typeof fetch;
+  const READ = { found: true, brand: "Whirlpool", model: "WTW5OOODW1" };
+
+  test("asks Box only for the doubtful value, paired with an is-it-there question", async () => {
+    const calls: any[] = [];
+    const check = await checkRead(
+      env,
+      PHOTO,
+      READ,
+      "label",
+      jevSays(
+        {
+          box_model: { type: "box", box: MODEL_BOX, confidence: 0.81 },
+          present_model: { type: "noul", noul: 0.93 },
+        },
+        calls,
+      ),
+    );
+    expect(calls).toHaveLength(2);
+    expect(Object.keys(calls[1].questions)).toEqual(["box_model", "present_model"]);
+    expect(calls[1].questions.box_model.type).toBe("box");
+    expect(calls[1].questions.box_model.instructions).toContain('"WTW5OOODW1"');
+    expect(calls[1].questions.present_model.type).toBe("noul");
+    expect(check?.doubtful).toEqual(["model"]);
+    expect(check?.boxes).toEqual({ model: MODEL_BOX });
+    expect(check?.located?.model).toMatchObject({ present: 0.93, confidence: 0.81 });
+  });
+
+  test("a box Jev isn't sure is there, or isn't sure of, is not used", async () => {
+    const weakPresence = await checkRead(
+      env,
+      PHOTO,
+      READ,
+      "label",
+      jevSays({
+        box_model: { box: MODEL_BOX, confidence: 0.9 },
+        present_model: { noul: PRESENT_AT - 0.2 },
+      }),
+    );
+    expect(weakPresence?.doubtful).toEqual(["model"]);
+    expect(weakPresence?.boxes).toBeUndefined();
+    // Still logged, to tune the bars.
+    expect(weakPresence?.located?.model?.present).toBe(PRESENT_AT - 0.2);
+
+    const weakBox = await checkRead(
+      env,
+      PHOTO,
+      READ,
+      "label",
+      jevSays({
+        box_model: { box: MODEL_BOX, confidence: BOX_AT - 0.1 },
+        present_model: { noul: 0.95 },
+      }),
+    );
+    expect(weakBox?.boxes).toBeUndefined();
+
+    const wholePhoto = await checkRead(
+      env,
+      PHOTO,
+      READ,
+      "label",
+      jevSays({
+        box_model: { box: { top: 0, bottom: 1, left: 0, right: 1 }, confidence: 0.9 },
+        present_model: { noul: 0.95 },
+      }),
+    );
+    expect(wholePhoto?.boxes).toBeUndefined();
+  });
+
+  test("Jev down or slow on the box call keeps the doubt, without a crop", async () => {
+    const down = await checkRead(
+      env,
+      PHOTO,
+      READ,
+      "label",
+      jevSays(() => new Response("busy", { status: 503 })),
+    );
+    expect(down?.doubtful).toEqual(["model"]);
+    expect(down?.boxes).toBeUndefined();
+    expect(down?.located).toBeUndefined();
+
+    const timedOut = await checkRead(
+      env,
+      PHOTO,
+      READ,
+      "label",
+      jevSays(() => {
+        throw new Error("The operation timed out.");
+      }),
+    );
+    expect(timedOut?.doubtful).toEqual(["model"]);
+    expect(timedOut?.boxes).toBeUndefined();
+  });
+
+  test("no box call when nothing is doubtful or the time is up", async () => {
+    const calls: any[] = [];
+    const sure = (async (_u: string, init: RequestInit) => {
+      calls.push(JSON.parse(String(init.body)));
+      return Response.json({ answers: { brand: { noul: 0.97 }, model: { noul: 0.9 } } });
+    }) as unknown as typeof fetch;
+    expect((await checkRead(env, PHOTO, READ, "label", sure))?.doubtful).toEqual([]);
+    expect(calls).toHaveLength(1);
+
+    const late: any[] = [];
+    const check = await checkRead(env, PHOTO, READ, "label", jevSays({}, late), Date.now() + 500);
+    expect(check?.doubtful).toEqual(["model"]);
+    expect(late).toHaveLength(1);
+  });
+});
+
+describe("snap and receipt answer with the box", () => {
+  const BOX = { top: 0.1, bottom: 0.2, left: 0.3, right: 0.6 };
+  function fakeSupabase() {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      const path = new URL(url).pathname;
+      const method = init?.method ?? "GET";
+      if (path.endsWith("/rpc/model_runs_today_all")) return Response.json(0);
+      if (path.endsWith("/rpc/ensure_household"))
+        return Response.json("11111111-1111-1111-1111-111111111111");
+      if (path.endsWith("/model_runs")) {
+        if (method === "POST") return new Response(null, { status: 201 });
+        return new Response(null, { status: 200, headers: { "content-range": "*/0" } });
+      }
+      if (path.endsWith("/items")) {
+        if (method === "PATCH") return new Response(null, { status: 204 });
+        return Response.json({ id: "22222222-2222-2222-2222-222222222222", purchased_on: null });
+      }
+      if (path.includes("/storage/v1/object/receipts")) return Response.json({ Key: "x" });
+      if (path.endsWith("/receipts")) {
+        const body = JSON.parse(String(init?.body));
+        return Response.json({ ...body, created_at: "2026-10-31T00:00:00Z" });
+      }
+      return new Response("unexpected", { status: 500 });
+    }) as typeof fetch;
+  }
+  /** Muse reads `read`; Jev doubts `field` and finds it at BOX. */
+  const net = (read: object, field: string) =>
+    (async (url: string, init: RequestInit) => {
+      if (!url.includes("typesafe")) {
+        return Response.json({ choices: [{ message: { content: JSON.stringify(read) } }] });
+      }
+      const sent = JSON.parse(String(init.body));
+      if ("sharp" in sent.questions) return jevBody(0.95, 0.9);
+      if (`box_${field}` in sent.questions) {
+        return Response.json({
+          answers: {
+            [`box_${field}`]: { box: BOX, confidence: 0.8 },
+            [`present_${field}`]: { noul: 0.9 },
+          },
+        });
+      }
+      return Response.json({
+        answers: Object.fromEntries(
+          Object.keys(sent.questions).map((k) => [k, { noul: k === field ? 0.03 : 0.95 }]),
+        ),
+      });
+    }) as unknown as typeof fetch;
+
+  test("a doubtful model comes back with where it is on the photo", async () => {
+    const { verify, mint } = await testAuth();
+    fakeSupabase();
+    const req = new Request("https://manuals.example.com/api/snap", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${await mint()}` },
+      body: JSON.stringify({ image: "data:image/jpeg;base64,AAAA" }),
+    });
+    const read = { found: true, brand: "Whirlpool", model: "WTW5000DW1" };
+    const out = await (await snapHandler(env, verify, net(read, "model"))(req)).json();
+    expect(out).toMatchObject({ unsure: true, doubtful: ["model"], boxes: { model: BOX } });
+  });
+
+  test("a doubtful receipt date comes back with where it is on the photo", async () => {
+    const { verify, mint } = await testAuth();
+    fakeSupabase();
+    const req = new Request("https://manuals.example.com/api/receipt", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${await mint()}` },
+      body: JSON.stringify({
+        item_id: "22222222-2222-2222-2222-222222222222",
+        image: "data:image/jpeg;base64,AAAA",
+      }),
+    });
+    const read = { found: true, store: "Appliance Barn", purchased_on: "2026-06-01" };
+    const out = await (await receiptHandler(env, verify, net(read, "purchased_on"))(req)).json();
+    expect(out).toMatchObject({
+      saved: true,
+      doubtful: ["purchased_on"],
+      boxes: { purchased_on: BOX },
+    });
+  });
+});
+
+describe("one quick retry when Jev's image endpoint answers 503", () => {
+  const unavailable = () =>
+    Response.json({ error: "Image processing is unavailable." }, { status: 503 });
+  /** Answers each call with the next reply in turn, and notes when it was called. */
+  const inTurn = (replies: Array<() => Response>, at: number[] = []) =>
+    (async () => {
+      at.push(Date.now());
+      const next = replies.shift();
+      if (!next) throw new Error("no more replies");
+      return next();
+    }) as unknown as typeof fetch;
+  const doubtsModel = () =>
+    Response.json({ answers: { brand: { noul: 0.97 }, model: { noul: 0.05 } } });
+  const READ = { brand: "Whirlpool", model: "WTW5OOODW1" };
+
+  test("the photo check tries once more after a short wait, and keeps the answer", async () => {
+    const at: number[] = [];
+    const check = await checkPhoto(env, PHOTO, inTurn([unavailable, () => jevBody(0.07, 0.9)], at));
+    expect(check?.retake).toBe("no_label");
+    expect(at).toHaveLength(2);
+    expect((at[1] ?? 0) - (at[0] ?? 0)).toBeGreaterThanOrEqual(RETRY_WAIT_MS - 20);
+  });
+
+  test("only once: a second 503 still lets the photo through", async () => {
+    const at: number[] = [];
+    const check = await checkPhoto(env, PHOTO, inTurn([unavailable, unavailable, unavailable], at));
+    expect(check).toBeNull();
+    expect(at).toHaveLength(2);
+  });
+
+  test("other failures are not retried", async () => {
+    for (const status of [500, 429, 400]) {
+      const at: number[] = [];
+      const reply = () => new Response("no", { status });
+      expect(await checkPhoto(env, PHOTO, inTurn([reply, reply], at))).toBeNull();
+      expect(at).toHaveLength(1);
+    }
+  });
+
+  test("the second check and the Box call each get their retry", async () => {
+    const box = { top: 0.4, bottom: 0.48, left: 0.2, right: 0.7 };
+    const where = () =>
+      Response.json({
+        answers: { box_model: { box, confidence: 0.8 }, present_model: { noul: 0.95 } },
+      });
+    const at: number[] = [];
+    const check = await checkRead(
+      env,
+      PHOTO,
+      READ,
+      "label",
+      inTurn([unavailable, doubtsModel, unavailable, where], at),
+    );
+    expect(at).toHaveLength(4);
+    expect(check?.doubtful).toEqual(["model"]);
+    expect(check?.boxes).toEqual({ model: box });
+  });
+
+  test("no Box retry when the time left would not cover it", async () => {
+    const at: number[] = [];
+    const check = await checkRead(
+      env,
+      PHOTO,
+      READ,
+      "label",
+      inTurn([doubtsModel, unavailable, () => Response.json({ answers: {} })], at),
+      // Enough for the Box call itself, not for a wait and a second try.
+      Date.now() + 1_200,
+    );
+    expect(at).toHaveLength(2);
+    expect(check?.doubtful).toEqual(["model"]);
+    expect(check?.boxes).toBeUndefined();
   });
 });

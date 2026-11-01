@@ -9,6 +9,45 @@ import type { Env } from "./env.js";
 /** Below this, the answer counts as a confident no. */
 export const RETAKE_BELOW = 0.12;
 
+// Jev's image endpoint now and then answers HTTP 503 "Image processing is
+// unavailable." in about 12 ms, and the same call works a moment later (seen
+// in the jev-live runs). So a 503 gets one more try after a short wait, inside
+// the call's own time cap, and only when at least a second of that cap is
+// left. Any other failure, or a second 503, fails open as before.
+
+/** The wait before the one retry of a 503. */
+export const RETRY_WAIT_MS = 300;
+/** The retry needs at least this much of the call's time cap left after the wait. */
+const RETRY_MIN_MS = 1_000;
+
+/** One Jev call with an image, capped at `ms` in all, with the one retry of a 503. */
+async function askJev(
+  router: NonNullable<Env["router"]>,
+  body: object,
+  ms: number,
+  fetchImpl: typeof fetch,
+): Promise<Response> {
+  const deadline = Date.now() + ms;
+  const call = (cap: number) =>
+    fetchImpl(`${router.baseUrl}/v1/systemone`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${router.apiKey}`,
+        "TypeSafe-Danger-Zone-Images": "true",
+      },
+      body: JSON.stringify({ model: router.model, ...body }),
+      signal: AbortSignal.timeout(cap),
+    });
+  const res = await call(ms);
+  if (res.status !== 503) return res;
+  const left = deadline - Date.now() - RETRY_WAIT_MS;
+  if (left < RETRY_MIN_MS) return res;
+  await res.body?.cancel().catch(() => {});
+  await new Promise((r) => setTimeout(r, RETRY_WAIT_MS));
+  return call(left);
+}
+
 export type Retake = "no_label" | "blurry";
 
 export interface PhotoCheck {
@@ -39,15 +78,9 @@ export async function checkPhoto(
   if (!router || !format) return null;
   const started = Date.now();
   try {
-    const res = await fetchImpl(`${router.baseUrl}/v1/systemone`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${router.apiKey}`,
-        "TypeSafe-Danger-Zone-Images": "true",
-      },
-      body: JSON.stringify({
-        model: router.model,
+    const res = await askJev(
+      router,
+      {
         state: { photo: `${what}-photo` },
         assets: { [`${what}-photo`]: { type: "image", format, data_base64: image.base64 } },
         questions: {
@@ -58,9 +91,10 @@ export async function checkPhoto(
               "Is the printed text in `photo` sharp, in focus and lit well enough to read?",
           },
         },
-      }),
-      signal: AbortSignal.timeout(5_000),
-    });
+      },
+      5_000,
+      fetchImpl,
+    );
     if (!res.ok) return null;
     const body = (await res.json()) as {
       answers?: { label?: { noul?: number }; sharp?: { noul?: number } };
@@ -197,16 +231,26 @@ export interface ReadCheck {
   doubtful: string[];
   /** Jev's P(yes) per field it was asked about. */
   scores: Record<string, number>;
+  /** Where each doubtful value sits on the photo, when Jev found it clearly. */
+  boxes?: Record<string, Box>;
+  /** Jev's raw answers for the boxes, kept in the log to tune the bars. */
+  located?: Located["found"];
   tokens_in: number | null;
   ms: number;
 }
 
+/**
+ * Asks Jev what Muse read, then, for any value it doubts, where that value is
+ * on the photo. `boxUntil` is a clock time (ms) the box call must finish by,
+ * so it never pushes the handler past its function budget.
+ */
 export async function checkRead(
   env: Env,
   image: { mime: string; base64: string },
   read: Record<string, unknown>,
   what: keyof typeof SHOWS = "label",
   fetchImpl: typeof fetch = fetch,
+  boxUntil = Number.POSITIVE_INFINITY,
 ): Promise<ReadCheck | null> {
   const router = env.router;
   const format = { "image/jpeg": "jpg", "image/png": "png" }[image.mime];
@@ -222,21 +266,16 @@ export async function checkRead(
   if (!Object.keys(questions).length) return null;
   const started = Date.now();
   try {
-    const res = await fetchImpl(`${router.baseUrl}/v1/systemone`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${router.apiKey}`,
-        "TypeSafe-Danger-Zone-Images": "true",
-      },
-      body: JSON.stringify({
-        model: router.model,
+    const res = await askJev(
+      router,
+      {
         state: { photo: `${what}-read` },
         assets: { [`${what}-read`]: { type: "image", format, data_base64: image.base64 } },
         questions,
-      }),
-      signal: AbortSignal.timeout(5_000),
-    });
+      },
+      5_000,
+      fetchImpl,
+    );
     if (!res.ok) return null;
     const body = (await res.json()) as {
       answers?: Record<string, { noul?: number }>;
@@ -248,12 +287,135 @@ export async function checkRead(
       if (typeof p === "number") scores[field] = p;
     }
     if (!Object.keys(scores).length) return null;
+    const doubtful = Object.keys(scores).filter((f) => (scores[f] ?? 1) < DOUBT_BELOW);
+    const where = doubtful.length
+      ? await locateDoubts(env, image, read, doubtful, what, fetchImpl, boxUntil)
+      : null;
     return {
-      doubtful: Object.keys(scores).filter((f) => (scores[f] ?? 1) < DOUBT_BELOW),
+      doubtful,
       scores,
+      ...(where && Object.keys(where.boxes).length ? { boxes: where.boxes } : {}),
+      ...(where ? { located: where.found } : {}),
       tokens_in: body.usage?.input_tokens ?? null,
       ms: Date.now() - started,
     };
+  } catch {
+    return null;
+  }
+}
+
+// Where a doubtful value is on the photo, so the person sees that strip of the
+// sticker or receipt right next to what Muse read (S and 5, O and 0 are much
+// easier to catch side by side). Jev's Box primitive answers with the value's
+// edges as 0 to 1 fractions of the photo, plus a confidence. Box always draws
+// a box, even for something that isn't there, so each one is paired with a
+// yes/no "is it on the photo at all" in the same call, and a box is only kept
+// when both are sure enough. Asked only for doubtful values, in one extra call
+// with a tight timeout; Jev being slow, down or unsure just means no crop.
+// Box and images are "dreamer-ready" at TypeSafe (https://docs.typesafe.ai/primitives/box).
+
+/** Edges as fractions of the photo, measured from its top-left corner. */
+export interface Box {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
+}
+
+/** The "is it there" answer must be at least this sure to use the box. */
+export const PRESENT_AT = 0.6;
+/**
+ * And Box's own confidence at least this. TypeSafe has no recommended bar yet;
+ * on the live fixtures, boxes that sat right on the value scored 0.4 to 0.69.
+ */
+export const BOX_AT = 0.4;
+/** A box covering more of the photo than this shows nothing a crop would add. */
+const MOST_OF_PHOTO = 0.8;
+/** The box call's own cap; it runs after Muse, so it is kept short. */
+export const BOX_MS = 3_000;
+
+/** What each value is, in words Box can look for. */
+const WHERE = {
+  label: { brand: "the brand name", model: "the model number", serial: "the serial number" },
+  receipt: {
+    store: "the store or seller name",
+    purchased_on: "the purchase date",
+    price: "the price paid for the product",
+    warranty_months: "the warranty length",
+  },
+} satisfies Record<keyof typeof SHOWS, Record<string, string>>;
+
+interface Located {
+  boxes: Record<string, Box>;
+  found: Record<string, { present: number; confidence: number; box: Box }>;
+}
+
+function usable(b: unknown): b is Box {
+  if (!b || typeof b !== "object") return false;
+  const { top, bottom, left, right } = b as Record<string, unknown>;
+  const edges = [top, bottom, left, right];
+  if (!edges.every((e) => typeof e === "number" && e >= 0 && e <= 1)) return false;
+  const box = b as Box;
+  const w = box.right - box.left;
+  const h = box.bottom - box.top;
+  return w > 0 && h > 0 && w * h <= MOST_OF_PHOTO;
+}
+
+export async function locateDoubts(
+  env: Env,
+  image: { mime: string; base64: string },
+  read: Record<string, unknown>,
+  fields: string[],
+  what: keyof typeof SHOWS = "label",
+  fetchImpl: typeof fetch = fetch,
+  until = Number.POSITIVE_INFINITY,
+): Promise<Located | null> {
+  const router = env.router;
+  const format = { "image/jpeg": "jpg", "image/png": "png" }[image.mime];
+  const ms = Math.min(BOX_MS, until - Date.now());
+  if (!router || !format || ms < 1_000) return null;
+  const names: Record<string, string> = WHERE[what];
+  const questions: Record<string, { type: "box" | "noul"; instructions: string }> = {};
+  for (const field of fields) {
+    const name = names[field];
+    const value = read[field];
+    if (!name || (typeof value !== "string" && typeof value !== "number")) continue;
+    const shown = String(value).trim().slice(0, 120);
+    questions[`box_${field}`] = {
+      type: "box",
+      instructions: `${name} printed in \`photo\`, which may read like "${shown}"`,
+    };
+    questions[`present_${field}`] = {
+      type: "noul",
+      instructions: `Does \`photo\` clearly show ${name}?`,
+    };
+  }
+  if (!Object.keys(questions).length) return null;
+  try {
+    const res = await askJev(
+      router,
+      {
+        state: { photo: `${what}-where` },
+        assets: { [`${what}-where`]: { type: "image", format, data_base64: image.base64 } },
+        questions,
+      },
+      ms,
+      fetchImpl,
+    );
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      answers?: Record<string, { noul?: number; box?: unknown; confidence?: number }>;
+    };
+    const out: Located = { boxes: {}, found: {} };
+    for (const field of fields) {
+      const box = body.answers?.[`box_${field}`];
+      const present = body.answers?.[`present_${field}`]?.noul;
+      if (!usable(box?.box) || typeof box.confidence !== "number" || typeof present !== "number")
+        continue;
+      out.found[field] = { present, confidence: box.confidence, box: box.box };
+      if (present >= PRESENT_AT && box.confidence >= BOX_AT) out.boxes[field] = box.box;
+    }
+    return out;
   } catch {
     return null;
   }

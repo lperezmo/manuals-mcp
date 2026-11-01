@@ -619,6 +619,13 @@ export function toolHandler(env: Env, verify: Verify = supabaseVerifier(env)) {
 
 const DATA_URL = /^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/;
 
+/**
+ * Jev's box call (where a doubtful value is on the photo) must finish this
+ * long after the request arrived, or it's skipped. The photo routes have 60 s;
+ * this leaves room to log the run and save a receipt.
+ */
+const BOX_BY_MS = 45_000;
+
 /** Reads a label photo (JSON with a data URL) into brand, model and serial. */
 export function snapHandler(
   env: Env,
@@ -626,6 +633,7 @@ export function snapHandler(
   fetchImpl: typeof fetch = fetch,
 ) {
   return async (req: Request) => {
+    const arrived = Date.now();
     if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
     const auth = await verify(bearer(req));
     if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
@@ -688,8 +696,9 @@ export function snapHandler(
       // Jev's second look at what Muse read: a doubtful model number sends the
       // wizard to its "Almost" step instead of finding the wrong manual. Asked
       // even when found is false, since the wizard still uses a brand or model.
-      const reread = await checkRead(env, photo, label, "label", fetchImpl);
+      const reread = await checkRead(env, photo, label, "label", fetchImpl, arrived + BOX_BY_MS);
       const doubtful = reread?.doubtful ?? [];
+      const boxes = reread?.boxes;
       await logRun(db, {
         kind: "snap",
         ok: true,
@@ -697,7 +706,9 @@ export function snapHandler(
         ms: Date.now() - started,
         ...(reread ? { raw_output: JSON.stringify({ ...label, check: reread }) } : {}),
       });
-      return Response.json(doubtful.length ? { ...label, unsure: true, doubtful } : label);
+      return Response.json(
+        doubtful.length ? { ...label, unsure: true, doubtful, ...(boxes ? { boxes } : {}) } : label,
+      );
     } catch (err) {
       const error = (err as Error).message;
       await logRun(db, { kind: "snap", ok: false, model, error, ms: Date.now() - started });
@@ -717,6 +728,7 @@ export function receiptHandler(
   fetchImpl: typeof fetch = fetch,
 ) {
   return async (req: Request) => {
+    const arrived = Date.now();
     if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
     const auth = await verify(bearer(req));
     if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
@@ -784,7 +796,7 @@ export function receiptHandler(
       // The same second look: a doubtful date or price is saved, but the
       // person is asked to check it against the photo. Anything read is saved
       // below, found or not, so anything read is checked.
-      const reread = await checkRead(env, photo, read, "receipt", fetchImpl);
+      const reread = await checkRead(env, photo, read, "receipt", fetchImpl, arrived + BOX_BY_MS);
       const doubtful = reread?.doubtful ?? [];
       if (doubtful.length) read.unsure = true;
       await logRun(db, {
@@ -821,6 +833,7 @@ export function receiptHandler(
         }),
         ...(saved.note ? { note: saved.note } : {}),
         ...(doubtful.length ? { doubtful } : {}),
+        ...(reread?.boxes ? { boxes: reread.boxes } : {}),
       });
     } catch (err) {
       const error = (err as Error).message;
