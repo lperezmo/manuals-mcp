@@ -812,6 +812,8 @@ export function reportIssue({ runId, debug, about } = {}) {
 }
 
 /** A photo as a JPEG data URL, at most 1280 px (or `max`) on its long side. */
+// Jev takes images up to 1568 px a side and fails the whole request past it,
+// so photos it checks (labels, receipts, chat) stay at or under that.
 export function shrink(file, max = 1280) {
   return new Promise((resolve, reject) => {
     const img = new Image();

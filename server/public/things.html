@@ -1164,7 +1164,7 @@
           const file = e.target.files?.[0];
           if (!file) return;
           try {
-            await send(await shrink(file, 1800));
+            await send(await shrink(file, 1568));
           } catch (err) {
             msg.textContent = err.message;
           }
@@ -1292,7 +1292,7 @@
             const file = e.target.files?.[0];
             if (!file) return;
             try {
-              receipt = await shrink(file, 1800);
+              receipt = await shrink(file, 1568);
               drawReceipt();
             } catch (err) {
               toast(err.message);
