@@ -523,8 +523,7 @@ describe("chat with the fast lane", () => {
       );
     }
     expect(last?.status).toBe(429);
-    // Earlier tests share this user's minute, so some of the cap may be used already.
-    expect(jevCalls).toBeLessThanOrEqual(FAST_PER_MINUTE);
+    expect(jevCalls).toBe(FAST_PER_MINUTE);
   });
 
   test("Tell me more skips the fast lane", async () => {

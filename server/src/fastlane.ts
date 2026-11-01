@@ -190,6 +190,11 @@ export function fastAllowed(key: string, now = Date.now()): boolean {
   return true;
 }
 
+/** Forgets every caller's recent fast lane calls. For tests, so one file's calls don't use up the next file's minute. */
+export function resetFastLimits(): void {
+  recentCalls.clear();
+}
+
 function itemName(item: SnapshotItem): string {
   const make = [item.brand, item.model].filter(Boolean).join(" ");
   return make ? `${item.nickname} (${make})` : item.nickname;
