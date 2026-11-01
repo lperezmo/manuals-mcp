@@ -204,9 +204,18 @@ export async function findLine(
       }
     });
     const line = lines[best] ?? null;
+    // "Absent" only when Jev saw every line of every page: a cut page or a
+    // dropped line could hold the answer.
+    const sawAll =
+      pages.length <= LINE_PAGES &&
+      pages.every((p) => p.text.length <= PAGE_CHARS) &&
+      lines.length ===
+        pages.reduce((n, p) => n + splitLines(p.text.slice(0, PAGE_CHARS)).length, 0);
     const verdict =
       exists < EXISTS_ABSENT
-        ? "absent"
+        ? sawAll
+          ? "absent"
+          : "unsure"
         : line && exists >= EXISTS_FOUND && confidence >= LINE_FOUND
           ? "found"
           : "unsure";

@@ -105,8 +105,15 @@ export function register(server: McpServer, env: Env) {
               confidence: finding.confidence,
             };
           }
-          // Only when pages were searched and no saved fact matched either.
-          const uncovered = finding?.verdict === "absent" && !out.best_match && !out.exact_facts;
+          // Only for the person's own question (a bare keyword is too thin to rule a
+          // manual out), when Jev read every page the search found, and no saved
+          // fact matched either. Otherwise the passages go out as before.
+          const uncovered =
+            finding?.verdict === "absent" &&
+            !!question &&
+            hits.length <= LINE_PAGES &&
+            !out.best_match &&
+            !out.exact_facts;
           if (uncovered) {
             out.covered = false;
             out.searched = hits.map((h) => ({ item: h.item_name, page: h.page_number }));

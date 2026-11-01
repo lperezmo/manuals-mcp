@@ -142,8 +142,22 @@ describe("manualLines", () => {
     expect(lines.find((l) => l.text.startsWith("The rinse aid dial"))?.line).toBe(281);
 
     const { impl, sent } = jev({ exists: { noul: 0.2 } });
-    await findLine(env, "How do I set the rinse aid?", [page], impl);
+    const found = await findLine(env, "How do I set the rinse aid?", [page], impl);
     expect(Object.keys(sent[0].questions.line.criteria)).toHaveLength(MAX_LINES);
+    // Dropped lines could hold the answer, so a low exists can't rule the manual out.
+    expect(found?.verdict).toBe("unsure");
+  });
+
+  test("a page cut short never counts as not covered", async () => {
+    const long: SearchedPage = {
+      item: "Washer",
+      page: 40,
+      text: `${"Wash cottons warm. ".repeat(800)}
+Down comforters: use the bulky cycle.`,
+    };
+    const { impl } = jev({ exists: { noul: 0.1 } });
+    const found = await findLine(env, "Can I wash a down comforter?", [long], impl);
+    expect(found?.verdict).toBe("unsure");
   });
 
   test("reads only the top three pages", () => {

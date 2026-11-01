@@ -139,6 +139,40 @@ describe("ask_manual's line finder", () => {
     expect(text).not.toContain("covered");
   });
 
+  test("a bare keyword never rules the manual out", async () => {
+    backend({
+      jev: () =>
+        Response.json({
+          answers: { line: { choice: "L001", confidence: 0.2 }, exists: { noul: 0.1 } },
+        }),
+    });
+    const text = await ask({ query: "comforter" });
+    expect(text).toContain("Here's what the manuals say");
+    expect(text).toContain('"passages"');
+    expect(text).not.toContain("covered");
+  });
+
+  test("pages Jev didn't read keep the manual in play", async () => {
+    const hit = (page: number) => ({
+      manual_id: MANUAL,
+      item_id: "i1",
+      item_name: "Washer",
+      page_number: page,
+      snippet: "laundry",
+      rank: 0.5,
+    });
+    backend({
+      jev: () =>
+        Response.json({
+          answers: { line: { choice: "L001", confidence: 0.2 }, exists: { noul: 0.1 } },
+        }),
+      hits: [hit(31), hit(32), hit(33), hit(34)],
+    });
+    const text = await ask({ query: "comforter", question: "Can I wash a down comforter?" });
+    expect(text).toContain('"passages"');
+    expect(text).not.toContain("covered");
+  });
+
   test("never says not covered when no pages were searched", async () => {
     const calls = backend({
       jev: () => Response.json({ answers: { exists: { noul: 0.01 } } }),
