@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { readEnv } from "../src/env.js";
+import { SiteBlockedError } from "../src/finder/fetch-pdf.js";
 import {
+  blockedMessage,
+  checkCandidate,
   choosePages,
   findManual,
   isBrandHost,
+  isSheet,
   modelMatch,
   pagesWorthOpening,
   pdfLinksFromPages,
@@ -17,6 +21,7 @@ import {
   suggestModel,
   tidyTitle,
 } from "../src/finder/search.js";
+import { tinyPdf } from "./helpers.js";
 
 // Shapes from real Tavily answers, 2026-10-28.
 const RESULTS = [
@@ -444,5 +449,198 @@ describe("the pick without asking Jev", () => {
       { brand: "Toshiba", model: "RAC-PD0811CRU" },
     );
     expect(picked).toEqual([]);
+  });
+});
+
+describe("sheets that aren't the manual", () => {
+  test.each([
+    "55 dBA Front Control Dishwasher WDF330PAH Key Features & Benefits",
+    "/content/dam/global/documents/202001/specification-sheet-wdf330pahspecsheetv01.pdf",
+    "/pdf/whirlpool/dishwasher/WDF330PAHS_quick-specs.pdf",
+    "/pdf/whirlpool/dishwasher/WDF330PAHS_energy-guide.pdf",
+    "Dimension Guide (WDF330PAHS_dimension-guide.pdf)",
+    "Installation Instructions",
+  ])("%s is a sheet", (text) => {
+    expect(isSheet(text)).toBe(true);
+  });
+
+  test.each([
+    "Dishwasher User Instructions - Owner's Manual",
+    "/pdf/whirlpool/dishwasher/WDF330PAHS_owners-manual.pdf",
+    "Installation Instructions and Use & Care Guide",
+    "GSWWD09S1A09A-User-Manual.pdf",
+  ])("%s is a manual", (text) => {
+    expect(isSheet(text)).toBe(false);
+  });
+
+  test("a spec sheet naming the model ranks below the maker's manual that doesn't", () => {
+    const ranked = rankResults(
+      [
+        {
+          url: "https://www.whirlpool.com/content/dam/global/documents/202001/specification-sheet-wdf330pahspecsheetv01.pdf",
+          title: "55 dBA Front Control Dishwasher WDF330PAH Key Features & Benefits",
+          score: 0.9,
+        },
+        {
+          url: "https://www.whirlpool.com/content/dam/global/documents/201508/owners-manual-W10717214-RevA.pdf",
+          title: "Dishwasher User Instructions - Owner's Manual",
+          score: 0.5,
+        },
+      ],
+      { brand: "Whirlpool", model: "WDF330PAHS" },
+    );
+    expect(ranked.map((c) => [c.url.split("/").pop(), c.sheet ?? false])).toEqual([
+      ["owners-manual-W10717214-RevA.pdf", false],
+      ["specification-sheet-wdf330pahspecsheetv01.pdf", true],
+    ]);
+  });
+
+  test("a one-page PDF that reads like a spec sheet is one, whatever its link says", async () => {
+    const site = (async () =>
+      new Response(
+        tinyPdf(["WDF330PAHS Key Features and Benefits. Dimensions 24 in."]),
+      )) as unknown as typeof fetch;
+    const c = await checkCandidate(
+      {
+        url: "https://shop.example.com/d/WDF330PAHS.pdf",
+        title: "",
+        host: "shop.example.com",
+        official: false,
+        named: true,
+      },
+      "WDF330PAHS",
+      site,
+    );
+    expect(c.has_model).toBe(true);
+    expect(c.sheet).toBe(true);
+  });
+});
+
+describe("a maker's site that blocks apps", () => {
+  const env = readEnv({
+    SUPABASE_URL: "https://example-ref.supabase.co",
+    SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+    SEARCH_API_KEY: "tvly_test",
+    CRAWL4AI_URL: "https://cr.example.com",
+    CRAWL4AI_API_TOKEN: "tok",
+  });
+  const item = { brand: "Whirlpool", model: "WDF330PAHS", nickname: "Dishwasher" };
+  const DOCS = "https://www.whirlpool.com/content/dam/global/documents";
+  const SHEET = `${DOCS}/202001/specification-sheet-wdf330pahspecsheetv01.pdf`;
+  const MIRROR = "https://www.canadianappliance.ca/pdf/whirlpool/dishwasher";
+  const RETAILER =
+    "https://www.canadianappliance.ca/product/Whirlpool_WDF330PAHS_Dishwasher_Whirlpool_WDF330PAHS.html";
+  // Shapes from a real search for this model, 2026-11-01: every PDF is on whirlpool.com.
+  const RESULTS = [
+    {
+      url: SHEET,
+      title: "55 dBA Front Control Dishwasher WDF330PAH Key Features & Benefits",
+      score: 0.9,
+    },
+    {
+      url: `${DOCS}/201508/owners-manual-W10717214-RevA.pdf`,
+      title: "Dishwasher User Instructions - Owner's Manual",
+      score: 0.8,
+    },
+    {
+      url: `${DOCS}/201701/owners-manual-W10903644-RevA.pdf`,
+      title: "Dishwasher User Instructions - Owner's Manual",
+      score: 0.6,
+    },
+    {
+      url: "https://www.whirlpool.com/owners-center-pdp.WDF330PAHS.html",
+      title: "WDF330PAHS - Whirlpool",
+      score: 1,
+    },
+    { url: RETAILER, title: "Whirlpool WDF330PAHS - Dishwashers", score: 0.2 },
+  ];
+  const net = (crawl: (body: string) => Response) =>
+    (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("tavily")) return Response.json({ results: RESULTS });
+      if (url.startsWith("https://cr.example.com")) return crawl(String(init?.body));
+      if (url.includes("whirlpool.com")) return new Response("Access Denied", { status: 403 });
+      if (url.endsWith("_owners-manual.pdf"))
+        return new Response(
+          tinyPdf(["DISHWASHER USER INSTRUCTIONS", "Load the racks", "Clean the filter"]),
+        );
+      if (url.endsWith("_quick-specs.pdf"))
+        return new Response(tinyPdf(["WDF330PAHS Quick Specs. Dimensions 24 in."]));
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+
+  test("looks for a copy elsewhere, and offers it instead of the spec sheet", async () => {
+    const crawled: string[] = [];
+    const impl = net((body) => {
+      crawled.push(body);
+      return Response.json({
+        results: [
+          {
+            url: RETAILER,
+            links: {
+              internal: [
+                { href: `${MIRROR}/WDF330PAHS_quick-specs.pdf`, text: "Quick Specs" },
+                { href: `${MIRROR}/WDF330PAHS_owners-manual.pdf`, text: "Owner's Manual" },
+              ],
+            },
+          },
+        ],
+      });
+    });
+    const found = await findManual(env, item, impl);
+    expect(found.candidates.map((c) => c.url)).toEqual([`${MIRROR}/WDF330PAHS_owners-manual.pdf`]);
+    expect(found.candidates[0]).toMatchObject({ named: true, has_model: false, page_count: 3 });
+    // The crawler is never sent to the site that turned us away.
+    expect(crawled).toHaveLength(1);
+    expect(crawled[0]).toContain("canadianappliance.ca");
+    expect(crawled[0]).not.toContain("whirlpool.com");
+    // The maker's PDFs were tried and marked as turned away, for the log.
+    expect(found.tried.filter((c) => c.blocked).map((c) => c.host)).toEqual([
+      "www.whirlpool.com",
+      "www.whirlpool.com",
+      "www.whirlpool.com",
+    ]);
+    expect(found.tried.some((c) => c.url.endsWith("_quick-specs.pdf") && c.sheet)).toBe(true);
+  });
+
+  test("with no copy elsewhere, the maker's link stays, marked as turned away", async () => {
+    const found = await findManual(
+      env,
+      item,
+      net(() => new Response("down", { status: 502 })),
+    );
+    expect(found.candidates).toEqual([
+      expect.objectContaining({
+        url: SHEET,
+        official: true,
+        blocked: true,
+        unchecked: true,
+        sheet: true,
+      }),
+    ]);
+  });
+
+  test("a site that never answers is marked turned away too", async () => {
+    const hang = ((_u: URL, init: RequestInit) =>
+      new Promise((_, reject) => {
+        init.signal?.addEventListener("abort", () => reject(new DOMException("aborted")));
+      })) as unknown as typeof fetch;
+    const c = await checkCandidate(
+      { url: SHEET, title: "sheet", host: "www.whirlpool.com", official: true, named: true },
+      "WDF330PAHS",
+      hang,
+      5_000,
+      50,
+    );
+    expect(c).toMatchObject({ blocked: true, unchecked: true });
+  });
+
+  test("the message names the maker and says what to do", () => {
+    expect(blockedMessage(new SiteBlockedError("www.whirlpool.com", "refused"), "Whirlpool")).toBe(
+      "Whirlpool's site won't let apps download its manuals. Tap Open, save the PDF on your phone, then add it with Upload a PDF.",
+    );
+    expect(
+      blockedMessage(new SiteBlockedError("www.mirror.example", "silent"), "Whirlpool"),
+    ).toStartWith("Mirror.example didn't answer.");
   });
 });

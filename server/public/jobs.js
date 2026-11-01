@@ -12,9 +12,12 @@ export const couldntFinish = (label) =>
 
 /**
  * What to tell the person about a read, from its manual row (or null when none
- * changed since the read started). Null means it's still going.
+ * changed since the read started). Null means it's still going. `downloadError`
+ * is what the server logged when the PDF couldn't be downloaded at all (a site
+ * that blocks apps): then there is no manual to wait for, and the pill ends.
  */
-export function readVerdict(manual, job, now = Date.now()) {
+export function readVerdict(manual, job, now = Date.now(), downloadError = null) {
+  if (!manual && downloadError) return { text: downloadError };
   const over = now - Date.parse(job.since) > JOB_MAX_MS;
   if (manual?.status === "distilled")
     return { text: `Muse finished reading the ${job.label} manual.` };

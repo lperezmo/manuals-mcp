@@ -3,7 +3,12 @@ import { z } from "zod";
 import { historySchema, saveHistory } from "../catch-up.js";
 import type { ItemRow } from "../db.js";
 import type { Env } from "../env.js";
-import { ATTACH_TIMEOUT_MS, FetchPdfError, fetchPdf } from "../finder/fetch-pdf.js";
+import {
+  ATTACH_TIMEOUT_MS,
+  FetchPdfError,
+  fetchPdf,
+  SiteBlockedError,
+} from "../finder/fetch-pdf.js";
 import { ingestPdf } from "../finder/ingest.js";
 import { findItem, guarded, ITEM_COLUMNS, itemLabel, reply, session } from "./context.js";
 
@@ -110,8 +115,13 @@ export function register(server: McpServer, env: Env) {
           fetched = await fetchPdf(pdf_url, fetch, ATTACH_TIMEOUT_MS);
         } catch (err) {
           if (err instanceof FetchPdfError) {
+            // A site that blocks apps won't change its mind on a retry.
+            const next =
+              err instanceof SiteBlockedError
+                ? " Look for a copy on another site, or save the PDF in a browser and upload it."
+                : "";
             return reply(
-              `${added ? `Added ${label}, but couldn't` : "Couldn't"} use that link: ${err.message}`,
+              `${added ? `Added ${label}, but couldn't` : "Couldn't"} use that link: ${err.message}${next}`,
               { item },
             );
           }

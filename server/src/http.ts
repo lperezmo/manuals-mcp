@@ -37,14 +37,19 @@ import {
   rememberSnapshot,
   suggestions,
 } from "./fastlane.js";
-import { ATTACH_DOWNLOAD_MS, FetchPdfError, fetchPdf } from "./finder/fetch-pdf.js";
+import {
+  ATTACH_DOWNLOAD_MS,
+  FetchPdfError,
+  fetchPdf,
+  SiteBlockedError,
+} from "./finder/fetch-pdf.js";
 import {
   processStoredManual,
   READ_BUDGET_MS,
   ReadingBusyError,
   storeManual,
 } from "./finder/ingest.js";
-import { findManual } from "./finder/search.js";
+import { blockedMessage, findManual } from "./finder/search.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
 import { isSafetyTurn, memoryTag, noteFrom, notesForMuse, saveNote } from "./memory.js";
 import { checkPhoto, checkRead, lookAtPhoto } from "./photo-check.js";
@@ -232,14 +237,30 @@ export function attachHandler(
         const before = await stored(pdfUrl);
         if (before) return answer(before, true);
         let fetched: Awaited<ReturnType<typeof fetchPdf>>;
+        const started = Date.now();
         try {
           fetched = await fetchPdf(pdfUrl, fetchImpl, ATTACH_DOWNLOAD_MS);
         } catch (err) {
           const message =
-            err instanceof FetchPdfError
-              ? err.message
-              : "The maker's site is too slow right now. Try again in a bit, or open the PDF, save it and upload it.";
-          return Response.json({ error: message }, { status: 422 });
+            err instanceof SiteBlockedError
+              ? blockedMessage(err, (item as ItemRow).brand)
+              : err instanceof FetchPdfError
+                ? err.message
+                : "The maker's site is too slow right now. Try again in a bit, or open the PDF, save it and upload it.";
+          // The page's "Reading" pill watches for this, so it ends even if the page was left.
+          if (body.read === true)
+            await logRun(db, {
+              kind: "read",
+              ok: false,
+              error: message,
+              ms: Date.now() - started,
+              item_id: item.id as string,
+              raw_output: JSON.stringify({ step: "download", url: pdfUrl }),
+            });
+          return Response.json(
+            { error: message, ...(err instanceof SiteBlockedError ? { blocked: true } : {}) },
+            { status: 422 },
+          );
         }
         const after = fetched.finalUrl === pdfUrl ? null : await stored(fetched.finalUrl);
         if (after) return answer(after, true);

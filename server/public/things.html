@@ -915,13 +915,18 @@
         const tags = [
           c.best ? '<span class="chip teal strong">Best match</span>' : "",
           c.official ? '<span class="chip teal strong">From the maker</span>' : "",
-          c.unchecked
-            ? `<span class="chip gold">Couldn't open it to check; the link names your model</span>`
-            : c.has_model
-              ? c.match === "lookalike"
-                ? '<span class="chip gold">Nearly your model number; check the label</span>'
-                : `<span class="chip teal">${c.match === "family" ? "Same model family" : "Names your model"}</span>`
-              : '<span class="chip gold">Model not found in the text</span>',
+          c.blocked
+            ? `<span class="chip gold">This site won't let apps download it. Tap Open, save the PDF, then add it with Upload a PDF below</span>`
+            : c.unchecked
+              ? `<span class="chip gold">Couldn't open it to check; the link names your model</span>`
+              : c.has_model
+                ? c.match === "lookalike"
+                  ? '<span class="chip gold">Nearly your model number; check the label</span>'
+                  : `<span class="chip teal">${c.match === "family" ? "Same model family" : "Names your model"}</span>`
+                : c.named
+                  ? `<span class="chip gold">The link names your model; the text doesn't</span>`
+                  : '<span class="chip gold">Model not found in the text</span>',
+          c.sheet ? '<span class="chip gold">A spec or install sheet, not the full manual</span>' : "",
         ].join("");
         return `<div class="card found-card">
           <div class="stack" style="gap:4px;min-width:0">
@@ -932,7 +937,7 @@
             ${c.model_hint ? `<p class="small" style="margin:4px 0 0">This manual spells it <strong>${esc(c.model_hint)}</strong>; the label photo may have been misread. <button type="button" class="quiet small" data-fix-model="${esc(c.model_hint)}">Fix the model</button></p>` : ""}
           </div>
           <div class="row">
-            <button type="button" data-use="${esc(c.url)}" data-official="${c.official}">Use this</button>
+            ${c.blocked ? "" : `<button type="button" data-use="${esc(c.url)}" data-official="${c.official}">Use this</button>`}
             <a class="button quiet" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">Open</a>
           </div>
         </div>`;
@@ -973,6 +978,8 @@
             return;
           }
           found.innerHTML = `<h3>Is this yours?</h3>${out.candidates.map(candidateCard).join("")}`;
+          // Only sites that block apps: the PDF has to come in by hand, so show where.
+          if (out.candidates.every((c) => c.blocked)) fallback();
           // The maker's PDF prints the real number; one tap saves it on the thing.
           for (const b of found.querySelectorAll("[data-fix-model]")) {
             b.addEventListener("click", async () => {
@@ -1016,6 +1023,8 @@
                 status.style.color = "var(--coral)";
                 status.textContent = err.message;
                 for (const other of uses) other.disabled = false;
+                // Saving the PDF by hand is the way forward; show where to add it.
+                fallback();
               }
             });
           }
