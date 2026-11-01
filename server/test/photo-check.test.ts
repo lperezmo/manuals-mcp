@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readEnv } from "../src/env.js";
-import { snapHandler } from "../src/http.js";
+import { receiptHandler, snapHandler } from "../src/http.js";
 import { checkPhoto, checkRead, DOUBT_BELOW } from "../src/photo-check.js";
 import { testAuth } from "./helpers.js";
 
@@ -146,6 +146,133 @@ describe("snap with the photo check", () => {
     const out = await res.json();
     expect(out).toMatchObject({ model: "WTW5000DW1", unsure: true, doubtful: ["model"] });
     expect(JSON.parse(logged.at(-1).raw_output).check.scores).toEqual({ brand: 0.96, model: 0.04 });
+  });
+
+  test("a model read with found false still gets the second look", async () => {
+    // The wizard goes on with a brand or model even when Muse says found: false.
+    const { verify, mint } = await testAuth();
+    fakeSupabase([]);
+    const muse = {
+      choices: [{ message: { content: JSON.stringify({ found: false, model: "WTW5000DW1" }) } }],
+    };
+    const net = (async (url: string, init: RequestInit) => {
+      if (!url.includes("typesafe")) return Response.json(muse);
+      const sent = JSON.parse(String(init.body));
+      if ("sharp" in sent.questions) return jevBody(0.95, 0.9);
+      return Response.json({ answers: { model: { noul: 0.03 } } });
+    }) as unknown as typeof fetch;
+    const out = await (await snapHandler(env, verify, net)(snap(await mint()))).json();
+    expect(out).toMatchObject({ model: "WTW5000DW1", unsure: true, doubtful: ["model"] });
+  });
+
+  test("Jev failing on the second look leaves the read as it was", async () => {
+    const { verify, mint } = await testAuth();
+    fakeSupabase([]);
+    const net = (async (url: string, init: RequestInit) => {
+      if (!url.includes("typesafe")) return Response.json(MUSE_LABEL);
+      const sent = JSON.parse(String(init.body));
+      if ("sharp" in sent.questions) return jevBody(0.95, 0.9);
+      throw new Error("The operation timed out.");
+    }) as unknown as typeof fetch;
+    const res = await snapHandler(env, verify, net)(snap(await mint()));
+    expect(res.status).toBe(200);
+    const out = await res.json();
+    expect(out).toMatchObject({ found: true, model: "WTW5000DW1", unsure: false });
+    expect(out.doubtful).toBeUndefined();
+  });
+});
+
+describe("receipt with the second look", () => {
+  const ITEM = { id: "22222222-2222-2222-2222-222222222222", purchased_on: null };
+  function fakeSupabase(saved: any[]) {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      const path = new URL(url).pathname;
+      const method = init?.method ?? "GET";
+      if (path.endsWith("/rpc/model_runs_today_all")) return Response.json(0);
+      if (path.endsWith("/rpc/ensure_household"))
+        return Response.json("11111111-1111-1111-1111-111111111111");
+      if (path.endsWith("/model_runs")) {
+        if (method === "POST") return new Response(null, { status: 201 });
+        return new Response(null, { status: 200, headers: { "content-range": "*/0" } });
+      }
+      if (path.endsWith("/items")) {
+        if (method === "PATCH") return new Response(null, { status: 204 });
+        return Response.json(ITEM);
+      }
+      if (path.includes("/storage/v1/object/receipts")) return Response.json({ Key: "x" });
+      if (path.endsWith("/receipts")) {
+        const body = JSON.parse(String(init?.body));
+        saved.push(body);
+        return Response.json({ ...body, created_at: "2026-10-31T00:00:00Z" });
+      }
+      return new Response("unexpected", { status: 500 });
+    }) as typeof fetch;
+  }
+  const post = (token: string) =>
+    new Request("https://manuals.example.com/api/receipt", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+      body: JSON.stringify({ item_id: ITEM.id, image: "data:image/jpeg;base64,AAAA" }),
+    });
+  const museSays = (read: object) => ({
+    choices: [{ message: { content: JSON.stringify(read) } }],
+  });
+  const READ = { found: true, store: "Appliance Barn", purchased_on: "2026-06-01", price: 649 };
+
+  test("a doubtful date is saved and flagged", async () => {
+    const { verify, mint } = await testAuth();
+    const saved: any[] = [];
+    fakeSupabase(saved);
+    const net = (async (url: string, init: RequestInit) => {
+      if (!url.includes("typesafe")) return Response.json(museSays(READ));
+      const sent = JSON.parse(String(init.body));
+      if ("sharp" in sent.questions) return jevBody(0.95, 0.9);
+      return Response.json({
+        answers: { store: { noul: 0.9 }, purchased_on: { noul: 0.02 }, price: { noul: 0.8 } },
+      });
+    }) as unknown as typeof fetch;
+    const out = await (await receiptHandler(env, verify, net)(post(await mint()))).json();
+    expect(out).toMatchObject({ saved: true, unsure: true, doubtful: ["purchased_on"] });
+    expect(saved[0]).toMatchObject({ purchased_on: "2026-06-01" });
+  });
+
+  test("Jev down on the second look still saves the receipt", async () => {
+    const { verify, mint } = await testAuth();
+    const saved: any[] = [];
+    fakeSupabase(saved);
+    const net = (async (url: string, init: RequestInit) => {
+      if (!url.includes("typesafe")) return Response.json(museSays(READ));
+      const sent = JSON.parse(String(init.body));
+      if ("sharp" in sent.questions) return jevBody(0.95, 0.9);
+      return new Response("busy", { status: 503 });
+    }) as unknown as typeof fetch;
+    const res = await receiptHandler(env, verify, net)(post(await mint()));
+    expect(res.status).toBe(200);
+    const out = await res.json();
+    expect(out).toMatchObject({ saved: true, unsure: false });
+    expect(out.doubtful).toBeUndefined();
+    expect(saved).toHaveLength(1);
+  });
+
+  test("a date read with found false is still checked before it's saved", async () => {
+    // The handler saves a date or store even when Muse says found: false.
+    const { verify, mint } = await testAuth();
+    const saved: any[] = [];
+    fakeSupabase(saved);
+    const asked: string[][] = [];
+    const net = (async (url: string, init: RequestInit) => {
+      if (!url.includes("typesafe")) {
+        return Response.json(museSays({ found: false, purchased_on: "2026-06-01" }));
+      }
+      const sent = JSON.parse(String(init.body));
+      if ("sharp" in sent.questions) return jevBody(0.95, 0.9);
+      asked.push(Object.keys(sent.questions));
+      return Response.json({ answers: { purchased_on: { noul: 0.01 } } });
+    }) as unknown as typeof fetch;
+    const out = await (await receiptHandler(env, verify, net)(post(await mint()))).json();
+    expect(asked).toEqual([["purchased_on"]]);
+    expect(out).toMatchObject({ saved: true, doubtful: ["purchased_on"] });
   });
 });
 

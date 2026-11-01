@@ -507,8 +507,9 @@ export function snapHandler(
     try {
       const label = await readLabel(env, photo, fetchImpl);
       // Jev's second look at what Muse read: a doubtful model number sends the
-      // wizard to its "Almost" step instead of finding the wrong manual.
-      const reread = label.found ? await checkRead(env, photo, label, "label", fetchImpl) : null;
+      // wizard to its "Almost" step instead of finding the wrong manual. Asked
+      // even when found is false, since the wizard still uses a brand or model.
+      const reread = await checkRead(env, photo, label, "label", fetchImpl);
       const doubtful = reread?.doubtful ?? [];
       await logRun(db, {
         kind: "snap",
@@ -602,8 +603,9 @@ export function receiptHandler(
     try {
       const read = await readReceipt(env, photo, fetchImpl);
       // The same second look: a doubtful date or price is saved, but the
-      // person is asked to check it against the photo.
-      const reread = read.found ? await checkRead(env, photo, read, "receipt", fetchImpl) : null;
+      // person is asked to check it against the photo. Anything read is saved
+      // below, found or not, so anything read is checked.
+      const reread = await checkRead(env, photo, read, "receipt", fetchImpl);
       const doubtful = reread?.doubtful ?? [];
       if (doubtful.length) read.unsure = true;
       await logRun(db, {
