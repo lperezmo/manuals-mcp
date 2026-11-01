@@ -1096,6 +1096,47 @@
         return doubt ? saved + doubt : null;
       }
 
+      /**
+       * The strip of a photo where Jev found a doubtful value, cut here from the
+       * photo the browser already has. `box` edges are fractions of the photo;
+       * the margin (a quarter of the width, a fifth of the height) keeps the
+       * text around it in view. Null when it can't be drawn.
+       */
+      function cropOf(image, box) {
+        return new Promise((resolve) => {
+          if (!image || !box) return resolve(null);
+          const img = new Image();
+          img.onload = () => {
+            const gx = Math.max((box.right - box.left) * 0.25, 0.02);
+            const gy = Math.max((box.bottom - box.top) * 0.2, 0.02);
+            const x = Math.round(Math.max(0, box.left - gx) * img.width);
+            const y = Math.round(Math.max(0, box.top - gy) * img.height);
+            const w = Math.round(Math.min(1, box.right + gx) * img.width) - x;
+            const h = Math.round(Math.min(1, box.bottom + gy) * img.height) - y;
+            if (w < 2 || h < 2) return resolve(null);
+            const c = document.createElement("canvas");
+            c.width = w;
+            c.height = h;
+            c.getContext("2d").drawImage(img, x, y, w, h, 0, 0, w, h);
+            resolve(c.toDataURL("image/jpeg", 0.9));
+          };
+          img.onerror = () => resolve(null);
+          img.src = image;
+        });
+      }
+
+      /** The crop of each doubtful value Jev found on the photo: { field: dataUrl }. */
+      async function doubtCrops(image, out) {
+        const crops = {};
+        for (const f of out.doubtful || []) {
+          const crop = await cropOf(image, out.boxes?.[f]);
+          if (crop) crops[f] = crop;
+        }
+        return crops;
+      }
+
+      const cropImg = (src, alt) => `<img src="${src}" alt="${esc(alt)}" style="display:block;max-width:100%;max-height:120px;border-radius:8px;border:1px solid var(--line)">`;
+
       function addMonths(day, months) {
         const [y, m, d] = day.split("-").map(Number);
         const first = new Date(Date.UTC(y, m - 1 + months, 1));
@@ -1198,8 +1239,27 @@
             msg.textContent = "Couldn't read a receipt in that one. Try a closer photo in good light, or type it in.";
             return null;
           }
-          toast(receiptSaid(out) || out.warranty?.summary.split(". ")[0] || "Saved.");
-          after();
+          // A doubtful value Jev found on the photo is shown as a crop next to what was read, under the photo button.
+          const crops = await doubtCrops(image, out);
+          const rest = { ...out, doubtful: (out.doubtful || []).filter((f) => !crops[f]) };
+          toast(receiptSaid(rest) || out.warranty?.summary.split(". ")[0] || "Saved.");
+          await after();
+          const box = $("#receipt-msg");
+          if (!box || !Object.keys(crops).length) return;
+          const shown = { store: out.store, purchased_on: out.purchased_on && longDate(out.purchased_on), price: out.price != null && money(out.price, out.currency), warranty_months: out.warranty_months && howLong(out.warranty_months) };
+          box.innerHTML = Object.entries(crops)
+            .map(
+              ([f, src]) =>
+                `<span style="display:block;margin:6px 0 4px">Is this the ${esc(RECEIPT_FIELDS[f] || f)}? I read <strong>${esc(String(shown[f] || ""))}</strong>. <button type="button" class="link small" data-fix="${esc(f)}">Fix it</button></span>${cropImg(src, `The ${RECEIPT_FIELDS[f] || f} on your receipt, up close`)}`,
+            )
+            .join("");
+          const inputs = { store: "#rf-store", purchased_on: "#rf-date", price: "#rf-price", warranty_months: "#rf-months" };
+          for (const b of box.querySelectorAll("[data-fix]")) {
+            b.addEventListener("click", () => {
+              $("#receipt-form").hidden = false;
+              $(inputs[b.dataset.fix] || "#rf-date")?.focus();
+            });
+          }
         };
         $("#receipt-photo").addEventListener("change", async (e) => {
           const file = e.target.files?.[0];
@@ -1414,6 +1474,31 @@
 
         function partial() {
           redraw = partial;
+          // Jev found the doubtful model on the photo: show that strip next to what was read, to fix in place.
+          const crop = thing.model && thing.doubtful?.includes("model") && thing.crops?.model;
+          if (crop) {
+            step(`<div class="stack">
+              <h2>Almost</h2>
+              <p>Is this the model number? Check what I read against the label; S and 5, O and 0 look a lot alike.</p>
+              ${cropImg(crop, "The model number on your label, up close")}
+              <form class="row" id="doubt-form">
+                <input id="doubt-model" value="${esc(thing.model)}" aria-label="Model number" autocomplete="off" autocapitalize="characters" spellcheck="false" style="flex:1;min-width:10ch;font-family:ui-monospace,monospace">
+                <button type="submit">That's it</button>
+              </form>
+              <div class="row">${photoButton("Take a closer photo", true)}</div>
+              <p class="small muted" data-add-msg role="status"></p>
+            </div>`);
+            $("#doubt-form").addEventListener("submit", (e) => {
+              e.preventDefault();
+              const model = $("#doubt-model").value.trim();
+              if (!model) return $("#doubt-model").focus();
+              thing.model = model;
+              thing.doubtful = thing.doubtful.filter((f) => f !== "model");
+              delete thing.crops.model;
+              confirm();
+            });
+            return;
+          }
           const got = [thing.brand && `<strong>${esc(thing.brand)}</strong>`, thing.model && `model <strong>${esc(thing.model)}</strong>`].filter(Boolean).join(", ");
           const missing = !thing.model ? "the model number" : thing.doubtful?.includes("model") ? "the model number for sure" : "all of it clearly";
           step(`<div class="stack">
@@ -1470,7 +1555,7 @@
         async function readImage(getImage, force = false) {
           // A closer photo after "Almost" adds to what we read; any other photo starts over.
           if (redraw !== partial) {
-            Object.assign(thing, { nickname: "", brand: "", model: "", serial: "", category: null, kind: "appliance", doubtful: [] });
+            Object.assign(thing, { nickname: "", brand: "", model: "", serial: "", category: null, kind: "appliance", doubtful: [], crops: {} });
           }
           try {
             image = await getImage();
@@ -1487,6 +1572,9 @@
             // A closer photo that didn't read a value again keeps the doubt about it.
             const reread = ["brand", "model", "serial"].filter((k) => label[k]);
             thing.doubtful = [...(thing.doubtful || []).filter((f) => !reread.includes(f)), ...(label.doubtful || [])];
+            // Crops are cut from the photo that read the value, so a value read again gets a new one or none.
+            const kept = Object.entries(thing.crops || {}).filter(([f]) => !reread.includes(f) && thing.doubtful.includes(f));
+            thing.crops = { ...Object.fromEntries(kept), ...(await doubtCrops(image, label)) };
             if (!thing.model || label.unsure || thing.doubtful.includes("model")) return partial();
             confirm();
           } catch (err) {
