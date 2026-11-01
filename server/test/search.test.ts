@@ -4,7 +4,9 @@ import {
   findManual,
   isBrandHost,
   modelMatch,
+  pickBest,
   rankResults,
+  sameLineModels,
   searchQueries,
   searchQuery,
   squash,
@@ -171,5 +173,49 @@ describe("tidyTitle", () => {
       "Portable PD User Manual Toshiba US (06-19 RT)",
     );
     expect(tidyTitle("LG Washer Owner's Manual")).toBe("LG Washer Owner's Manual");
+  });
+});
+
+describe("narrowing the options", () => {
+  const jevEnv = readEnv({
+    SUPABASE_URL: "https://example-ref.supabase.co",
+    SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+    JEV_API_KEY: "jev_test",
+  });
+  const item = { brand: "Toshiba", nickname: "Air Conditioner", model: "RAC-PD0811CRU" };
+  const cand = (title: string, excerpt: string) => ({
+    url: `https://example.com/${title}.pdf`,
+    title,
+    host: "example.com",
+    official: false,
+    named: false,
+    has_model: true,
+    excerpt,
+  });
+  const jev = (scores: number[]) =>
+    (async () =>
+      Response.json({
+        answers: Object.fromEntries(scores.map((noul, i) => [`m${i}`, { noul }])),
+      })) as unknown as typeof fetch;
+
+  test("lists the other models of the same line a manual covers", () => {
+    expect(
+      sameLineModels("Models RAC-PD0811CRU, RAC-PD1011CRU and RAC-PD1411CRU-B", item.model),
+    ).toEqual(["RAC-PD0811CRU", "RAC-PD1011CRU", "RAC-PD1411CRU-B"]);
+  });
+
+  test("Jev's clear pick is marked best and moved first", async () => {
+    const list = [cand("P14", "14,000 BTU"), cand("P08", "8,000 BTU")];
+    const out = await pickBest(jevEnv, item, list, jev([0.2, 0.9]));
+    expect(out[0]?.title).toBe("P08");
+    expect(out[0]?.best).toBe(true);
+    expect(out[1]?.best).toBeUndefined();
+  });
+
+  test("a close call leaves the order alone", async () => {
+    const list = [cand("A", "a"), cand("B", "b")];
+    const out = await pickBest(jevEnv, item, list, jev([0.7, 0.65]));
+    expect(out.map((c) => c.title)).toEqual(["A", "B"]);
+    expect(out.some((c) => c.best)).toBe(false);
   });
 });
