@@ -197,7 +197,8 @@ export async function runChat(
         model: env.chatModel ?? reader.model,
         messages,
         ...(definitions.length ? { tools: definitions } : {}),
-        max_tokens: 1200,
+        // Muse's thinking counts here too; too low a cap cuts a long answer off.
+        max_tokens: 4000,
       }),
       signal: AbortSignal.timeout(45_000),
     });

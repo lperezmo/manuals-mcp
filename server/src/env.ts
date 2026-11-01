@@ -64,8 +64,12 @@ export function readEnv(source: Record<string, string | undefined> = process.env
   if (!supabaseUrl || !supabasePublishableKey) {
     throw new Error("SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY must be set (see .env.example)");
   }
-  const readerBase = source.READER_BASE_URL;
-  const readerModel = source.READER_MODEL;
+  // READER_PROVIDER=meta (local only) reads Muse from Meta's own API with the
+  // META_READER_* keys; anything else, Vercel included, uses READER_* (Baseten).
+  const meta = source.READER_PROVIDER === "meta";
+  const readerBase = meta ? source.META_READER_BASE_URL : source.READER_BASE_URL;
+  const readerModel = meta ? source.META_READER_MODEL : source.READER_MODEL;
+  const readerKey = meta ? source.META_READER_API_KEY : source.READER_API_KEY;
   return {
     supabaseUrl: trimSlash(supabaseUrl),
     supabasePublishableKey,
@@ -75,7 +79,7 @@ export function readEnv(source: Record<string, string | undefined> = process.env
         ? {
             baseUrl: trimSlash(readerBase),
             model: readerModel,
-            apiKey: source.READER_API_KEY,
+            apiKey: readerKey,
             maxChars: positive(source.READER_MAX_CHARS, 40_000),
             dailyLimit: positive(source.READER_DAILY_LIMIT, 10),
           }
