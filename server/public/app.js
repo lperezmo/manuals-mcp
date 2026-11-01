@@ -321,7 +321,12 @@ const TOOL_NAMES = {
   record_measurement: "Saved a reading",
   car_seat_status: "Checked the car seat",
   photo_check: "Checked the photo",
+  update_item: "Updated the details",
+  catch_up: "Planned the catch-up",
+  warranty_status: "Checked the warranty",
 };
+// Tools that are part of how Muse talks, not something it did for you.
+const QUIET_TOOLS = new Set(["show_card"]);
 const CAMERA_ICON =
   '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg>';
 // The photo waiting to be sent: the full image for Muse and a small one for the bubble.
@@ -348,8 +353,9 @@ function renderChat(messages, busy) {
   log.innerHTML =
     messages
       .map((m, i) => {
-        const tools = m.tools?.length
-          ? `<div class="chips">${[...new Set(m.tools)].map((t) => `<span class="chip ${t === "revise_fact" ? "teal strong" : ""}">${esc(TOOL_NAMES[t] || t)}</span>`).join("")}</div>`
+        const shown = [...new Set(m.tools ?? [])].filter((t) => !QUIET_TOOLS.has(t));
+        const tools = shown.length
+          ? `<div class="chips">${shown.map((t) => `<span class="chip ${t === "revise_fact" ? "teal strong" : ""}">${esc(TOOL_NAMES[t] || t)}</span>`).join("")}</div>`
           : "";
         const card = m.card && !m.answered ? cardForm(m.card, i) : "";
         const photo = m.photo?.startsWith("data:image/")
@@ -369,11 +375,34 @@ function renderChat(messages, busy) {
 // on the server); every string is escaped here, and a filled form goes back as
 // an ordinary message, so nothing is saved until Muse calls a tool.
 const UNIT_NAMES = { per_week: "a week", months: "months", years: "years" };
+// Most people remember roughly when, not the day. Months back, and how it reads.
+const ROUGH = [
+  ["0", "This month"],
+  ["3", "A few months ago"],
+  ["12", "About a year ago"],
+  ["24", "About 2 years ago"],
+  ["48", "3 to 5 years ago"],
+  ["84", "More than 5 years ago"],
+  ["unsure", "Not sure"],
+];
+
+/** "About a year ago (around 2025-10)": the rough answer plus a month Muse can save. */
+function roughDate(value) {
+  const pick = ROUGH.find(([m]) => m === value);
+  if (!pick) return "";
+  if (value === "unsure") return "not sure";
+  const d = new Date();
+  d.setMonth(d.getMonth() - Number(value));
+  return `${pick[1]} (around ${d.toISOString().slice(0, 7)})`;
+}
 
 function cardField(f, n) {
   const id = `card-${n}-${f.key}`;
   const label = `<label for="${id}">${esc(f.label)}</label>`;
-  if (f.type === "date") return `${label}<input id="${id}" name="${esc(f.key)}" type="date">`;
+  if (f.type === "date" && f.exact)
+    return `${label}<input id="${id}" name="${esc(f.key)}" type="date">`;
+  if (f.type === "date")
+    return `${label}<select id="${id}" name="${esc(f.key)}" data-rough><option value="">Pick one</option>${ROUGH.map(([m, t]) => `<option value="${m}">${t}</option>`).join("")}<option value="exact">I know the date</option></select><input name="${esc(f.key)}__exact" type="date" aria-label="${esc(f.label)}" hidden>`;
   if (f.type === "text")
     return `${label}<input id="${id}" name="${esc(f.key)}" maxlength="120" placeholder="${esc(f.placeholder || "")}">`;
   if (f.type === "number") {
@@ -413,7 +442,10 @@ function cardAnswer(card, form) {
       const off = boxes.filter((b) => !b.checked).map((b) => `${b.dataset.label} [${b.value}]`);
       return `- ${f.label}: keep ${kept.join(", ") || "none"}${off.length ? `; unticked: ${off.join(", ")}` : ""}`;
     }
-    const value = String(data.get(f.key) ?? "").trim();
+    let value = String(data.get(f.key) ?? "").trim();
+    if (f.type === "date" && !f.exact)
+      value =
+        value === "exact" ? String(data.get(`${f.key}__exact`) ?? "").trim() : roughDate(value);
     if (!value) return `- ${f.label}: (skipped)`;
     const unit = data.get(`${f.key}__unit`);
     return `- ${f.label}: ${value}${unit ? ` ${UNIT_NAMES[unit] || unit}` : ""}`;
@@ -459,6 +491,14 @@ export function openChat(text, onChange) {
       if (!form) return;
       e.preventDefault();
       answerCard(Number(form.dataset.card), (card) => cardAnswer(card, form), onChange);
+    });
+    // "I know the date" swaps the rough pick for a date picker.
+    log.addEventListener("change", (e) => {
+      const pick = e.target.closest("select[data-rough]");
+      if (!pick) return;
+      const exact = pick.nextElementSibling;
+      exact.hidden = pick.value !== "exact";
+      if (!exact.hidden) exact.focus();
     });
     log.addEventListener("click", (e) => {
       const form = e.target.closest("[data-skip]")?.closest("form[data-card]");

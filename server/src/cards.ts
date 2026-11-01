@@ -18,7 +18,16 @@ const base = {
 export const UNITS = ["lb", "kg", "in", "cm", "per_week", "months", "years"] as const;
 
 export const cardField = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("date"), ...base }),
+  z.object({
+    type: z.literal("date"),
+    ...base,
+    exact: z
+      .boolean()
+      .optional()
+      .describe(
+        "true only when the date is printed somewhere (a label, a birth date). Otherwise the user picks a rough time like 'About a year ago' or an exact date.",
+      ),
+  }),
   z.object({
     type: z.literal("number"),
     ...base,
@@ -65,6 +74,7 @@ export function describeCard(card: Card): string {
     if (f.type === "checklist")
       return `- ${f.label}: ${f.options.map((o) => `${o.label} [${o.value}]`).join("; ")}`;
     if (f.type === "number" && f.units) return `- ${f.label} (${f.units.join(" or ")})`;
+    if (f.type === "date" && !f.exact) return `- ${f.label} (rough date)`;
     return `- ${f.label} (${f.type})`;
   });
   return `[Form: ${card.title}]\n${lines.join("\n")}`;
