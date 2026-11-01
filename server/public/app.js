@@ -306,7 +306,12 @@ const TOOL_NAMES = {
   log_done: "Logged it done",
   record_measurement: "Saved a reading",
   car_seat_status: "Checked the car seat",
+  photo_check: "Checked the photo",
 };
+const CAMERA_ICON =
+  '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg>';
+// The photo waiting to be sent: the full image for Muse and a small one for the bubble.
+let pendingPhoto = null;
 
 function loadChat() {
   try {
@@ -333,7 +338,10 @@ function renderChat(messages, busy) {
           ? `<div class="chips">${[...new Set(m.tools)].map((t) => `<span class="chip ${t === "revise_fact" ? "teal strong" : ""}">${esc(TOOL_NAMES[t] || t)}</span>`).join("")}</div>`
           : "";
         const card = m.card && !m.answered ? cardForm(m.card, i) : "";
-        return `<div class="msg ${m.role === "user" ? "user" : "muse"}">${esc(m.content)}${tools}${card}</div>`;
+        const photo = m.photo?.startsWith("data:image/")
+          ? `<img class="msg-photo" src="${esc(m.photo)}" alt="Your photo">`
+          : "";
+        return `<div class="msg ${m.role === "user" ? "user" : "muse"}">${photo}${esc(m.content)}${tools}${card}</div>`;
       })
       .join("") + (busy ? '<div class="msg muse muted">Reading…</div>' : "");
   if (!messages.length && !busy) {
@@ -412,8 +420,16 @@ export function openChat(text, onChange) {
         <button type="button" class="quiet small" data-close aria-label="Close chat">Close</button>
       </div>
       <div class="chat-log" aria-live="polite"></div>
+      <div class="chat-pending" hidden>
+        <img alt="Photo to send">
+        <button type="button" class="quiet small" data-unphoto aria-label="Remove photo">×</button>
+      </div>
       <form class="field">
         <label class="sr-only" for="chat-input">Ask or tell</label>
+        <label class="button quiet chat-attach" title="Add a photo">
+          ${CAMERA_ICON}<span class="sr-only">Add a photo</span>
+          <input id="chat-photo" type="file" accept="image/*" class="sr-only">
+        </label>
         <input id="chat-input" autocomplete="off" placeholder="Ask or tell">
         <button type="submit">Send</button>
       </form>`;
@@ -434,18 +450,44 @@ export function openChat(text, onChange) {
       const form = e.target.closest("[data-skip]")?.closest("form[data-card]");
       if (form) answerCard(Number(form.dataset.card), () => "Skip that for now.", onChange);
     });
+    $("#chat-photo", drawer).addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      e.target.value = "";
+      if (!file) return;
+      try {
+        pendingPhoto = { image: await shrink(file), thumb: await shrink(file, 320) };
+        showPendingPhoto();
+        $("#chat-input", drawer).focus();
+      } catch (err) {
+        toast(err.message);
+      }
+    });
+    $("[data-unphoto]", drawer).addEventListener("click", () => {
+      pendingPhoto = null;
+      showPendingPhoto();
+    });
     $("form.field", drawer).addEventListener("submit", (e) => {
       e.preventDefault();
       const input = $("#chat-input", drawer);
       const value = input.value.trim();
+      const photo = pendingPhoto;
+      if (!value && !photo) return;
       input.value = "";
-      if (value) send(value, onChange);
+      pendingPhoto = null;
+      showPendingPhoto();
+      send(value, onChange, undefined, photo);
     });
   }
   drawer.classList.remove("hidden");
   renderChat(loadChat());
   if (text) send(text, onChange);
   else $("#chat-input", drawer).focus();
+}
+
+function showPendingPhoto() {
+  const box = $(".chat-pending", drawer);
+  box.hidden = !pendingPhoto;
+  $("img", box).src = pendingPhoto?.thumb || "";
 }
 
 function answerCard(index, toText, onChange) {
@@ -458,14 +500,18 @@ function answerCard(index, toText, onChange) {
   send(text, onChange, "card");
 }
 
-async function send(text, onChange, via) {
-  const messages = [...loadChat(), { role: "user", content: text }];
+async function send(text, onChange, via, photo) {
+  // Only the small copy of a photo is kept; Muse gets the full one this turn only.
+  const messages = [
+    ...loadChat(),
+    { role: "user", content: text, ...(photo ? { photo: photo.thumb } : {}) },
+  ];
   saveChat(messages);
   renderChat(messages, true);
   try {
-    const history = messages.map(({ role, content, history: remembered }) => ({
+    const history = messages.map(({ role, content, history: remembered, photo: had }) => ({
       role,
-      content: (remembered || content).slice(0, 2000),
+      content: (had ? `[photo] ${content}`.trim() : remembered || content).slice(0, 2000),
     }));
     const {
       reply,
@@ -475,6 +521,7 @@ async function send(text, onChange, via) {
     } = await api("/api/chat", {
       messages: history,
       ...(via ? { via } : {}),
+      ...(photo ? { image: photo.image } : {}),
     });
     messages.push({
       role: "assistant",
@@ -485,7 +532,8 @@ async function send(text, onChange, via) {
     });
     if (
       tools_used.some(
-        (t) => !["list_items", "ask_manual", "upcoming", "car_seat_status"].includes(t),
+        (t) =>
+          !["list_items", "ask_manual", "upcoming", "car_seat_status", "photo_check"].includes(t),
       )
     ) {
       onChange?.();
@@ -698,12 +746,12 @@ export function reportIssue({ runId, debug, about } = {}) {
   $("#report-text", dialog).focus();
 }
 
-/** A photo as a JPEG data URL, at most 1280 px on its long side. */
-export function shrink(file) {
+/** A photo as a JPEG data URL, at most 1280 px (or `max`) on its long side. */
+export function shrink(file, max = 1280) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
-      const scale = Math.min(1, 1280 / Math.max(img.width, img.height));
+      const scale = Math.min(1, max / Math.max(img.width, img.height));
       const c = document.createElement("canvas");
       c.width = Math.round(img.width * scale);
       c.height = Math.round(img.height * scale);

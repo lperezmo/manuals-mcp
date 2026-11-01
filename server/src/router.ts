@@ -112,6 +112,14 @@ export async function routeTurn(
   }
 }
 
+/** The "Set it up with Muse" button's message on a thing's page: a setup turn, no need to ask Jev. */
+export const SETUP_MESSAGE = /^Set up the .{1,80} with me\b/;
+
+/** A setup turn Muse must end with a form or a question. */
+export function isSetup(decision: RouteDecision | null): boolean {
+  return decision?.route === "setup" && decision.confidence >= MIN_CONFIDENCE;
+}
+
 /** The tool names to offer, or null for every tool. */
 export function toolsFor(decision: RouteDecision | null): string[] | null {
   if (!decision || decision.confidence < MIN_CONFIDENCE) return null;
