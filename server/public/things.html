@@ -1101,7 +1101,7 @@
                 <button type="button" class="quiet" id="receipt-edit" aria-controls="receipt-form">${ic("edit")}${r ? "Edit" : "Type it in"}</button>
                 ${r?.image_path ? `<a class="button quiet" id="receipt-view" style="display:none" target="_blank" rel="noopener noreferrer">${ic("receipt_long")}See the receipt</a>` : ""}
               </div>
-              <input id="receipt-photo" type="file" accept="image/*" capture="environment" class="sr-only">
+              <input id="receipt-photo" type="file" accept="image/*" class="sr-only">
               <p class="small muted" id="receipt-msg" role="status" style="margin:0"></p>
               <form class="stack" id="receipt-form" hidden>
                 <label class="small" for="rf-date"><strong>Bought on</strong></label><input id="rf-date" type="date" value="${v(bought)}">
@@ -1275,8 +1275,8 @@
         function step(body, withDetails = true) {
           main.innerHTML = `${head}
             <section class="card wizard" style="max-width:640px">${body}</section>
-            <input id="photo" type="file" accept="image/*" capture="environment" class="sr-only">
-            <input id="receipt-photo" type="file" accept="image/*" capture="environment" class="sr-only">
+            <input id="photo" type="file" accept="image/*" class="sr-only">
+            <input id="receipt-photo" type="file" accept="image/*" class="sr-only">
             ${withDetails ? `<div style="max-width:640px">${detailsForm(manual)}</div>` : ""}`;
           $("#photo").addEventListener("change", (e) => {
             const file = e.target.files?.[0];
