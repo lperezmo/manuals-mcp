@@ -386,7 +386,10 @@ export async function sortFacets(
 // ---------------------------------------------------------------------------
 
 const ROOM_WORDS: [string, RegExp][] = [
-  ["whole_house", /\b(smoke|carbon monoxide|detector|thermostat|router|mesh)\b/],
+  [
+    "whole_house",
+    /\b(smoke|carbon monoxide|co (detector|alarm)|thermostat|router|mesh (wi-?fi|router|system))\b/,
+  ],
   ["car", /\b(car ?seat|booster|vehicle|car|truck|suv|minivan)\b/],
   ["laundry", /\b(washer|washing machine|dryer|iron)\b/],
   [
