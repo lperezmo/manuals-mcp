@@ -4,12 +4,6 @@
 name: jev-fastlane-live
 
 on:
-  push:
-    branches: [claude/project-thread-tiykni]
-    paths:
-      - "server/src/fastlane.ts"
-      - "server/test/live/fastlane-live.ts"
-      - ".github/workflows/jev-fastlane-live.yml"
   pull_request:
     paths:
       - "server/src/fastlane.ts"
