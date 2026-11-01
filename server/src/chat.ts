@@ -92,6 +92,11 @@ export const messageSchema = z.object({
   via: z.enum(["card", "more"]).optional(),
   /** A photo (data URL) for the last message only; earlier turns keep "[photo]" as text. */
   image: z.string().max(3_000_000).optional(),
+  /**
+   * The page's id for this turn. The reply is saved with it, so a page the
+   * phone paused (another app, screen off) can pick the answer up later.
+   */
+  turn: z.uuid().optional(),
 });
 
 /** A photo on this turn, already checked by the caller. */

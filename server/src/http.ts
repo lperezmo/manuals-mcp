@@ -354,7 +354,7 @@ export function chatHandler(
       image = { mime: match[1], base64: match[2] };
     }
     const db = userDb(env, auth.token);
-    const { messages, via } = parsed.data;
+    const { messages, via, turn: turnId } = parsed.data;
     const last = messages[messages.length - 1];
     const previous = messages.slice(0, -1).findLast((m) => m.role === "assistant")?.content;
     // A photo turn's text, without the "[photo]" stand-in the page puts in front.
@@ -527,8 +527,8 @@ export function chatHandler(
         ? ["photo:muse"]
         : [];
     // Jev's tokens ride on the chat row, so a photo turn counts once against the chat limit.
-    const photoRaw = look
-      ? JSON.stringify({
+    const photoCheck = look
+      ? {
           photo_check: {
             model: env.router?.model,
             tokens_in: look.tokens_in,
@@ -536,8 +536,13 @@ export function chatHandler(
             simple: look.simple,
             yes: look.yes,
           },
-        })
-      : null;
+        }
+      : {};
+    // The turn id and what the page would have shown, so a paused page can pick it up.
+    const rawFor = (answer?: Record<string, unknown>) =>
+      look || turnId
+        ? JSON.stringify({ ...photoCheck, ...(turnId ? { turn: turnId, ...answer } : {}) })
+        : null;
     try {
       const result = await runChat(env, auth, turn, fetchImpl, usage, toolsFor(decision), {
         image,
@@ -552,7 +557,13 @@ export function chatHandler(
         tokens_in: usage.tokens_in,
         tokens_out: usage.tokens_out,
         tools_used: [...routeTag, ...photoTag, ...result.tools_used],
-        raw_output: photoRaw,
+        raw_output: rawFor({
+          reply: result.reply,
+          tools_used: look?.finding ? ["photo_check", ...result.tools_used] : result.tools_used,
+          ...(result.card
+            ? { card: result.card, history: withCard(result.reply, result.card) }
+            : {}),
+        }),
       });
       // A turn that changed something makes type-ahead read the facts again.
       if (result.tools_used.some((t) => !READ_ONLY_TOOLS.has(t))) {
@@ -572,7 +583,7 @@ export function chatHandler(
         tokens_in: usage.tokens_in,
         tokens_out: usage.tokens_out,
         tools_used: [...routeTag, ...photoTag],
-        raw_output: photoRaw,
+        raw_output: rawFor({ error: (err as Error).message }),
       });
       return Response.json({ error: (err as Error).message }, { status: 502 });
     }

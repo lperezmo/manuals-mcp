@@ -388,7 +388,7 @@ function renderChat(messages, busy) {
           m.fast && i === messages.length - 1 && !busy
             ? '<div class="row" style="margin-top:8px"><button type="button" class="quiet small" data-more>Tell me more</button></div>'
             : "";
-        return `<div class="msg ${m.role === "user" ? "user" : "muse"}">${tools}${photo}${esc(m.content)}${card}${more}</div>`;
+        return `<div class="msg ${m.role === "user" ? "user" : "muse"}${m.pending ? " muted" : ""}">${tools}${photo}${esc(m.content)}${card}${more}</div>`;
       })
       .join("") + (busy ? '<div class="msg muse muted">Reading…</div>' : "");
   if (!messages.length && !busy) {
@@ -650,6 +650,7 @@ export function openChat(text, onChange, { once = false } = {}) {
   drawer.classList.remove("hidden");
   const past = loadChat();
   renderChat(past);
+  for (const m of past) if (m.pending) recoverTurn(m.pending, onChange);
   const sent = once && past.some((m) => m.role === "user" && m.content === text);
   if (text && !sent) send(text, onChange);
   else if (sent) $(".chat-log", drawer).lastElementChild?.scrollIntoView({ block: "end" });
@@ -680,50 +681,99 @@ async function send(text, onChange, via, photo) {
   ];
   saveChat(messages);
   renderChat(messages, true);
+  const turn = crypto.randomUUID();
   try {
-    const history = messages.map(({ role, content, history: remembered, photo: had }) => ({
-      role,
-      content: (had ? `[photo] ${content}`.trim() : remembered || content).slice(0, 2000),
-    }));
-    const {
-      reply,
-      tools_used,
-      card,
-      fast,
-      history: remembered,
-    } = await api("/api/chat", {
+    const history = messages
+      .filter((m) => !m.pending)
+      .map(({ role, content, history: remembered, photo: had }) => ({
+        role,
+        content: (had ? `[photo] ${content}`.trim() : remembered || content).slice(0, 2000),
+      }));
+    const out = await api("/api/chat", {
       messages: history,
+      turn,
       ...(via ? { via } : {}),
       ...(photo ? { image: photo.image } : {}),
     });
-    messages.push({
-      role: "assistant",
-      content: reply,
-      tools: tools_used,
-      card,
-      ...(fast ? { fast: true } : {}),
-      history: remembered,
-    });
-    if (
-      tools_used.some(
-        (t) =>
-          ![
-            "list_items",
-            "ask_manual",
-            "upcoming",
-            "car_seat_status",
-            "photo_check",
-            "fast_lane",
-          ].includes(t),
-      )
-    ) {
-      onChange?.();
-    }
+    messages.push(assistantMessage(out));
+    if (changedSomething(out.tools_used)) onChange?.();
   } catch (err) {
+    if (err.dropped) {
+      // The phone paused the page (another app, screen off) but the server keeps
+      // going and saves the reply under this turn: pick it up when it's there.
+      messages.push({ role: "assistant", content: STILL_WORKING, pending: turn });
+      saveChat(messages);
+      renderChat(messages);
+      recoverTurn(turn, onChange);
+      return;
+    }
     messages.push({ role: "assistant", content: `Sorry, that didn't work: ${err.message}` });
   }
   saveChat(messages);
   renderChat(messages);
+}
+
+const STILL_WORKING = "Still working on it. The answer shows up here when it's done.";
+const READ_ONLY = ["list_items", "ask_manual", "upcoming", "car_seat_status", "photo_check", "fast_lane"];
+const changedSomething = (tools = []) => tools.some((t) => !READ_ONLY.includes(t));
+
+function assistantMessage({ reply, tools_used, card, fast, history }) {
+  return {
+    role: "assistant",
+    content: reply,
+    tools: tools_used ?? [],
+    card,
+    ...(fast ? { fast: true } : {}),
+    history,
+  };
+}
+
+const recovering = new Set();
+
+/** Waits for a dropped turn's saved reply (up to 3 minutes) and puts it in the chat. */
+async function recoverTurn(turn, onChange) {
+  if (recovering.has(turn)) return;
+  recovering.add(turn);
+  const until = Date.now() + 3 * 60_000;
+  try {
+    const supa = await db();
+    while (Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const { data } = await supa
+        .from("model_runs")
+        .select("raw_output")
+        .eq("kind", "chat")
+        .like("raw_output", `%${turn}%`)
+        .limit(1)
+        .maybeSingle();
+      let saved = null;
+      try {
+        saved = JSON.parse(data?.raw_output ?? "null");
+      } catch {}
+      if (saved?.turn !== turn) continue;
+      settleTurn(
+        turn,
+        saved.error
+          ? { role: "assistant", content: `Sorry, that didn't work: ${saved.error}` }
+          : assistantMessage(saved),
+      );
+      if (!saved.error && changedSomething(saved.tools_used)) onChange?.();
+      return;
+    }
+    settleTurn(turn, { role: "assistant", content: "Sorry, that answer got lost on the way. Ask again?" });
+  } catch {
+    recovering.delete(turn);
+  }
+}
+
+function settleTurn(turn, message) {
+  recovering.delete(turn);
+  const messages = loadChat();
+  const i = messages.findIndex((m) => m.pending === turn);
+  if (i < 0) return;
+  messages[i] = message;
+  saveChat(messages);
+  if (drawer && !drawer.classList.contains("hidden")) renderChat(messages);
 }
 
 // Line icons for things, 24px grid, drawn with currentColor. Matched on the
