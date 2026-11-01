@@ -34,7 +34,6 @@
         howOften,
         itemIcon,
         openChat,
-        openSettings,
         relDay,
         signIn,
         toast,
@@ -97,7 +96,7 @@
           if (r.error) throw new Error(r.error.message);
         }
 
-        const review = [
+        let review = [
           ...facts.data.map((f) => ({
             id: f.id,
             type: "fact",
@@ -126,6 +125,17 @@
             manual: s.manual_id,
           })),
         ];
+        // A manual read twice saves each entry twice ("Roller Ring", "Roller ring"): show one, settle both.
+        const seen = new Map();
+        for (const r of review) {
+          const key = [r.type, r.item?.id, r.title, r.read]
+            .map((s) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, ""))
+            .join("|");
+          const first = seen.get(key);
+          if (first) first.twins.push(r.id);
+          else seen.set(key, Object.assign(r, { twins: [] }));
+        }
+        review = [...seen.values()];
         await Promise.all(
           review.map(async (r) => {
             if (!r.manual || !r.page) return;
@@ -242,70 +252,6 @@
         return html || '<p class="card muted">Nothing due this month. Enjoy it.</p>';
       }
 
-      // The same tasks as a timeline: one row per thing, a week back to five ahead.
-      function timeline(due) {
-        const now = today();
-        const start = addDays(now, -7);
-        const SPAN = 42;
-        const at = (day) => Math.min(100, Math.max(0, (daysBetween(start, day) / SPAN) * 100));
-        const STEP = { days: 1, weeks: 7 };
-        const rows = new Map();
-        for (const t of due) {
-          const item = one(t.items);
-          if (!item) continue;
-          if (!rows.has(item.id)) rows.set(item.id, { item, marks: [] });
-          const marks = rows.get(item.id).marks;
-          const late = t.next_due_on < now;
-          marks.push({ t, day: t.next_due_on, kind: late ? "late" : t.interval_unit === "cycles" ? "guess" : "due" });
-          // Repeats after this one, while they fit on the axis.
-          let day = t.next_due_on < now ? now : t.next_due_on;
-          for (let n = 0; n < 4; n++) {
-            if (STEP[t.interval_unit]) day = addDays(day, STEP[t.interval_unit] * t.interval_value);
-            else if (t.interval_unit === "months") {
-              const d = new Date(`${day}T12:00:00`);
-              d.setMonth(d.getMonth() + t.interval_value);
-              day = d.toISOString().slice(0, 10);
-            } else break;
-            if (daysBetween(start, day) > SPAN) break;
-            marks.push({ t, day, kind: "repeat" });
-          }
-        }
-        if (!rows.size) return '<p class="card muted">Nothing due this month. Enjoy it.</p>';
-        const ticks = [0, 7, 14, 21, 28, 35, 42]
-          .map((n) => {
-            const d = new Date(`${addDays(start, n)}T12:00:00`);
-            return `<span class="tl-tick" style="left:${(n / SPAN) * 100}%">${esc(d.toLocaleDateString(undefined, { month: "short", day: "numeric" }))}</span>`;
-          })
-          .join("");
-        const body = [...rows.values()]
-          .map(({ item, marks }) => {
-            marks.sort((a, b) => a.day.localeCompare(b.day));
-            return `<div class="tl-row">
-              <div class="tl-who">${itemIcon(item, 40)}<span>${esc(item.nickname)}</span></div>
-              <div class="tl-track"><span class="tl-today" style="left:${(7 / SPAN) * 100}%" aria-hidden="true"></span>${marks
-                .map((m, i) => {
-                  const date = new Date(`${m.day}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-                  const label = m.kind === "repeat" ? "" : `<span class="tl-label ${i % 2 ? "down" : "up"}">${esc(m.t.title)}<br><span class="muted">${esc(m.kind === "late" ? relDay(m.day) : date)}</span></span>`;
-                  return `<span class="tl-mark ${m.kind}" style="left:${at(m.day)}%" title="${esc(`${m.t.title}, ${date}`)}">${label}</span>`;
-                })
-                .join("")}</div>
-            </div>`;
-          })
-          .join("");
-        return `<div class="scroll-x"><div class="timeline">
-            <div class="tl-axis"><div class="tl-ticks">${ticks}</div></div>
-            <div class="tl-rows">${body}</div>
-          </div></div>
-          <p class="small muted">Filled dots are due, hollow ones repeat after that, dashed ones are guessed from how much you use the thing.</p>`;
-      }
-
-      function readView() {
-        try {
-          return localStorage.getItem("manuals-calendar") === "timeline" ? "timeline" : "list";
-        } catch {
-          return "list";
-        }
-      }
 
       const REVIEW_KIND = { fact: "Fact", task: "Upkeep", seat_limit: "Car seat limit" };
       function reviewTile(r) {
@@ -399,20 +345,8 @@
       }
 
       const CAMERA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg>';
-      const SHORTCUT_ICONS = {
-        stuff: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
-        ai: "M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0zM12 16v5",
-        settings: "M4 7h8M16 7h4M4 17h4M12 17h8M12 7a2 2 0 1 0 4 0a2 2 0 1 0 -4 0M8 17a2 2 0 1 0 4 0a2 2 0 1 0 -4 0",
-      };
-
-      /** The big "add a manual" card and the shortcuts under it. */
-      function heroAndShortcuts(items, due = [], review = []) {
-        const late = due.filter((t) => t.next_due_on < today()).length;
-        const stuff = items.length
-          ? `${items.length} thing${items.length === 1 ? "" : "s"}${late ? ` · ${late} late` : review.length ? ` · ${review.length} to check` : ""}`
-          : "";
-        const shortcut = (key, tint, label, sub, attrs) =>
-          `<a class="shortcut" ${attrs}><span class="icon-badge ${tint}" style="--s:48px" aria-hidden="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${SHORTCUT_ICONS[key]}"></path></svg></span><span class="shortcut-text"><strong>${label}</strong><span class="small muted">${sub}</span></span><svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"></path></svg></a>`;
+      /** The big "add a manual" card. */
+      function hero() {
         return `<div class="hero">
             <span class="hero-icon">${CAMERA}</span>
             <div class="hero-text">
@@ -426,12 +360,7 @@
             </div>
             <input id="home-camera" type="file" accept="image/*" capture="environment" class="sr-only">
             <input id="home-upload" type="file" accept="image/*" class="sr-only">
-          </div>
-          <nav class="shortcuts" aria-label="Shortcuts">
-            ${stuff ? shortcut("stuff", "gold", "Check on your stuff", esc(stuff), 'href="/things"') : ""}
-            ${shortcut("ai", "slate", "Connect your AI", "Claude, ChatGPT", 'href="/connect"')}
-            ${shortcut("settings", "sage", "Settings", "Theme, text size", 'href="#" data-settings')}
-          </nav>`;
+          </div>`;
       }
 
       function wireHero() {
@@ -446,18 +375,13 @@
             }
           });
         }
-        $("[data-settings]")?.addEventListener("click", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          openSettings();
-        });
       }
 
       function render({ items, due, review, revisions, kids }) {
         if (!items.length) {
           main.innerHTML = `<section class="stack">
             <h1>An empty house, for now.</h1>
-            ${heroAndShortcuts(items)}
+            ${hero()}
             <p class="muted">Just looking around? <button type="button" class="link" id="demo">Load the example home</button></p>
           </section>`;
           wireHero();
@@ -477,44 +401,32 @@
           <section class="stack">
             <h1 class="sr-only">Home</h1>
             <p class="muted" style="font-weight:600">${esc(date)}</p>
-            ${heroAndShortcuts(items, due, review)}
+            ${hero()}
             <form class="field" id="ask" style="margin-top:6px">
               <label class="sr-only" for="ask-input">Ask or tell</label>
-              <input id="ask-input" autocomplete="off" placeholder="Ask or tell: “the washer is at 230 washes”">
+              <input id="ask-input" autocomplete="off" placeholder="Ask or tell Muse">
               <button type="submit">Go</button>
             </form>
           </section>
 
           <section aria-labelledby="week-h">
-            <div class="section-head"><h2 id="week-h">Coming up</h2>
-              <div class="seg" role="group" aria-label="View">
-                <button type="button" data-view="list" aria-pressed="${readView() === "list"}">List</button>
-                <button type="button" data-view="timeline" aria-pressed="${readView() === "timeline"}">Timeline</button>
-              </div>
-            </div>
-            <div class="stack" id="coming">${readView() === "timeline" ? timeline(due) : agenda(due)}</div>
+            <div class="section-head"><h2 id="week-h">Coming up</h2></div>
+            <div class="stack" id="coming">${agenda(due)}</div>
           </section>
 
           ${
             review.length
-              ? `<section aria-labelledby="review-h" class="stack">
-                  <div class="section-head" style="margin:0"><h2 id="review-h">Needs your eyes <span class="chip gold strong" style="font-family:inherit;font-size:14px;vertical-align:middle">${review.length}</span></h2></div>
-                  <p class="muted" style="margin:0">Muse wasn't sure about these. Tap one to check it against its page.</p>
+              ? `<details class="card flat review-fold">
+                  <summary><span class="chip gold strong">${review.length}</span> <strong>Muse wasn't sure about ${review.length === 1 ? "one entry" : `${review.length} entries`}</strong></summary>
+                  <p class="small muted" style="margin:10px 0">Tap one to check it against its page.</p>
                   <div class="rv-grid" role="group" aria-label="To check">${review.map(reviewTile).join("")}</div>
                   <div id="review-open"></div>
-                </section>`
+                </details>`
               : ""
           }
 
           <section aria-labelledby="things-h">
-            <div class="section-head">
-              <h2 id="things-h">Your things</h2>
-              <div class="row small muted" style="gap:14px">
-                <span class="row" style="gap:6px"><span class="dot src-reader"></span>Read by Muse</span>
-                <span class="row" style="gap:6px"><span class="dot src-assistant"></span>Checked by an assistant</span>
-                <span class="row" style="gap:6px"><span class="dot src-user"></span>Set by you</span>
-              </div>
-            </div>
+            <div class="section-head"><h2 id="things-h">Your things</h2></div>
             <div class="grid">${items.map((i) => thingCard(i, kids)).join("")}</div>
           </section>
 
@@ -534,32 +446,16 @@
           $("#ask-input").value = "";
           openChat(text || undefined, load);
         });
-        const bindDone = (root) => {
-          for (const b of root.querySelectorAll("[data-done]")) {
-            b.addEventListener("click", async () => {
-              b.disabled = true;
-              const { error } = await (await db()).rpc("log_task_done", { p_task: b.dataset.done });
-              if (error) {
-                b.disabled = false;
-                return toast(error.message);
-              }
-              toast("Done. The next one is scheduled.");
-              load();
-            });
-          }
-        };
-        bindDone(main);
-        for (const b of main.querySelectorAll("[data-view]")) {
-          b.addEventListener("click", () => {
-            try {
-              localStorage.setItem("manuals-calendar", b.dataset.view);
-            } catch {}
-            for (const other of main.querySelectorAll("[data-view]")) {
-              other.setAttribute("aria-pressed", String(other === b));
+        for (const b of main.querySelectorAll("[data-done]")) {
+          b.addEventListener("click", async () => {
+            b.disabled = true;
+            const { error } = await (await db()).rpc("log_task_done", { p_task: b.dataset.done });
+            if (error) {
+              b.disabled = false;
+              return toast(error.message);
             }
-            const coming = $("#coming");
-            coming.innerHTML = b.dataset.view === "timeline" ? timeline(due) : agenda(due);
-            bindDone(coming);
+            toast("Done. The next one is scheduled.");
+            load();
           });
         }
         const reviewOpen = $("#review-open");
@@ -585,12 +481,14 @@
           );
           $("[data-right]", card).addEventListener("click", async () => {
             try {
-              await tool("revise_fact", {
-                id: r.id,
-                type: r.type,
-                source: "user",
-                reason: `Checked against page ${r.page} by you.`,
-              });
+              for (const id of [r.id, ...r.twins]) {
+                await tool("revise_fact", {
+                  id,
+                  type: r.type,
+                  source: "user",
+                  reason: `Checked against page ${r.page} by you.`,
+                });
+              }
               toast("Marked as checked.");
               load();
             } catch (err) {
@@ -606,13 +504,15 @@
             const value = $("input", e.target).value.trim();
             const field = { fact: "value", task: "details", seat_limit: "fit_note" }[r.type];
             try {
-              await tool("revise_fact", {
-                id: r.id,
-                type: r.type,
-                source: "user",
-                changes: { [field]: value },
-                reason: "Set by you.",
-              });
+              for (const id of [r.id, ...r.twins]) {
+                await tool("revise_fact", {
+                  id,
+                  type: r.type,
+                  source: "user",
+                  changes: { [field]: value },
+                  reason: "Set by you.",
+                });
+              }
               toast("Saved. The earlier version is kept in the history.");
               load();
             } catch (err) {

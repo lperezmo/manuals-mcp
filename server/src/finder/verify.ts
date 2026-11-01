@@ -51,6 +51,8 @@ interface Claim {
   page: number;
   text: string;
   numbers: number[];
+  /** A part name read off a diagram: Jev often can't find it in the page text, and a wrong one harms nothing. */
+  minor?: boolean;
 }
 
 function claims(k: Knowledge): Claim[] {
@@ -78,6 +80,7 @@ function claims(k: Knowledge): Claim[] {
       page: f.source_page,
       text: `${f.label}: ${f.value}`,
       numbers: [],
+      minor: f.kind === "part",
     });
   });
   k.seat_modes.forEach((s, index) => {
@@ -177,7 +180,7 @@ export async function verifyKnowledge(
       tokens += body.usage?.input_tokens ?? 0;
       group.forEach((c, i) => {
         const p = body.answers?.[`c${i}`]?.noul;
-        if (typeof p === "number" && p < SUPPORT_THRESHOLD) flag(c, "unsupported");
+        if (typeof p === "number" && p < SUPPORT_THRESHOLD && !c.minor) flag(c, "unsupported");
       });
     } catch {
       for (const c of group) if (c.list === "seat_modes") flag(c, "unchecked");
