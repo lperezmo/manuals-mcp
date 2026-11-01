@@ -1132,7 +1132,7 @@ fieldset.seg {
     inset: auto 0 0 0;
     z-index: 15;
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 0;
     padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
     background: var(--card);

@@ -97,12 +97,13 @@ export async function api(path, body) {
   return json;
 }
 
-/** Runs one of the 10 tools, exactly as an AI would. */
+/** Runs one of the 12 tools, exactly as an AI would. */
 export const tool = (name, args = {}) => api("/api/tool", { name, args });
 
 const NAV = [
   ["/", "Home", "M4 11.5 12 5l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5h-5v5H5a1 1 0 0 1-1-1z"],
   ["/things", "Things", "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"],
+  ["/atlas", "Atlas", "M9 4 3 6v14l6-2 6 2 6-2V4l-6 2zM9 4v14M15 6v14"],
   ["/history", "History", "M12 7v5l3 2M3.5 12a8.5 8.5 0 1 0 2.5-6M3.5 4v4h4"],
   ["/connect", "Connect your AI", "M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"],
 ];

@@ -15,7 +15,7 @@ Built for the Meta Global AI Developer Hackathon (indie track).
 flowchart LR
   you["You"] --> site["Website\nMuse chat"]
   you --> ai["Claude, ChatGPT\nany MCP client"]
-  site --> tools["10 tools"]
+  site --> tools["12 tools"]
   ai -- "/mcp" --> tools
   tools --> db[("Supabase\nPostgres + RLS")]
   tools -- "add_item" --> muse["Muse Spark\nreads manuals"]
@@ -24,18 +24,20 @@ flowchart LR
 
 ## Tools
 
-| Tool                 | What it's for                                                                |
-| -------------------- | ---------------------------------------------------------------------------- |
-| `add_item`           | Add a thing and its manual PDF. Muse reads it into tasks and facts.          |
-| `list_items`         | What you own, what's next, and what needs review.                            |
-| `ask_manual`         | Answers with page cites: search, exact error codes and specs, the schedule.  |
-| `upcoming`           | Tasks due soon, plus facts a person should check.                            |
-| `revise_fact`        | Correct or confirm a fact, task or car seat limit, with a reason.            |
-| `log_done`           | "I just cleaned the filter" moves the next due date.                         |
-| `record_measurement` | A child's height and weight, or a thing's cycle count or hours.              |
-| `car_seat_status`    | Which mode fits now, room left before its limits, and when to measure again. |
-| `catch_up`           | Not new? Seeds the schedule from its history and adds catch-up steps.        |
-| `warranty_status`    | Whether a broken thing is likely still under warranty, from its receipt.     |
+| Tool                 | What it's for                                                                      |
+| -------------------- | ---------------------------------------------------------------------------------- |
+| `add_item`           | Add a thing and its manual PDF. Muse reads it into tasks and facts.                |
+| `list_items`         | What you own, what's next, and what needs review.                                  |
+| `ask_manual`         | Answers with page cites: search, exact error codes and specs, the schedule.        |
+| `upcoming`           | Tasks due soon, plus facts a person should check.                                  |
+| `revise_fact`        | Correct or confirm a fact, task or car seat limit, with a reason.                  |
+| `log_done`           | "I just cleaned the filter" moves the next due date.                               |
+| `record_measurement` | A child's height and weight, or a thing's cycle count or hours.                    |
+| `car_seat_status`    | Which mode fits now, room left before its limits, and when to measure again.       |
+| `catch_up`           | Not new? Seeds the schedule from its history and adds catch-up steps.              |
+| `warranty_status`    | Whether a broken thing is likely still under warranty, from its receipt.           |
+| `house_atlas`        | The house by room, system, who it's for, effort or season, or a view you describe. |
+| `save_view`          | Keep a view ("baby safety", "before the first frost") as a chip on the Atlas page. |
 
 ## Run it
 
@@ -71,7 +73,7 @@ bun run check                        # lint, typecheck, tests
 Database tests run against plain Postgres with a small Supabase stub:
 
 ```sh
-psql -f supabase/tests/stub_supabase.sql $(printf -- '-f %s ' supabase/migrations/*.sql) -f supabase/tests/rls_test.sql -f supabase/tests/sharing_test.sql
+psql -f supabase/tests/stub_supabase.sql $(printf -- '-f %s ' supabase/migrations/*.sql) -f supabase/tests/rls_test.sql -f supabase/tests/sharing_test.sql -f supabase/tests/atlas_test.sql
 ```
 
 ## Notes

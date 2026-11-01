@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>House Atlas · Manuals</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@400;600;700&display=swap"
+    />
+    <link rel="stylesheet" href="/theme.css" />
+    <script src="/theme.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+    <style>
+      /* House Atlas: lens chips regroup the same house; a view filters it by meaning. */
+      .viewbar {
+        display: grid;
+        gap: 12px;
+      }
+      .viewbar form {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .viewbar input[type="text"] {
+        flex: 1 1 240px;
+        min-width: 0;
+      }
+      .saved {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .saved .view-chip {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        background: var(--soft);
+        overflow: hidden;
+      }
+      .saved .view-chip button {
+        border: 0;
+        background: transparent;
+        color: var(--ink);
+        font: inherit;
+        font-size: 14px;
+        min-height: 36px;
+        padding: 0 12px;
+        cursor: pointer;
+      }
+      .saved .view-chip button[aria-pressed="true"] {
+        background: var(--accent);
+        color: var(--on-accent);
+        font-weight: 700;
+      }
+      .saved .view-chip .x {
+        padding: 0 10px 0 4px;
+        color: var(--ink2);
+      }
+      .bar-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        font-size: 14px;
+        color: var(--ink2);
+      }
+      .bar-row input {
+        accent-color: var(--accent);
+        width: 160px;
+      }
+      .atlas-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+        gap: 14px;
+        align-items: start;
+      }
+      .atlas-tile {
+        display: grid;
+        gap: 12px;
+        min-width: 0;
+      }
+      .atlas-head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .atlas-head .ring {
+        flex: none;
+      }
+      .entries {
+        display: grid;
+        gap: 6px;
+      }
+      .entry {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 2px 8px;
+        align-items: center;
+        padding: 8px 10px;
+        border-radius: 12px;
+        background: var(--soft);
+        color: inherit;
+        text-decoration: none;
+        min-height: 44px;
+      }
+      .entry:hover {
+        outline: 1px solid var(--line);
+      }
+      .entry:focus-visible {
+        outline: 3px solid var(--accent);
+        outline-offset: 2px;
+      }
+      .entry .name {
+        font-weight: 700;
+        min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .entry .why {
+        grid-column: 1 / -1;
+        font-size: 13px;
+        color: var(--ink2);
+      }
+      .entry.maybe {
+        opacity: 0.55;
+      }
+      .entry .sure {
+        grid-column: 1 / -1;
+        height: 5px;
+        border-radius: 999px;
+        background: var(--line);
+        overflow: hidden;
+      }
+      .entry .sure i {
+        display: block;
+        height: 100%;
+        background: var(--accent);
+      }
+      .pill {
+        font-size: 12px;
+        font-weight: 700;
+        border-radius: 999px;
+        padding: 2px 8px;
+        white-space: nowrap;
+      }
+      .pill.late {
+        background: var(--coral-soft);
+        color: var(--coral);
+      }
+      .pill.soon {
+        background: var(--gold-soft);
+        color: var(--gold);
+      }
+      .pill.ok {
+        background: var(--sage-soft);
+        color: var(--sage);
+      }
+      .pill.none {
+        background: var(--card);
+        color: var(--ink2);
+      }
+    </style>
+  </head>
+  <body>
+    <header class="top" id="top"></header>
+    <main class="wrap" id="main">
+      <p class="muted">One moment…</p>
+    </main>
+
+    <script type="module">
+      import { $, boot, esc, relDay, toast, tool } from "/app.js";
+
+      const main = $("#main");
+      const STATE = { late: "Late", soon: "Soon", ok: "Fine", none: "No date" };
+      let lens = "room";
+      try {
+        lens = localStorage.getItem("atlas-lens") || "room";
+      } catch {}
+      let bar = 0.6;
+      let phrase = null;
+      let data = null;
+      let busy = false;
+
+      function ring(late, soon, total) {
+        const r = 18;
+        const c = 2 * Math.PI * r;
+        const lateLen = total ? (late / total) * c : 0;
+        const soonLen = total ? (soon / total) * c : 0;
+        return `<svg class="ring" width="48" height="48" viewBox="0 0 48 48" aria-hidden="true">
+          <circle cx="24" cy="24" r="${r}" fill="none" stroke="var(--sage-soft)" stroke-width="7"/>
+          <circle cx="24" cy="24" r="${r}" fill="none" stroke="var(--coral)" stroke-width="7" stroke-dasharray="${lateLen} ${c}" transform="rotate(-90 24 24)"/>
+          <circle cx="24" cy="24" r="${r}" fill="none" stroke="var(--gold)" stroke-width="7" stroke-dasharray="${soonLen} ${c}" stroke-dashoffset="${-lateLen}" transform="rotate(-90 24 24)"/>
+          <text x="24" y="28" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ink)">${total}</text></svg>`;
+      }
+
+      function entryHtml(e, viewOn) {
+        // The server sends everything a view is at least 0.3 sure of; the bar here decides what fades and what hides.
+        if (viewOn && (e.view_p ?? 0) < Math.min(0.4, bar)) return "";
+        const maybe = viewOn && (e.view_p ?? 0) < bar;
+        const when = e.due_on ? ` · ${relDay(e.due_on)}` : "";
+        const sure = viewOn ? e.view_p : e.p;
+        const showBar = viewOn || (sure !== undefined && sure < 0.9 && !e.guess);
+        const label = `${e.name}${e.task ? `: ${e.task}` : ""}, ${STATE[e.state]}`;
+        return `<a class="entry${maybe ? " maybe" : ""}" href="/things?id=${encodeURIComponent(e.item_id)}" aria-label="${esc(label)}">
+          <span class="name">${esc(e.name)}</span><span class="pill ${e.state}">${STATE[e.state]}</span>
+          ${e.task ? `<span class="why">${esc(e.task)}${esc(when)}</span>` : ""}
+          ${showBar ? `<span class="sure" title="Jev: ${Math.round(sure * 100)}% sure"><i style="width:${Math.round(sure * 100)}%"></i></span>` : ""}
+        </a>`;
+      }
+
+      function grid() {
+        const groups = data.by_lens?.[lens] ?? [];
+        const viewOn = !!data.view;
+        const tiles = groups
+          .map((g) => {
+            const items = g.entries.map((e) => entryHtml(e, viewOn)).filter(Boolean);
+            if (!items.length) return "";
+            const shown = g.entries.filter((e) => !viewOn || (e.view_p ?? 0) >= Math.min(0.4, bar));
+            const late = shown.filter((e) => e.state === "late").length;
+            const soon = shown.filter((e) => e.state === "soon").length;
+            return `<article class="card atlas-tile"><div class="atlas-head">${ring(late, soon, shown.length)}
+              <div><h3>${esc(g.label)}</h3><p class="small muted">${late ? `${late} late` : "Nothing late"}${soon ? ` · ${soon} due soon` : ""}</p></div></div>
+              <div class="entries">${items.join("")}</div></article>`;
+          })
+          .filter(Boolean);
+        return tiles.length
+          ? tiles.join("")
+          : `<p class="card muted">${viewOn ? "Nothing clears that bar. Lower it, or try other words." : "Nothing to show here yet."}</p>`;
+      }
+
+      function note() {
+        if (data.view) {
+          const how =
+            data.view.mode === "text"
+              ? "Jev is away right now, so this is a plain word match."
+              : "Jev was asked one yes or no per thing. Bars show how sure it is.";
+          return `<strong>${esc(data.view.phrase)}</strong>: ${how}${data.view.saved_id ? " Saved views refresh when your things change." : ""}`;
+        }
+        if (data.sorted_by === "guess") return "Jev hasn't sorted your things yet, so these groups are a guess from their names.";
+        if (data.sorted_by === "mixed") return "A few things are placed by a guess from their names until Jev sorts them.";
+        return "Jev sorted each thing once when you added it. A thing likely to be in two places shows in both.";
+      }
+
+      function render() {
+        const lensChips = data.lenses
+          .map((l) => `<button type="button" data-lens="${l.key}" aria-pressed="${l.key === lens}">${esc(l.label)}</button>`)
+          .join("");
+        const saved = data.views
+          .map(
+            (v) => `<span class="view-chip"><button type="button" data-view="${esc(v.phrase)}" aria-pressed="${data.view?.phrase === v.phrase}">${esc(v.phrase)}</button><button type="button" class="x" data-forget="${esc(v.phrase)}" aria-label="Remove the ${esc(v.phrase)} view">×</button></span>`,
+          )
+          .join("");
+        const canSave = data.view && !data.view.saved_id;
+        main.innerHTML = `
+          <section class="stack">
+            <h1>House Atlas</h1>
+            <p class="muted">Every thing and upkeep task in the house, sorted by Jev a few ways at once. Pick a lens to regroup it, or describe a view in your own words.</p>
+          </section>
+          <div class="filters" role="group" aria-label="Lens">${lensChips}</div>
+          <section class="card viewbar" aria-labelledby="vb-h">
+            <h2 id="vb-h" style="font-size:19px">Make a view</h2>
+            <form id="view-form">
+              <label class="sr-only" for="phrase">Describe a view</label>
+              <input type="text" id="phrase" maxlength="120" placeholder="e.g. things that could flood the floor" value="${esc(phrase ?? "")}">
+              <button type="submit" ${busy ? "disabled" : ""}>Show</button>
+              ${data.view ? '<button type="button" class="quiet" id="clear">Clear</button>' : ""}
+              ${canSave ? '<button type="button" class="quiet" id="save">Save this view</button>' : ""}
+            </form>
+            ${saved ? `<div class="saved" role="group" aria-label="Saved views">${saved}</div>` : ""}
+            ${
+              data.view
+                ? `<div class="bar-row"><label for="bar">Show things Jev is at least</label>
+                    <input type="range" id="bar" min="40" max="95" step="5" value="${Math.round(bar * 100)}">
+                    <output id="bar-out" for="bar">${Math.round(bar * 100)}%</output><span>sure fit. Faded ones are maybes.</span></div>`
+                : ""
+            }
+            <p class="small muted" id="atlas-note">${note()}</p>
+          </section>
+          <section class="atlas-grid" id="grid" aria-live="polite">${grid()}</section>`;
+        wire();
+      }
+
+      function wire() {
+        for (const b of main.querySelectorAll("[data-lens]")) {
+          b.addEventListener("click", () => {
+            lens = b.dataset.lens;
+            try {
+              localStorage.setItem("atlas-lens", lens);
+            } catch {}
+            render();
+          });
+        }
+        $("#view-form").addEventListener("submit", (e) => {
+          e.preventDefault();
+          const words = $("#phrase").value.trim();
+          if (words.length < 2) return toast("Say a little more, like things that use water.");
+          load(words);
+        });
+        $("#clear")?.addEventListener("click", () => load(null));
+        $("#save")?.addEventListener("click", async () => {
+          try {
+            const res = await tool("save_view", { phrase: data.view.phrase });
+            toast(res.summary);
+            load(data.view.phrase);
+          } catch (err) {
+            toast(err.message);
+          }
+        });
+        for (const b of main.querySelectorAll("[data-view]")) {
+          b.addEventListener("click", () => load(data.view?.phrase === b.dataset.view ? null : b.dataset.view));
+        }
+        for (const b of main.querySelectorAll("[data-forget]")) {
+          b.addEventListener("click", async () => {
+            try {
+              await tool("save_view", { phrase: b.dataset.forget, remove: true });
+              load(data.view?.phrase === b.dataset.forget ? null : phrase);
+            } catch (err) {
+              toast(err.message);
+            }
+          });
+        }
+        $("#bar")?.addEventListener("input", (e) => {
+          bar = Number(e.target.value) / 100;
+          $("#bar-out").textContent = `${e.target.value}%`;
+          $("#grid").innerHTML = grid();
+        });
+      }
+
+      async function load(words) {
+        busy = true;
+        const btn = main.querySelector("#view-form button[type=submit]");
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = "Sorting…";
+        }
+        try {
+          const args = { lens, all_lenses: true };
+          if (words) Object.assign(args, { view: words, bar: 0.3 });
+          const res = await tool("house_atlas", args);
+          if (!res.data) {
+            main.innerHTML = `<section class="stack"><h1>House Atlas</h1><p class="card muted">${esc(res.summary)} <a href="/things?add=1">Add your first thing</a>.</p></section>`;
+            return;
+          }
+          data = res.data;
+          phrase = words;
+          if (!data.lenses.some((l) => l.key === lens)) lens = "room";
+        } catch (err) {
+          if (!data) throw err;
+          toast(err.message);
+        } finally {
+          busy = false;
+        }
+        render();
+      }
+
+      async function start() {
+        if (!(await boot("/atlas"))) return;
+        await load(null);
+      }
+      start().catch((err) => {
+        main.innerHTML = `<p class="card">Something went wrong: ${esc(err.message)}</p>`;
+      });
+    </script>
+  </body>
+</html>
