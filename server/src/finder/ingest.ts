@@ -1,3 +1,4 @@
+import { within } from "../background.js";
 import type { Db, ItemRow, ManualRow } from "../db.js";
 import type { Env } from "../env.js";
 import { BUDGET_USED, logRun, modelRunsTodayAll } from "../runs.js";
@@ -91,6 +92,15 @@ export async function storeManual(args: StoreArgs): Promise<string> {
 
 /** A read past this is taken as dead (the function limit is 300 s), so the lock frees itself. */
 export const READING_STALE_MS = 6 * 60_000;
+/**
+ * How long a read may run, counted from when the request came in. It stops a
+ * little before the function limit (300 s) so it can still say it gave up;
+ * a read cut off by the limit itself leaves no word at all.
+ */
+export const READ_BUDGET_MS = 270_000;
+/** What the page shows when a read ran out of time. The page offers "Read it again" on it. */
+export const READ_TIMED_OUT =
+  "Muse ran out of time on this one. Tap Read it again to try once more.";
 /** "Read it again" right after a read is refused: the same pages give the same answer. */
 export const REREAD_COOLDOWN_MS = 2 * 60_000;
 
@@ -108,6 +118,8 @@ export async function processStoredManual(args: {
   householdId: string;
   manualId: string;
   reread?: boolean;
+  /** When the read gives up (ms since epoch). Defaults to READ_BUDGET_MS from now. */
+  deadline?: number;
 }): Promise<IngestOutcome> {
   const { db } = args;
   const { data, error } = await db
@@ -156,11 +168,41 @@ export async function processStoredManual(args: {
       "Muse is already reading this manual. It shows up here when it's done.",
     );
   }
-  try {
-    const file = await db.storage.from(BUCKET).download(data.storage_path);
+  const path = data.storage_path as string;
+  const work = (async () => {
+    const file = await db.storage.from(BUCKET).download(path);
     if (file.error || !file.data) throw new Error(`Couldn't read the PDF: ${file.error?.message}`);
     const bytes = new Uint8Array(await file.data.arrayBuffer());
-    return await processPdf({ ...args, item, bytes });
+    return processPdf({ ...args, item, bytes });
+  })();
+  const deadline = args.deadline ?? now.getTime() + READ_BUDGET_MS;
+  try {
+    const read = await within(work, deadline - Date.now());
+    if (read.done) return read.value;
+    // Out of time: say so now, while the function is still alive to write it.
+    work.catch(() => {});
+    await logRun(db, {
+      kind: "read",
+      ok: false,
+      model: args.env.reader?.model ?? null,
+      error: "Ran out of time before the read finished.",
+      ms: Date.now() - now.getTime(),
+      item_id: item.id,
+      manual_id: data.id,
+    });
+    await db
+      .from("manuals")
+      .update({ status_detail: READ_TIMED_OUT })
+      .eq("id", data.id)
+      .neq("status", "distilled");
+    return {
+      manual_id: data.id,
+      status: data.status,
+      page_count: data.page_count,
+      pages_with_text: 0,
+      distilled: null,
+      note: READ_TIMED_OUT,
+    };
   } finally {
     await db.from("manuals").update({ reading_since: null }).eq("id", data.id);
   }
