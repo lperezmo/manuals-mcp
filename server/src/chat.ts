@@ -6,9 +6,9 @@ import { INSTRUCTIONS, registerTools } from "./mcp.js";
 import * as updateItem from "./tools/update-item.js";
 
 // The website's chat: Muse Spark (or any OpenAI-compatible model) with the
-// same 12 tools the MCP server exposes, run as the signed-in user so RLS
-// applies exactly as it does over MCP. Kept small on purpose: a few tool
-// rounds, short answers, and a capped history.
+// same tools the MCP server exposes (less the upload slot), run as the
+// signed-in user so RLS applies exactly as it does over MCP. Kept small on
+// purpose: a few tool rounds, short answers, and a capped history.
 
 const MAX_STEPS = 6;
 const MAX_HISTORY = 20;
@@ -55,7 +55,7 @@ export function chatTools(env: Env): ChatTool[] {
       });
     },
   };
-  registerTools(collector as unknown as McpServer, env);
+  registerTools(collector as unknown as McpServer, env, "chat");
   updateItem.register(collector as unknown as McpServer, env);
   tools.push(SHOW_CARD);
   return tools;

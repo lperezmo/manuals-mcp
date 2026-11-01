@@ -10,9 +10,27 @@ import {
   SiteBlockedError,
 } from "../finder/fetch-pdf.js";
 import { ingestPdf } from "../finder/ingest.js";
-import { findItem, guarded, ITEM_COLUMNS, itemLabel, reply, session } from "./context.js";
+import { discardUpload, readUpload, UploadError } from "../finder/upload-slot.js";
+import {
+  findItem,
+  guarded,
+  ITEM_COLUMNS,
+  itemLabel,
+  itemPageUrl,
+  reply,
+  type Surface,
+  session,
+} from "./context.js";
 
-export function register(server: McpServer, env: Env) {
+/** What add_item says after a site blocked the download, by where it was called from. */
+export function blockedNext(surface: Surface, itemId: string, pageUrl: string): string {
+  if (surface === "chat") {
+    return " Look for a copy on another site, or save the PDF in a browser and upload it on the Things page.";
+  }
+  return ` If you can download it yourself (a code sandbox or browser with network access), call request_manual_upload with item "${itemId}", send the PDF there, then call add_item with attach_to and upload_id. Otherwise look for a copy on another site, or ask the person to open ${pageUrl} and tap Upload a PDF.`;
+}
+
+export function register(server: McpServer, env: Env, surface: Surface = "mcp") {
   server.registerTool(
     "add_item",
     {
@@ -23,6 +41,11 @@ export function register(server: McpServer, env: Env) {
         "For the manual: search the web for the brand, model number and \"owner's manual PDF\", prefer the maker's own support site, and pass the direct PDF link as pdf_url.",
         "The server reads the manual and saves its upkeep tasks, error codes, parts, specs and car seat limits, each with its page. Some may come back flagged for review.",
         "To attach a manual to something already added, pass attach_to with its id or name, plus pdf_url.",
+        ...(surface === "mcp"
+          ? [
+              "If the maker's site won't let our server download the PDF but you can, use request_manual_upload and pass its upload_id here instead of pdf_url.",
+            ]
+          : []),
       ].join(" "),
       inputSchema: z.object({
         attach_to: z
@@ -61,7 +84,19 @@ export function register(server: McpServer, env: Env) {
           ),
         child_id: z.uuid().optional().describe("For a car seat or gear that belongs to one child."),
         notes: z.string().max(500).optional(),
-        pdf_url: z.url().optional().describe("Direct https link to the manual PDF."),
+        pdf_url: z
+          .url()
+          .optional()
+          .describe(
+            "Direct https link to the manual PDF. With upload_id, it is only saved as where the PDF came from.",
+          ),
+        upload_id: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            "From request_manual_upload, after you sent the PDF to its upload_url. Used instead of downloading pdf_url.",
+          ),
         official: z
           .boolean()
           .optional()
@@ -79,7 +114,7 @@ export function register(server: McpServer, env: Env) {
         openWorldHint: true,
       },
     },
-    async ({ attach_to, pdf_url, official, history, ...fields }, ctx) =>
+    async ({ attach_to, pdf_url, upload_id, official, history, ...fields }, ctx) =>
       guarded(async () => {
         const { db, householdId } = await session(env, ctx);
 
@@ -102,6 +137,37 @@ export function register(server: McpServer, env: Env) {
         if (history) await saveHistory(db, item.id, history);
         const notNew = history && history.condition !== "new";
 
+        if (upload_id) {
+          let upload: Awaited<ReturnType<typeof readUpload>>;
+          try {
+            upload = await readUpload(db, householdId, upload_id);
+          } catch (err) {
+            if (err instanceof UploadError) {
+              return reply(
+                `${added ? `Added ${label}, but couldn't` : "Couldn't"} use that upload: ${err.message}`,
+                { item },
+              );
+            }
+            throw err;
+          }
+          const outcome = await ingestPdf({
+            env,
+            db,
+            householdId,
+            item,
+            bytes: upload.bytes,
+            source: "pdf_upload",
+            sourceUrl: pdf_url,
+            official,
+          });
+          // The manual has its own copy now; the slot's file isn't needed.
+          await discardUpload(db, upload.path);
+          return reply(attachedSentence(outcome, label, added, notNew), {
+            item,
+            manual: outcome,
+          });
+        }
+
         if (!pdf_url) {
           const query = [item.brand, item.model, "owner's manual pdf"].filter(Boolean).join(" ");
           return reply(
@@ -118,7 +184,7 @@ export function register(server: McpServer, env: Env) {
             // A site that blocks apps won't change its mind on a retry.
             const next =
               err instanceof SiteBlockedError
-                ? " Look for a copy on another site, or save the PDF in a browser and upload it."
+                ? blockedNext(surface, item.id, itemPageUrl(env, ctx, item.id))
                 : "";
             return reply(
               `${added ? `Added ${label}, but couldn't` : "Couldn't"} use that link: ${err.message}${next}`,
@@ -137,17 +203,23 @@ export function register(server: McpServer, env: Env) {
           sourceUrl: fetched.finalUrl,
           official,
         });
-        const d = outcome.distilled;
-        const read = d
-          ? `Read it: ${d.tasks} upkeep tasks, ${d.facts} facts${d.seat_modes ? `, ${d.seat_modes} car seat modes` : ""}.${d.needs_review ? ` ${d.needs_review} need a person to check (see upcoming).` : ""}`
-          : (outcome.note ?? "");
-        const next = notNew
-          ? " It isn't new: call catch_up next to seed its schedule from its history."
-          : "";
-        return reply(
-          `${added ? `Added ${label} with` : `Attached`} a ${outcome.page_count ?? "?"}-page manual${added ? "" : ` to ${label}`}. ${read}${next}`,
-          { item, manual: outcome },
-        );
+        return reply(attachedSentence(outcome, label, added, notNew), { item, manual: outcome });
       }),
   );
+}
+
+function attachedSentence(
+  outcome: Awaited<ReturnType<typeof ingestPdf>>,
+  label: string,
+  added: boolean,
+  notNew: boolean | undefined,
+): string {
+  const d = outcome.distilled;
+  const read = d
+    ? `Read it: ${d.tasks} upkeep tasks, ${d.facts} facts${d.seat_modes ? `, ${d.seat_modes} car seat modes` : ""}.${d.needs_review ? ` ${d.needs_review} need a person to check (see upcoming).` : ""}`
+    : (outcome.note ?? "");
+  const next = notNew
+    ? " It isn't new: call catch_up next to seed its schedule from its history."
+    : "";
+  return `${added ? `Added ${label} with` : `Attached`} a ${outcome.page_count ?? "?"}-page manual${added ? "" : ` to ${label}`}. ${read}${next}`;
 }
