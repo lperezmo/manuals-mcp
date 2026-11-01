@@ -41,6 +41,8 @@ describe("a label with no Model line", () => {
     expect(modelGuess(["MO: R0698201", "Model No.: WDF330PAHS5"])).toBe("WDF330PAHS5");
     expect(modelGuess(["Type: Dishwasher", "M/N: MDF24P3AST"])).toBe("MDF24P3AST");
     expect(modelGuess(["MO: SEE INSIDE DOOR"])).toBeNull();
+    expect(modelGuess(["Model #: ABC1234"])).toBe("ABC1234");
+    expect(modelGuess(["MO#R0698201"])).toBe("R0698201");
   });
 
   test("a reader reply with odd codes still parses", () => {

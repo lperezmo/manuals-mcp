@@ -38,7 +38,8 @@ const MODEL_TAGS: [RegExp, number][] = [
 
 /** A tagged code split into its tag and value, e.g. "MO:R0698201" to ["MO", "R0698201"]. */
 export function splitCode(code: string): [string, string] | null {
-  const m = code.trim().match(/^([A-Za-z][A-Za-z0-9 ./#]{0,15}?)\s*[:#]\s*(\S.*)$/);
+  // "Model #: ABC123" keeps "#:" together as the separator.
+  const m = code.trim().match(/^([A-Za-z][A-Za-z0-9 ./]{0,15}?)\s*(?:#\s*:|[:#])\s*(\S.*)$/);
   return m?.[1] && m[2] ? [m[1].trim(), m[2].trim()] : null;
 }
 
