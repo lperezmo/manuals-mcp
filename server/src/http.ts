@@ -34,6 +34,7 @@ import { ATTACH_DOWNLOAD_MS, FetchPdfError, fetchPdf } from "./finder/fetch-pdf.
 import { processStoredManual, ReadingBusyError, storeManual } from "./finder/ingest.js";
 import { findManual } from "./finder/search.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
+import { memoryTag, noteFrom, notesForMuse, saveNote } from "./memory.js";
 import { checkPhoto, checkRead, lookAtPhoto } from "./photo-check.js";
 import { readReceipt, saveReceipt, warrantyStatus } from "./receipt.js";
 import {
@@ -352,6 +353,9 @@ export function chatHandler(
         lane = null;
       }
     }
+    // House memory: a lasting fact in the person's own words, from the same Jev call.
+    const draft = noteFrom(lane, question);
+    const memory = draft ? [memoryTag(await saveNote(db, draft), draft)] : [];
     if (lane?.answer) {
       const { pick } = lane.answer;
       await logRun(db, {
@@ -362,7 +366,7 @@ export function chatHandler(
         tokens_in: lane.tokens_in,
         tokens_out: 0,
         item_id: pick.item.id,
-        tools_used: [fastTag(lane), `${pick.row.type}:${pick.row.kind}`],
+        tools_used: [fastTag(lane), `${pick.row.type}:${pick.row.kind}`, ...memory],
         raw_output: JSON.stringify({ question, line: pick.row, scores: lane.scores }),
       });
       return Response.json({
@@ -416,6 +420,7 @@ export function chatHandler(
     const routeTag = [
       ...(decision ? [`route:${decision.route} ${decision.confidence.toFixed(2)}`] : []),
       ...(lane ? [fastTag(lane)] : []),
+      ...memory,
     ];
     if (decision?.route === "off_topic" && decision.confidence >= OFF_TOPIC_CONFIDENCE) {
       await logRun(db, {
@@ -433,6 +438,8 @@ export function chatHandler(
     // something looks reaches Muse as text, so Muse skips the image read.
     // Skipped when Jev just failed to answer the fast lane.
     let turn = messages;
+    // What the household told Muse before, read while Jev looks at any photo.
+    const notes = notesForMuse(db);
     const look = image && !jevDown ? await lookAtPhoto(env, image, question, fetchImpl) : null;
     if (image && look?.finding) {
       turn = [...messages.slice(0, -1), { role: "user", content: `${question}\n${look.finding}` }];
@@ -467,6 +474,7 @@ export function chatHandler(
       const result = await runChat(env, auth, turn, fetchImpl, usage, toolsFor(decision), {
         image,
         mustAsk: isSetup(decision),
+        context: await notes,
       });
       await logRun(db, {
         kind: "chat",

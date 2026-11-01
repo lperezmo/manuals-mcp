@@ -140,7 +140,7 @@ describe("quickAnswer", () => {
       }) as unknown as typeof fetch,
     );
     expect(Object.keys(sent.questions).sort()).toEqual(
-      ["exists", "intent", "judgment", "row", "safety", "thing"].sort(),
+      ["exists", "intent", "judgment", "remember", "row", "safety", "thing"].sort(),
     );
     expect(Object.keys(sent.questions.row.criteria)).toEqual(["r1", "r2", "r3"]);
     expect(sent.questions.thing.criteria).toHaveProperty("none");

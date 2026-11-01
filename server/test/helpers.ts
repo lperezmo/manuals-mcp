@@ -18,7 +18,7 @@ export async function testAuth() {
   const mint = (claims: Record<string, unknown> = {}, issuer = ISSUER) =>
     new SignJWT({ role: "authenticated", email: "parent@example.com", ...claims })
       .setProtectedHeader({ alg: "ES256", kid: "test" })
-      .setSubject("00000000-0000-0000-0000-0000000000aa")
+      .setSubject(String(claims.sub ?? "00000000-0000-0000-0000-0000000000aa"))
       .setIssuer(issuer)
       .setAudience("authenticated")
       .setIssuedAt()

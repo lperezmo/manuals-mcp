@@ -151,6 +151,71 @@ begin
 end;
 $$;
 
+-- House memory: A's notes are A's household's only, and the same words save once.
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","role":"authenticated"}', false);
+do $$
+declare
+  wid uuid;
+  n integer;
+begin
+  select id into wid from public.items where nickname = 'Washer' limit 1;
+  insert into public.household_notes (note, p) values ('We have really hard water.', 0.86);
+  insert into public.household_notes (item_id, note, p) values (wid, 'We only run it on weekends.', 0.7);
+  begin
+    insert into public.household_notes (note) values ('we have really hard water.');
+    raise exception 'the same note should save once';
+  exception when unique_violation then
+    null;
+  end;
+  begin
+    insert into public.household_notes (note) values ('   ');
+    raise exception 'a blank note should be refused';
+  exception when check_violation then
+    null;
+  end;
+  select count(*) into n from public.household_notes;
+  assert n = 2, format('user A should see 2 notes, saw %s', n);
+end;
+$$;
+
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000b","role":"authenticated"}', false);
+do $$
+declare
+  n integer;
+  a_household uuid;
+begin
+  select count(*) into n from public.household_notes;
+  assert n = 0, 'user B can read A''s notes';
+  delete from public.household_notes;
+
+  reset role;
+  select household_id into a_household from public.household_members
+    where user_id = '00000000-0000-0000-0000-00000000000a';
+  select count(*) into n from public.household_notes where household_id = a_household;
+  assert n = 2, 'user B deleted A''s notes';
+  set role authenticated;
+
+  begin
+    insert into public.household_notes (household_id, note) values (a_household, 'Sneaky');
+    raise exception 'user B wrote a note into A''s household';
+  exception when insufficient_privilege then
+    null;
+  end;
+end;
+$$;
+
+-- A forgets one note from the household page.
+select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","role":"authenticated"}', false);
+do $$
+declare
+  n integer;
+begin
+  delete from public.household_notes where note = 'We only run it on weekends.';
+  select count(*) into n from public.household_notes;
+  assert n = 1, format('user A should have 1 note left, saw %s', n);
+end;
+$$;
+
 -- Model runs: members log and read their own; nobody can delete them.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","role":"authenticated"}', false);
 insert into public.model_runs (kind, ok, model) values ('chat', true, 'test');
@@ -208,6 +273,8 @@ begin
   assert n > 0, 'reset should restore the tasks';
   select count(*) into n from public.model_runs where household_id = hid;
   assert n = 1, 'reset should keep the model runs';
+  select count(*) into n from public.household_notes where household_id = hid;
+  assert n = 0, 'reset should clear what judges told Muse';
 end;
 $$;
 
