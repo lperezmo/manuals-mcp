@@ -28,7 +28,7 @@ export const PAGE_KIND_LABELS: Record<PageKind, string> = {
   setup: "Setup",
   use: "Use",
   care: "Care",
-  fix: "Fix",
+  fix: "Repairs",
   parts: "Parts",
   warranty: "Warranty",
   language: "Other language",
@@ -149,7 +149,7 @@ export async function pageKinds(
   return out;
 }
 
-/** Jump links for one manual: each kind with its pages, in manual order ("Fix: p. 31, 32"). */
+/** Jump links for one manual: each kind with its pages, in manual order ("Repairs: p. 31, 32"). */
 export function pageStrip(
   rows: { page_number: number; kind: string | null }[],
   skip: PageKind[] = ["other", "language"],

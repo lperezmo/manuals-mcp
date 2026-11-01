@@ -527,7 +527,7 @@ describe("chat with the fast lane", () => {
     expect(jevCalls).toBeLessThanOrEqual(FAST_PER_MINUTE);
   });
 
-  test("Ask Muse for more skips the fast lane", async () => {
+  test("Tell me more skips the fast lane", async () => {
     const { verify, mint } = await testAuth();
     fakeSupabase([]);
     let jevCalls = 0;

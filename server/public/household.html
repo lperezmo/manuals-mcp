@@ -67,8 +67,8 @@
 
         const remembered = (n) => `<div class="fact">
             <div>“${esc(n.note)}”
-              <div class="small muted">${n.items?.nickname ? `${esc(n.items.nickname)} · ` : ""}${ago(n.created_at)}${n.safety ? " · kept as a note, not used in answers" : ""}</div></div>
-            <div><button type="button" class="quiet small" data-forget="${n.id}" aria-label="Forget this" title="Forget this">×</button></div>
+              <div class="small muted">${n.items?.nickname ? `${esc(n.items.nickname)} · ` : ""}${ago(n.created_at)}${n.safety ? " · saved here, but Muse won't act on it" : ""}</div></div>
+            <div><button type="button" class="quiet small" data-forget="${n.id}" aria-label="Forget “${esc(n.note)}”">Forget</button></div>
           </div>`;
         const memory = notes?.length
           ? `<div>${notes.map(remembered).join("")}</div>`

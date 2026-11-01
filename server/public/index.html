@@ -150,21 +150,12 @@
           }),
         );
 
-        // Saved House Atlas views, as chips. Read on its own, so home still works without them.
-        const views = await supa
-          .from("saved_views")
-          .select("phrase")
-          .order("created_at")
-          .limit(8)
-          .then((r) => (r.error ? [] : r.data), () => []);
-
         render({
           items: items.data,
           due: due.data,
           review,
           revisions: revisions.data,
           kids: kids.data,
-          views,
         });
       }
 
@@ -387,7 +378,7 @@
         }
       }
 
-      function render({ items, due, review, revisions, kids, views = [] }) {
+      function render({ items, due, review, revisions, kids }) {
         if (!items.length) {
           main.innerHTML = `<section class="stack">
             <h1>An empty house, for now.</h1>
@@ -437,13 +428,6 @@
 
           <section aria-labelledby="things-h">
             <div class="section-head"><h2 id="things-h">Your things</h2></div>
-            ${
-              views.length
-                ? `<div class="row view-chips" role="group" aria-label="Your saved House Atlas views">${views
-                    .map((v) => `<a class="chip" href="/atlas?view=${encodeURIComponent(v.phrase)}">${esc(v.phrase)}</a>`)
-                    .join("")}</div>`
-                : ""
-            }
             <div class="grid">${items.map((i) => thingCard(i, kids)).join("")}</div>
           </section>
 

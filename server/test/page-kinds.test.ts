@@ -85,7 +85,7 @@ describe("page kinds", () => {
     ).toEqual([
       { kind: "safety", label: "Safety", pages: [2] },
       { kind: "care", label: "Care", pages: [24] },
-      { kind: "fix", label: "Fix", pages: [30, 31] },
+      { kind: "fix", label: "Repairs", pages: [30, 31] },
     ]);
   });
 });

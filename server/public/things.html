@@ -288,18 +288,25 @@
       let onJobDone = null;
       window.addEventListener("manuals:job-done", (e) => onJobDone?.(e.detail));
 
-      // Manual atlas: the manual's pages by kind, as jump links ("Fix p. 31, 32").
+      // Manual atlas: the manual's pages by kind, as jump links ("Repairs p. 31, 32").
       const PAGE_KINDS = [
         ["safety", "Safety"],
         ["setup", "Setup"],
         ["use", "Use"],
         ["care", "Care"],
-        ["fix", "Fix"],
+        ["fix", "Repairs"],
         ["parts", "Parts"],
         ["warranty", "Warranty"],
       ];
       async function manualStrip(supa, manual) {
         if (!manual) return "";
+        // Page numbers only help when they open the PDF there; without one, show nothing.
+        let pdf = manual.source_url && !isExample(manual.source_url) ? manual.source_url : null;
+        if (!pdf && manual.storage_path) {
+          const { data } = await supa.storage.from("manuals").createSignedUrl(manual.storage_path, 3600);
+          pdf = data?.signedUrl ?? null;
+        }
+        if (!pdf) return "";
         // Read on its own, so the page still works before pages have kinds.
         const { data: rows, error } = await supa
           .from("manual_pages")
@@ -309,19 +316,15 @@
           .order("page_number")
           .limit(1000);
         if (error || !rows?.length) return "";
-        let pdf = manual.source_url && !isExample(manual.source_url) ? manual.source_url : null;
-        if (!pdf && manual.storage_path) {
-          const { data } = await supa.storage.from("manuals").createSignedUrl(manual.storage_path, 3600);
-          pdf = data?.signedUrl ?? null;
-        }
         const groups = PAGE_KINDS.map(([kind, label]) => {
           const pages = rows.filter((r) => r.kind === kind).map((r) => r.page_number);
           if (!pages.length) return "";
-          const shown = pages.slice(0, 4).map((n) =>
-            pdf
-              ? `<a href="${esc(`${pdf.split("#")[0]}#page=${n}`)}" target="_blank" rel="noopener noreferrer" aria-label="${esc(label)}, page ${n}">p. ${n}</a>`
-              : `p. ${n}`,
-          );
+          const shown = pages
+            .slice(0, 4)
+            .map(
+              (n) =>
+                `<a href="${esc(`${pdf.split("#")[0]}#page=${n}`)}" target="_blank" rel="noopener noreferrer" aria-label="${esc(label)}, page ${n}">p. ${n}</a>`,
+            );
           const more = pages.length > 4 ? ` +${pages.length - 4}` : "";
           return `<span class="chip page-kind"><strong>${esc(label)}</strong> ${shown.join(", ")}${more}</span>`;
         }).filter(Boolean);
@@ -1522,12 +1525,12 @@
           const crop = thing.model && thing.doubtful?.includes("model") && thing.crops?.model;
           if (crop) {
             step(`<div class="stack">
-              <h2>Almost</h2>
-              <p>Is this the model number? Check what I read against the label; S and 5, O and 0 look a lot alike.</p>
+              <h2>Is this the model number?</h2>
+              <p>Fix any letter that's off; S and 5, O and 0 look alike.</p>
               ${cropImg(crop, "The model number on your label, up close")}
               <form class="row" id="doubt-form">
                 <input id="doubt-model" value="${esc(thing.model)}" aria-label="Model number" autocomplete="off" autocapitalize="characters" spellcheck="false" style="flex:1;min-width:10ch;font-family:ui-monospace,monospace">
-                <button type="submit">That's it</button>
+                <button type="submit">Yes, that's it</button>
               </form>
               <div class="row">${photoButton("Take a closer photo", true)}</div>
               <p class="small muted" data-add-msg role="status"></p>

@@ -341,7 +341,7 @@ const TOOL_NAMES = {
   fast_lane: "Instant answer",
 };
 // Tools that are part of how Muse talks, not something it did for you.
-const QUIET_TOOLS = new Set(["show_card"]);
+const QUIET_TOOLS = new Set(["show_card", "fast_lane"]);
 const CAMERA_ICON =
   '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg>';
 // The photo waiting to be sent: the full image for Muse and a small one for the bubble.
@@ -379,7 +379,7 @@ function renderChat(messages, busy) {
         // An instant answer from a saved line: one tap asks Muse to go further.
         const more =
           m.fast && i === messages.length - 1 && !busy
-            ? '<div class="row" style="margin-top:8px"><button type="button" class="quiet small" data-more>Ask Muse for more</button></div>'
+            ? '<div class="row" style="margin-top:8px"><button type="button" class="quiet small" data-more>Tell me more</button></div>'
             : "";
         return `<div class="msg ${m.role === "user" ? "user" : "muse"}">${photo}${esc(m.content)}${tools}${card}${more}</div>`;
       })
@@ -499,10 +499,11 @@ export function typeAhead(input, onPick, { above = false } = {}) {
   };
   const draw = (found) => {
     if (!found.length || !input.value.trim()) return clear();
+    // With a page number, the label and page are enough (the tap brings the answer): a row stays one or two lines on a phone.
     list.innerHTML = found
       .map(
         (s) =>
-          `<button type="button" role="option" class="suggest-row"><span class="suggest-item">${esc(s.item)}</span><strong>${esc(s.label)}</strong><span>${esc(s.text)}</span>${s.page ? `<span class="muted">p. ${s.page}</span>` : ""}${s.unchecked ? '<span class="chip gold strong">To check</span>' : ""}</button>`,
+          `<button type="button" role="option" class="suggest-row"><span class="suggest-item">${esc(s.item)}</span><strong>${esc(s.label)}</strong>${s.page ? `<span class="muted">p. ${s.page}</span>` : `<span>${esc(s.text)}</span>`}${s.unchecked ? '<span class="chip gold strong">Not checked yet</span>' : ""}</button>`,
       )
       .join("");
     list.hidden = false;
@@ -1031,10 +1032,12 @@ function drawJobs() {
     pill.setAttribute("role", "status");
     document.body.append(pill);
   }
-  const what = jobs.map((j) =>
-    j.kind === "read" ? `reading the ${j.label} manual` : `looking for the ${j.label} manual`,
-  );
-  pill.innerHTML = `<span class="jobs-dot" aria-hidden="true"></span>Muse is ${esc(what.length > 2 ? `working on ${what.length} things` : what.join(" and "))}…`;
+  const [j] = jobs;
+  const what =
+    jobs.length > 1
+      ? `Working on ${jobs.length} manuals`
+      : `${j.kind === "read" ? "Reading" : "Finding"} the ${j.label} manual`;
+  pill.innerHTML = `<span class="jobs-dot" aria-hidden="true"></span><span class="jobs-text">${esc(what)}…</span>`;
 }
 
 /** Is it done? A read is done when its manual is no longer pending or being read; a search when its log entry is in. */
