@@ -34,6 +34,7 @@
         ["search", "Searches"],
         ["snap", "Label photos"],
         ["plan", "Catch-up plans"],
+        ["image", "Marked photos"],
         ["failed", "Failed"],
       ];
       let runs = [];
@@ -45,6 +46,23 @@
         { name: "Jev on TypeSafe", match: (m) => m.startsWith("jev"), in: 0.042, out: 0, credit: 5 },
       ];
       const usd = (n) => (n < 0.01 && n > 0 ? "<$0.01" : `$${n.toFixed(2)}`);
+      // Meta's image model is billed per picture (about a cent each, per Meta's model page)
+      // and stops at the server's IMAGE_CAP, 140 unless it's set otherwise.
+      const IMAGE_CAP = 140;
+      const IMAGE_PRICE = 0.01;
+      let images = 0;
+      function imageCard() {
+        const text = spend.filter((r) => r.model.startsWith("muse-spark"));
+        const calls = text.reduce((n, r) => n + Number(r.runs), 0);
+        const left = Math.max(0, IMAGE_CAP - images);
+        const pct = Math.min(100, (100 * images) / IMAGE_CAP);
+        return `<div class="card credit">
+          <div class="row" style="justify-content:space-between;align-items:baseline"><strong class="small">Images on Meta</strong><span class="small muted">${num(images)} of ${IMAGE_CAP} used · about ${usd(images * IMAGE_PRICE)}</span></div>
+          <strong class="credit-left">${num(left)} left</strong>
+          <div class="credit-bar" role="meter" aria-label="Images on Meta used" aria-valuemin="0" aria-valuemax="${IMAGE_CAP}" aria-valuenow="${images}"><span style="width:${pct.toFixed(1)}%"></span></div>
+          <span class="small muted">Circled photos in the chat${calls ? ` · plus ${num(calls)} Muse text calls on Meta from local testing` : ""}</span>
+        </div>`;
+      }
       function creditCard(c) {
         const rows = spend.filter((r) => c.match(r.model));
         const tin = rows.reduce((n, r) => n + Number(r.tokens_in), 0);
@@ -76,6 +94,7 @@
         if (r.kind === "search") return `Searched for the ${names.get(r.item_id) ?? "thing's"} manual`;
         if (r.kind === "fast") return `Instant answer about the ${names.get(r.item_id) ?? "thing"}, no Muse`;
         if (r.kind === "pulse") return "Pulse: picked what's worth doing now, no Muse";
+        if (r.kind === "image") return "Circled a part on a chat photo";
         return r.tools_used?.length ? `Chat: ${r.tools_used.join(", ")}` : "Chat, no tools";
       }
 
@@ -141,7 +160,7 @@
             <p class="muted">Every manual Muse read and every chat question, newest first. Open one to see the details, or copy them for a bug report.</p>
           </section>
           <section class="stack" style="gap:8px" aria-label="Credits">
-            <div class="credits">${CREDITS.map(creditCard).join("")}</div>
+            <div class="credits">${CREDITS.map(creditCard).join("")}${imageCard()}</div>
             <p class="small muted" style="margin:0">Estimated from the tokens logged for every household. Runs from before photo reads logged tokens count as zero, and the providers' billing is the real number.</p>
           </section>
           <section class="run-stats" aria-label="Last 24 hours">
@@ -189,7 +208,7 @@
       async function start() {
         if (!(await boot("/runs"))) return;
         const client = await db();
-        const [result, items, spent] = await Promise.all([
+        const [result, items, spent, imageRuns] = await Promise.all([
           client
             .from("model_runs")
             .select(
@@ -199,7 +218,10 @@
             .limit(200),
           client.from("items").select("id, nickname"),
           client.rpc("model_spend_all"),
+          client.rpc("image_runs_total"),
         ]);
+        // The same count the server's cap uses: image calls that came back with a picture.
+        images = typeof imageRuns.data === "number" ? imageRuns.data : 0;
         // No spend function yet (the migration isn't in) just leaves the credits at zero.
         spend = spent.data ?? [];
         if (result.error) throw new Error(result.error.message);
