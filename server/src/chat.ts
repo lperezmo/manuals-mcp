@@ -2,6 +2,7 @@ import type { AuthInfo, CallToolResult, McpServer } from "@modelcontextprotocol/
 import { z } from "zod";
 import { type Card, cardSchema, describeCard } from "./cards.js";
 import type { Env } from "./env.js";
+import { today } from "./lib/schedule.js";
 import { INSTRUCTIONS, registerTools } from "./mcp.js";
 import * as updateItem from "./tools/update-item.js";
 
@@ -185,7 +186,9 @@ export async function runChat(
       ],
     };
   }
-  const system = opts.context ? `${CHAT_INSTRUCTIONS}\n\n${opts.context}` : CHAT_INSTRUCTIONS;
+  // Muse doesn't know the date on its own; without it "a week ago" lands in May.
+  const dated = `${CHAT_INSTRUCTIONS}\n\nToday is ${today()}.`;
+  const system = opts.context ? `${dated}\n\n${opts.context}` : dated;
   const messages: Message[] = [{ role: "system", content: system }, ...recent];
   const used: string[] = [];
   // Set when Muse stopped on a promise to ask and was told to show the form.
