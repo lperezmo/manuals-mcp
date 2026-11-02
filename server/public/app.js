@@ -129,6 +129,7 @@ const PREFS = {
   "manuals-size": [
     "Text size",
     [
+      ["small", "Small"],
       ["normal", "Normal"],
       ["large", "Large"],
     ],
@@ -154,7 +155,11 @@ const PALETTES = [
 const DATASET = { "manuals-size": "size", "manuals-font": "font", "manuals-palette": "palette" };
 
 function pref(key) {
-  const first = key === "manuals-palette" ? PALETTES[0][0] : PREFS[key][1][0][0];
+  const first = {
+    "manuals-size": "normal",
+    "manuals-font": "serif",
+    "manuals-palette": "lavender",
+  }[key];
   try {
     return localStorage.getItem(key) || first;
   } catch {

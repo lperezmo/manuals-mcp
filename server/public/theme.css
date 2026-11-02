@@ -1121,6 +1121,9 @@ fieldset.seg {
 }
 
 /* Reading preferences from the account menu */
+:root[data-size="small"] body {
+  zoom: 0.9;
+}
 :root[data-size="large"] body {
   zoom: 1.125;
 }
