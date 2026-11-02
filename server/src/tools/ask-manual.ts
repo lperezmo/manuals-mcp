@@ -114,6 +114,22 @@ export function register(server: McpServer, env: Env) {
               out.kind_note = `No ${kind} pages matched, so every page was searched.`;
           }
           if (search.error) throw new Error(`Search failed: ${search.error.message}`);
+          // A misspelled word ("flote", "overfil") finds nothing either: swap it for the
+          // closest word the manual really uses, and search again.
+          if (!search.data?.length) {
+            const fixed = await correctWords(db, term, target?.id ?? null);
+            if (fixed) {
+              const again = await db.rpc("search_manual_pages", {
+                query: fixed.query,
+                p_item: target?.id ?? null,
+                max_results,
+              });
+              if (!again.error && again.data?.length) {
+                search = again;
+                out.spelling = fixed.note;
+              }
+            }
+          }
           // Every word must match, so one extra word ("overfill float location") finds
           // nothing. Then any of the words will do, best-ranked pages first.
           const loose = anyWords(term);
@@ -124,6 +140,22 @@ export function register(server: McpServer, env: Env) {
               max_results,
             });
             if (!wider.error && wider.data?.length) search = wider;
+          }
+          // A different name for it ("flood switch" for the overfill float): Jev picks
+          // which of the thing's own parts and tasks the question means.
+          if (!search.data?.length && target) {
+            const named = await synonymFor(env, db, question ?? term, target.id);
+            if (named) {
+              const again = await db.rpc("search_manual_pages", {
+                query: anyWords(named) ?? named,
+                p_item: target.id,
+                max_results,
+              });
+              if (!again.error && again.data?.length) {
+                search = again;
+                out.read_as = `Read as "${named}", the manual's name for it.`;
+              }
+            }
           }
           if (exact.data?.length) out.exact_facts = exact.data;
           const hits = (search.data ?? []) as Hit[];
@@ -323,4 +355,131 @@ export function anyWords(term: string): string | null {
     (w) => w.length > 1 && !FILLER.has(w),
   );
   return words.length > 1 ? words.join(" or ") : null;
+}
+
+interface Closest {
+  word: string;
+  closest: string;
+  edits: number;
+}
+
+/**
+ * The query with each word the manual doesn't use swapped for the closest one
+ * it does (closest_manual_words: sounds alike, fewest edits, most used). When
+ * two candidates tie ("filtre" beside "filter" in a bilingual manual), both are
+ * tried. Null when nothing needed fixing.
+ */
+export async function correctWords(
+  db: { rpc: (fn: string, args: object) => PromiseLike<{ data: unknown; error: unknown }> },
+  term: string,
+  item: string | null,
+): Promise<{ query: string; note: string } | null> {
+  const words = [...new Set(term.toLowerCase().match(/[a-z0-9]+/g) ?? [])].filter(
+    (w) => w.length > 2 && !FILLER.has(w),
+  );
+  if (!words.length) return null;
+  const { data, error } = await db.rpc("closest_manual_words", { p_item: item, p_words: words });
+  if (error || !Array.isArray(data)) return null;
+  return fixQuery(words, data as Closest[]);
+}
+
+/** Builds the corrected query from closest_manual_words' rows (best first per word). */
+export function fixQuery(words: string[], rows: Closest[]): { query: string; note: string } | null {
+  const parts: string[] = [];
+  const fixes: string[] = [];
+  let tie = false;
+  for (const w of words) {
+    const [first, second] = rows.filter((r) => r.word === w);
+    // Not in the manual and nothing close (more than 2 edits, or 1 on a short word): keep it.
+    if (!first || first.edits === 0 || first.edits > (w.length <= 4 ? 1 : 2)) {
+      parts.push(w);
+      continue;
+    }
+    const alike =
+      second &&
+      second.edits === first.edits &&
+      second.closest.slice(0, 4) === first.closest.slice(0, 4);
+    if (alike) tie = true;
+    const picks = alike ? [first.closest, second.closest] : [first.closest];
+    parts.push(...picks);
+    fixes.push(`"${w}" as ${picks.map((x) => `"${x}"`).join(" or ")}`);
+  }
+  if (!fixes.length) return null;
+  return {
+    query: tie ? parts.join(" or ") : parts.join(" "),
+    note: `Read ${fixes.join(", ")}.`,
+  };
+}
+
+/**
+ * The pick's own probability needed, and it must beat "none of these". Not
+ * Jev's confidence, which measures how spread out the answer is rather than
+ * whether it's right; "drain strainer" got the filters right at 0.39.
+ */
+export const SYNONYM_AT = 0.35;
+
+/**
+ * The manual's own name for what the question means, from the thing's saved
+ * part and fact labels and task titles, in one Jev choice question. Null when
+ * Jev is unset, unsure, or none of them fits.
+ */
+export async function synonymFor(
+  env: Env,
+  db: Db,
+  question: string,
+  itemId: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string | null> {
+  const router = env.router;
+  if (!router) return null;
+  const [facts, tasks] = await Promise.all([
+    db
+      .from("manual_facts")
+      .select("label")
+      .eq("item_id", itemId)
+      .in("kind", ["part", "other", "safety"])
+      .limit(40),
+    db.from("tasks").select("title").eq("item_id", itemId).eq("active", true).limit(40),
+  ]);
+  const names = [
+    ...new Set([
+      ...(facts.data ?? []).map((f) => f.label as string),
+      ...(tasks.data ?? []).map((t) => t.title as string),
+    ]),
+  ].slice(0, 40);
+  if (!names.length) return null;
+  const criteria: Record<string, string> = Object.fromEntries(
+    names.map((n, i) => [`n${i}`, n.slice(0, 120)]),
+  );
+  criteria.none = "None of these: the question is about something else.";
+  try {
+    const res = await fetchImpl(`${router.baseUrl}/v1/systemone`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${router.apiKey}` },
+      body: JSON.stringify({
+        model: router.model,
+        state: { question: question.slice(0, 300) },
+        questions: {
+          means: {
+            type: "choice",
+            instructions:
+              "Which of the manual's parts or tasks is `question` asking about, even if it calls it by another name?",
+            criteria,
+          },
+        },
+      }),
+      signal: AbortSignal.timeout(4_000),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      answers?: { means?: { choice?: string; probabilities?: Record<string, number> } };
+    };
+    const pick = body.answers?.means;
+    if (!pick?.choice || pick.choice === "none") return null;
+    const p = pick.probabilities?.[pick.choice] ?? 0;
+    if (p < SYNONYM_AT || p <= (pick.probabilities?.none ?? 0)) return null;
+    return criteria[pick.choice] ?? null;
+  } catch {
+    return null;
+  }
 }
