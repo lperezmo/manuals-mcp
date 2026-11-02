@@ -2851,3 +2851,15 @@ body:has(.jobs-pill) {
   justify-content: flex-start;
   min-height: 44px;
 }
+
+/* A photo Muse marked up: big enough to see the circle, tap for full size */
+.msg-marked {
+  display: block;
+  margin: 0 0 10px;
+}
+.msg-marked img {
+  display: block;
+  width: 100%;
+  max-width: 420px;
+  border-radius: 14px;
+}

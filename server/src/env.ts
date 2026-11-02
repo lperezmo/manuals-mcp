@@ -47,6 +47,12 @@ export interface Env {
   notify?: { url: string; topic: string };
   /** Jev (TypeSafe AI) sorts each chat message so Muse only gets the tools it needs. */
   router?: { baseUrl: string; model: string; apiKey: string };
+  /**
+   * Meta's image model, for marking up a chat photo ("circle the cup filter").
+   * Text stays on READER_* (Baseten); images use the Meta key. `cap` is the
+   * most image calls ever, counted in model_runs, kept under the free credits.
+   */
+  image?: { baseUrl: string; model: string; apiKey: string; cap: number };
 }
 
 function positive(value: string | undefined, fallback: number): number {
@@ -125,6 +131,16 @@ export function readEnv(source: Record<string, string | undefined> = process.env
           baseUrl: trimSlash(source.JEV_BASE_URL || "https://api.typesafe.ai"),
           model: source.JEV_MODEL || "jev-latest",
           apiKey: source.JEV_API_KEY,
+        }
+      : undefined,
+    image: source.META_READER_API_KEY
+      ? {
+          baseUrl: trimSlash(
+            source.META_IMAGE_BASE_URL || source.META_READER_BASE_URL || "https://api.meta.ai/v1",
+          ),
+          model: source.META_IMAGE_MODEL || "muse-image-1.0",
+          apiKey: source.META_READER_API_KEY,
+          cap: positive(source.IMAGE_CAP, 140),
         }
       : undefined,
   };

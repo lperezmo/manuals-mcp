@@ -20,7 +20,7 @@ const CHAT_INSTRUCTIONS = `${INSTRUCTIONS}
 
 You are Muse, answering inside the Manuals website. Answer in two to five short sentences, plain text, no markdown tables, no em dashes (use a comma, colon or period). Use the tools; never guess what a manual says. You can't browse the web here, so to add a manual the user pastes a PDF link or uploads one on the Things page.
 
-Photos: the user can attach a photo (an error display, a part, a label, a filter). Say what you see, match it to their things with list_items, and check the manual with ask_manual before giving steps. Point at parts by how they look and where they sit ("the round cup in the middle of the mesh"), not only by the manual's name: a manual's "upper" and "lower" often aren't what the owner sees. Older photos show as [photo] in the history; you can't see them anymore. A note like [photo, checked by Jev: ...] means a quick image checker already looked at the photo for you: trust its answer and add what the manual says.
+Photos: the user can attach a photo (an error display, a part, a label, a filter). Say what you see, match it to their things with list_items, and check the manual with ask_manual before giving steps. Point at parts by how they look and where they sit ("the round cup in the middle of the mesh"), not only by the manual's name: a manual's "upper" and "lower" often aren't what the owner sees. When they ask which part is which, where something is, or aren't sure what they're looking at, call mark_photo to circle it on their photo, then answer in a few lines. Older photos show as [photo] in the history; you can't see them anymore. A note like [photo, checked by Jev: ...] means a quick image checker already looked at the photo for you: trust its answer and add what the manual says.
 
 A note like [jev hint: ...] under the user's message is a quick matcher's guess at which thing they mean (with its item id) and which saved lines may answer it. Use the item id with ask_manual instead of calling list_items first, check the lines against what the tools return, and never mention the hint. After an instant answer (a reply that quotes one saved line and its page), "Tell me more" asks you to go further: read the manual around that page and add what helps.
 
@@ -137,7 +137,31 @@ export interface ChatReply {
   reply: string;
   tools_used: string[];
   card?: Card;
+  /** The person's photo with the part circled (a JPEG data URL), when Muse marked it. */
+  marked?: string;
 }
+
+/**
+ * Offered only on a turn with a photo: Meta's image model circles the part
+ * on the person's own photo. The caller does the call, the cap and the log.
+ */
+export const MARK_PHOTO = {
+  name: "mark_photo",
+  description:
+    "Circle a part on the photo the user just sent, so they can see exactly which one you mean. Use it when they ask where something is, which part is which, or seem unsure what they're looking at. Describe the one part by how it looks and where it sits in the photo. The user sees the marked photo above your answer.",
+  schema: z.object({
+    instruction: z
+      .string()
+      .min(5)
+      .max(300)
+      .describe(
+        'What to circle, by look and place: "Circle the round gray cup in the middle of the mesh, right of the spray arm".',
+      ),
+  }),
+};
+
+/** Marks the turn's photo: the marked JPEG, or why not (shown to Muse, which answers in words). */
+export type MarkFn = (instruction: string) => Promise<{ image: string } | { error: string }>;
 
 export async function runChat(
   env: Env,
@@ -155,6 +179,8 @@ export async function runChat(
     mustAsk?: boolean;
     /** Background about this household (house memory), added after the instructions. */
     context?: string | null;
+    /** Marks the turn's photo; offered as mark_photo when set. */
+    mark?: MarkFn;
   } = {},
 ): Promise<ChatReply> {
   const reader = env.reader;
@@ -162,7 +188,7 @@ export async function runChat(
   const offered = only ? new Set(only.length ? [...only, SHOW_CARD.name] : []) : null;
   const tools = chatTools(env).filter((t) => !offered || offered.has(t.name));
   const byName = new Map(tools.map((t) => [t.name, t]));
-  const definitions = tools.map((t) => ({
+  const definitions = [...tools, ...(opts.mark ? [MARK_PHOTO] : [])].map((t) => ({
     type: "function",
     function: {
       name: t.name,
@@ -170,6 +196,23 @@ export async function runChat(
       parameters: z.toJSONSchema(t.schema, { io: "input" }),
     },
   }));
+  let marked: string | undefined;
+  /** One marked photo per turn; Muse is told how it went and answers in words either way. */
+  const markOnce = async (call: ToolCall): Promise<string> => {
+    let raw: unknown = {};
+    try {
+      raw = JSON.parse(call.function.arguments || "{}");
+    } catch {}
+    const args = MARK_PHOTO.schema.safeParse(raw);
+    if (!args.success) return `Invalid arguments: ${args.error.message}`;
+    if (marked) return "The photo is already marked this turn.";
+    const out = await opts.mark?.(args.data.instruction);
+    if (!out || !("image" in out))
+      return `Couldn't mark the photo: ${out?.error ?? "not available"}. Say where it is in words.`;
+    marked = out.image;
+    used.push(MARK_PHOTO.name);
+    return "Marked. The user sees their photo with it circled above your answer; say what it is and what to do, briefly.";
+  };
   const ctx = { http: { authInfo: auth } };
   const recent: Message[] = history.slice(-MAX_HISTORY);
   const last = recent[recent.length - 1];
@@ -236,12 +279,17 @@ export async function runChat(
         reply:
           [intro.trim(), reply].filter(Boolean).join("\n\n") || "Sorry, I didn't get an answer.",
         tools_used: used,
+        ...(marked ? { marked } : {}),
       };
     }
 
     messages.push({ role: "assistant", content: message?.content ?? null, tool_calls: calls });
     let card: { message: string; card: Card } | undefined;
     for (const call of calls) {
+      if (call.function.name === MARK_PHOTO.name && opts.mark) {
+        messages.push({ role: "tool", tool_call_id: call.id, content: await markOnce(call) });
+        continue;
+      }
       if (call.function.name === SHOW_CARD.name && byName.has(SHOW_CARD.name)) {
         const parsed = parseCard(call.function.arguments);
         messages.push({
@@ -264,7 +312,7 @@ export async function runChat(
     }
     if (card) {
       const reply = [intro.trim(), card.message].filter(Boolean).join("\n\n");
-      return { reply, tools_used: used, card: card.card };
+      return { reply, tools_used: used, card: card.card, ...(marked ? { marked } : {}) };
     }
   }
   return {

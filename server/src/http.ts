@@ -16,7 +16,7 @@ import {
   runChat,
   withCard,
 } from "./chat.js";
-import { householdId, type ItemRow, userDb } from "./db.js";
+import { type Db, householdId, type ItemRow, userDb } from "./db.js";
 import {
   answerDisplay,
   type DisplayAnswer,
@@ -50,6 +50,7 @@ import {
   storeManual,
 } from "./finder/ingest.js";
 import { blockedMessage, findManual } from "./finder/search.js";
+import { CAP_REACHED, imagesUsed, markPhoto } from "./mark-photo.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
 import { isSafetyTurn, memoryTag, noteFrom, notesForMuse, saveNote } from "./memory.js";
 import { checkPage, checkPhoto, checkRead, lookAtPhoto } from "./photo-check.js";
@@ -547,6 +548,8 @@ export function chatHandler(
     // A car seat or safety turn gets none.
     const notes = isSafetyTurn(lane, question) ? null : notesForMuse(db);
     const look = image && !jevDown ? await looking : null;
+    // Kept even when Jev's finding replaces the picture for Muse: marking it up needs the photo itself.
+    const photo = image;
     if (image && look?.finding) {
       turn = [...messages.slice(0, -1), { role: "user", content: `${question}\n${look.finding}` }];
       image = undefined;
@@ -586,6 +589,10 @@ export function chatHandler(
         image,
         mustAsk: isSetup(decision),
         context: await notes,
+        mark:
+          photo && env.image
+            ? (instruction) => markFor(env, db, photo, instruction, fetchImpl)
+            : undefined,
       });
       await logRun(db, {
         kind: "chat",
@@ -626,6 +633,47 @@ export function chatHandler(
       return Response.json({ error: (err as Error).message }, { status: 502 });
     }
   };
+}
+
+/**
+ * Circles a part on a chat photo with Meta's image model, inside the shared
+ * cap. Every call is logged as an "image" run; only ones that came back with
+ * a picture count toward the cap.
+ */
+async function markFor(
+  env: Env,
+  db: Db,
+  photo: ChatImage,
+  instruction: string,
+  fetchImpl: typeof fetch,
+): Promise<{ image: string } | { error: string }> {
+  const image = env.image;
+  if (!image) return { error: "photo markup isn't set up" };
+  const started = Date.now();
+  try {
+    if ((await imagesUsed(db)) >= image.cap) return { error: CAP_REACHED };
+    const out = await markPhoto(env, photo, instruction, fetchImpl);
+    await logRun(db, {
+      kind: "image",
+      ok: true,
+      model: image.model,
+      ms: out.ms,
+      tokens_in: out.tokens_in,
+      tokens_out: out.tokens_out,
+      raw_output: JSON.stringify({ instruction }),
+    });
+    return { image: out.image };
+  } catch (err) {
+    await logRun(db, {
+      kind: "image",
+      ok: false,
+      model: image.model,
+      error: (err as Error).message,
+      ms: Date.now() - started,
+      raw_output: JSON.stringify({ instruction }),
+    });
+    return { error: (err as Error).message };
+  }
 }
 
 /** Tools that only read; a chat turn that used only these leaves type-ahead's cache alone. */

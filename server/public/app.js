@@ -347,6 +347,7 @@ export function signIn(root, onDone) {
 const CHAT_KEY = "manuals-chat";
 const TOOL_NAMES = {
   add_item: "Added a thing",
+  mark_photo: "Marked your photo",
   list_items: "Looked at your things",
   ask_manual: "Read the manual",
   upcoming: "Checked what's coming up",
@@ -415,16 +416,22 @@ function loadChat() {
   return (id && loadChats().find((c) => c.id === id)?.messages) || [];
 }
 
+const MARKED_KEPT = 3;
+
 /** Saves the open chat and moves it to the top of the list; an empty one isn't kept. */
 function saveChat(messages, id = currentChat()) {
   if (!messages.length) return;
   const chatId = id || uuid();
   if (!id) openChatId(chatId);
   const others = loadChats().filter((c) => c.id !== chatId);
-  storeChats([
-    { id: chatId, updated: new Date().toISOString(), messages: messages.slice(-30) },
-    ...others,
-  ]);
+  // Marked photos are a few hundred KB each: keep the last few, so the chats still fit in storage.
+  const kept = messages.slice(-30);
+  let photos = 0;
+  for (let i = kept.length - 1; i >= 0; i--) {
+    if (kept[i].marked && ++photos > MARKED_KEPT)
+      kept[i] = { ...kept[i], marked: undefined, markedGone: true };
+  }
+  storeChats([{ id: chatId, updated: new Date().toISOString(), messages: kept }, ...others]);
 }
 
 /** The chat list: each chat by its first question, newest first. */
@@ -456,7 +463,11 @@ function renderChat(messages, busy) {
         const card = m.card && !m.answered ? cardForm(m.card, i) : "";
         const photo = m.photo?.startsWith("data:image/")
           ? `<img class="msg-photo" src="${esc(m.photo)}" alt="Your photo">`
-          : "";
+          : m.marked?.startsWith("data:image/")
+            ? `<a href="${esc(m.marked)}" target="_blank" rel="noopener" class="msg-marked" aria-label="Your photo, marked by Muse. Open it full size"><img src="${esc(m.marked)}" alt="Your photo with the part circled"></a>`
+            : m.markedGone
+              ? '<p class="small muted" style="margin:0 0 6px">(Marked photo no longer kept.)</p>'
+              : "";
         // An instant answer from a saved line: one tap asks Muse to go further.
         const more =
           m.fast && i === messages.length - 1 && !busy
@@ -829,13 +840,14 @@ const READ_ONLY = [
 ];
 const changedSomething = (tools = []) => tools.some((t) => !READ_ONLY.includes(t));
 
-function assistantMessage({ reply, tools_used, card, fast, history }) {
+function assistantMessage({ reply, tools_used, card, fast, history, marked }) {
   return {
     role: "assistant",
     content: reply,
     tools: tools_used ?? [],
     card,
     ...(fast ? { fast: true } : {}),
+    ...(marked ? { marked } : {}),
     history,
   };
 }
