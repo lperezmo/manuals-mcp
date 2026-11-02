@@ -41,6 +41,29 @@ describe("checkPage", () => {
       (await checkPage(env, photo, jev({ page: 0.9, sharp: 0.9, english: 0.03 })))?.english,
     ).toBe(false);
   });
+  test("a page in another language is named when Jev is sure of it", async () => {
+    const said = (choice: string, p: number) =>
+      (async () =>
+        Response.json({
+          answers: {
+            page: { noul: 0.9 },
+            sharp: { noul: 0.9 },
+            english: { noul: 0.02 },
+            language: { choice, probabilities: { [choice]: p } },
+          },
+        })) as unknown as typeof fetch;
+    expect(await checkPage(env, photo, said("Spanish", 0.9))).toMatchObject({
+      english: false,
+      language: "Spanish",
+    });
+    expect((await checkPage(env, photo, said("Spanish", 0.3)))?.language).toBeNull();
+    expect((await checkPage(env, photo, said("other", 0.9)))?.language).toBeNull();
+  });
+  test("an English page names no language", async () => {
+    expect(
+      (await checkPage(env, photo, jev({ page: 0.9, sharp: 0.8, english: 0.95 })))?.language,
+    ).toBeNull();
+  });
   test("Jev down keeps the page", async () => {
     const down = (async () => new Response("no", { status: 500 })) as unknown as typeof fetch;
     expect(await checkPage(env, photo, down)).toBeNull();

@@ -116,17 +116,40 @@ export async function checkPhoto(
 }
 
 // A photographed page of a paper manual, checked as the person snaps it: is
-// it a manual page, is it sharp, and is it in English. The page grid marks a
-// blurry page for a retake and a page in another language as skipped, so
-// Muse is only sent pages it can use. Fails open: no answer marks nothing.
+// it a manual page, is it sharp, and which language it's in. The page grid
+// marks a blurry page for a retake. A page in another language is skipped
+// only when the manual also has English pages; a manual printed in one other
+// language is kept whole and Muse writes its tasks in English. Fails open: no
+// answer marks nothing.
 
 export interface PageCheck {
   /** "blurry" or "not_a_page": worth a retake. */
   retake: Retake | "not_a_page" | null;
   /** False only when Jev is sure the page isn't in English. */
   english: boolean;
+  /** The page's language when it isn't English and Jev is fairly sure ("Spanish"), else null. */
+  language: string | null;
   tokens_in: number | null;
 }
+
+/** Languages a page can be named as; anything else is "another language". */
+export const PAGE_LANGUAGES = [
+  "Spanish",
+  "French",
+  "Portuguese",
+  "German",
+  "Italian",
+  "Dutch",
+  "Polish",
+  "Russian",
+  "Chinese",
+  "Japanese",
+  "Korean",
+  "Vietnamese",
+  "Arabic",
+] as const;
+/** Jev must be this sure of the language to name it. */
+export const LANGUAGE_AT = 0.5;
 
 export async function checkPage(
   env: Env,
@@ -157,6 +180,15 @@ export async function checkPage(
             type: "noul",
             instructions: "Is most of the text on the page in `photo` written in English?",
           },
+          language: {
+            type: "choice",
+            instructions: "Which language is most of the text on the page in `photo` written in?",
+            criteria: Object.fromEntries([
+              ["English", "English"],
+              ...PAGE_LANGUAGES.map((l) => [l, l]),
+              ["other", "Another language"],
+            ]),
+          },
         },
       },
       5_000,
@@ -164,13 +196,24 @@ export async function checkPage(
     );
     if (!res.ok) return null;
     const body = (await res.json()) as {
-      answers?: Record<string, { noul?: number }>;
+      answers?: Record<
+        string,
+        { noul?: number; choice?: string; probabilities?: Record<string, number> }
+      >;
       usage?: { input_tokens?: number };
     };
     const p = (k: string) => body.answers?.[k]?.noul;
     const page = p("page");
     const sharp = p("sharp");
     const english = p("english");
+    const isEnglish = !(typeof english === "number" && english < RETAKE_BELOW);
+    const said = body.answers?.language;
+    const named =
+      said?.choice && (PAGE_LANGUAGES as readonly string[]).includes(said.choice)
+        ? said.choice
+        : null;
+    const language =
+      isEnglish || !named || (said?.probabilities?.[named] ?? 0) < LANGUAGE_AT ? null : named;
     return {
       retake:
         typeof page === "number" && page < RETAKE_BELOW
@@ -178,7 +221,8 @@ export async function checkPage(
           : typeof sharp === "number" && sharp < RETAKE_BELOW
             ? "blurry"
             : null,
-      english: !(typeof english === "number" && english < RETAKE_BELOW),
+      english: isEnglish,
+      language,
       tokens_in: body.usage?.input_tokens ?? null,
     };
   } catch {

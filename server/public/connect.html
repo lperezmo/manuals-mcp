@@ -35,12 +35,16 @@
         </fieldset>
 
         <div data-panel="muse" class="stack">
-          <h2>Muse is already here</h2>
-          <p class="muted">
-            Muse is the model that reads your manuals. Ask it anything from the box on the home
-            page. Nothing to set up.
+          <h2>Add it to the Muse app</h2>
+          <ol class="steps">
+            <li>Copy the link below.</li>
+            <li>In the Muse app, paste the link and say you want to connect to it.</li>
+            <li>Tap <strong>Connect</strong> on the card Muse shows, then sign in with the same email you use here.</li>
+          </ol>
+          <p class="small muted" style="margin:0">
+            The chat on this site runs on Muse too, so you can also just ask from
+            <a href="/">Home</a>.
           </p>
-          <div class="row"><a class="button" href="/">Ask Muse on Home</a></div>
         </div>
 
         <div data-panel="claude" class="stack" hidden>
@@ -70,6 +74,19 @@
         </div>
       </section>
 
+      <section class="card stack hidden" id="judge-note" style="max-width:720px">
+        <h2 style="margin:0">On the shared judge account?</h2>
+        <p style="margin:0">
+          Normally you sign in here with your email, then sign in to the connector in Claude,
+          ChatGPT or Muse with that same email, and it reaches the same things.
+        </p>
+        <p style="margin:0">
+          The judge account has no inbox for the sign-in code, so connect it this way: stay signed
+          in here, in the same browser the app opens for sign-in, then add the connector. It skips
+          the code and asks you to allow it.
+        </p>
+      </section>
+
       <section class="card flat" style="max-width:720px">
         <h2>Try asking</h2>
         <div class="chips">
@@ -86,15 +103,22 @@
       </section>
     </main>
     <script type="module">
-      import { $, boot } from "/app.js";
+      import { $, boot, db } from "/app.js";
 
-      boot("/connect", { open: true });
+      // The shared judge account can't get an emailed code: say how it connects.
+      boot("/connect", { open: true }).then(async (session) => {
+        if (!session) return;
+        const supa = await db();
+        const { data: hid } = await supa.rpc("ensure_household");
+        const { data: home } = hid ? await supa.from("households").select("is_demo").eq("id", hid).maybeSingle() : { data: null };
+        if (home?.is_demo) $("#judge-note").classList.remove("hidden");
+      });
       $("#url").value = `${location.origin}/mcp`;
 
       function pick(name) {
         for (const b of document.querySelectorAll("[data-pick]")) b.setAttribute("aria-pressed", String(b.dataset.pick === name));
         for (const p of document.querySelectorAll("[data-panel]")) p.hidden = p.dataset.panel !== name;
-        $("[data-link]").hidden = name === "muse";
+        $("[data-link]").hidden = false;
         try {
           localStorage.setItem("manuals-connect", name);
         } catch {}

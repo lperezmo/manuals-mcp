@@ -882,8 +882,8 @@ export function snapHandler(
 /**
  * One photographed manual page, checked by Jev as the person snaps it (see
  * checkPage). Only Jev is asked, so it doesn't count toward the photo limit.
- * Answers {retake, english}, or {retake: null, english: true} when Jev is
- * unset or down, so the page is kept.
+ * Answers {retake, english, language}, or {retake: null, english: true,
+ * language: null} when Jev is unset or down, so the page is kept.
  */
 export function pageCheckHandler(
   env: Env,
@@ -907,7 +907,9 @@ export function pageCheckHandler(
     }
     const check = await checkPage(env, { mime: match[1], base64: match[2] }, fetchImpl);
     return Response.json(
-      check ? { retake: check.retake, english: check.english } : { retake: null, english: true },
+      check
+        ? { retake: check.retake, english: check.english, language: check.language }
+        : { retake: null, english: true, language: null },
     );
   };
 }
