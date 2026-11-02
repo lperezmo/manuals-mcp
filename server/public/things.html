@@ -578,7 +578,7 @@
         $("#ask").addEventListener("click", () => openChat(undefined, () => detail(id)));
         // Muse asks a few questions with small forms (who it's for, when it was bought) and trims the task list.
         $("#setup")?.addEventListener("click", () =>
-          openChat(`Set up the ${item.nickname} with me: ask what you need to know.`, () => detail(id), { once: true }),
+          openChat(`Set up the ${item.nickname} with me: ask what you need to know.`, () => detail(id), { once: true, own: true }),
         );
         const saveLook = async (change) => {
           const { error } = await supa.from("items").update(change).eq("id", id);

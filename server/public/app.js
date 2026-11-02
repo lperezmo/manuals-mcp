@@ -617,7 +617,19 @@ export function typeAhead(input, onPick, { above = false } = {}) {
  * Opens the chat drawer and sends `text` if given. With `once`, a message
  * already in this chat (a setup button tapped again) just opens the chat.
  */
-export function openChat(text, onChange, { once = false } = {}) {
+/**
+ * Opens the chat drawer, sending `text` if given. `once` skips a text the open
+ * chat already sent. `own` gives the text a chat of its own: the earlier chat
+ * that started with it if there is one, else a new chat, so a setup doesn't
+ * drag in (or bloat) whatever was being discussed before.
+ */
+export function openChat(text, onChange, { once = false, own = false } = {}) {
+  if (own && text) {
+    const mine = loadChats().find((c) =>
+      c.messages.some((m) => m.role === "user" && m.content === text),
+    );
+    openChatId(mine?.id ?? null);
+  }
   if (!drawer) {
     drawer = document.createElement("section");
     drawer.className = "chat";
