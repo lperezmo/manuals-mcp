@@ -727,16 +727,20 @@ export function typeAhead(input, onPick, { above = false } = {}) {
  * chat already sent; `own` gives the text a chat of its own. `about` opens that
  * thing's latest chat (or a new one for it), and `starters` are the chips an
  * empty chat offers: each sends its text, or with `draft` puts it in the box
- * to finish ("The Washer's counter shows ").
+ * to finish ("The Washer's counter shows "). `fresh` always starts a new chat
+ * (still tagged with `about`), for a job that shouldn't pile onto an old one.
  */
 export function openChat(
   text,
   onChange,
-  { once = false, own = false, about = null, starters = [] } = {},
+  { once = false, own = false, about = null, starters = [], fresh = false } = {},
 ) {
   chatChange = onChange;
   chatStarters = starters;
-  if (about) {
+  if (fresh) {
+    openChatId(null);
+    nextAbout = about;
+  } else if (about) {
     const latest = loadChats().find((c) => c.about === about);
     openChatId(latest?.id ?? null);
     nextAbout = latest ? null : about;

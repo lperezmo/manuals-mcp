@@ -474,7 +474,7 @@
           });
         }
         // The second read: Muse reads each unsure entry's page again and asks before it saves anything.
-        $("#check-flagged")?.addEventListener("click", () => openChat("Double-check the entries you weren't sure about against their pages.", load, { own: true }));
+        $("#check-flagged")?.addEventListener("click", () => openChat("Double-check the entries you weren't sure about against their pages.", load, { fresh: true }));
         const reviewOpen = $("#review-open");
         for (const tile of main.querySelectorAll("[data-review-tile]")) {
           tile.addEventListener("click", () => {

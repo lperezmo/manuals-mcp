@@ -583,7 +583,7 @@
         const ask = () => openChat(undefined, () => detail(id), { about: id, starters });
         $("#ask").addEventListener("click", ask);
         $("#check-flagged")?.addEventListener("click", () =>
-          openChat(`Double-check the lines you weren't sure about for the ${nick} against their pages.`, () => detail(id), { about: id, starters }),
+          openChat(`Double-check the lines you weren't sure about for the ${nick} against their pages.`, () => detail(id), { about: id, starters, fresh: true }),
         );
         const saveLook = async (change) => {
           const { error } = await supa.from("items").update(change).eq("id", id);
