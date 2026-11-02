@@ -8,7 +8,7 @@ import type { Db } from "./db.js";
 const MAX_RAW_CHARS = 20_000;
 
 export interface ModelRun {
-  kind: "read" | "chat" | "search" | "snap" | "plan" | "fast" | "pulse" | "image";
+  kind: "read" | "chat" | "search" | "snap" | "plan" | "fast" | "pulse" | "image" | "recheck";
   ok: boolean;
   model?: string | null;
   error?: string | null;

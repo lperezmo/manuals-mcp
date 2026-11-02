@@ -430,6 +430,7 @@
           `<span class="row small muted" style="gap:6px"><span class="dot src-${x.source}"></span>${SOURCES[x.source]}${x.source_page ? ` · p. ${x.source_page}` : ""}</span>`;
 
         const inWizard = !!unstash(FRESH_KEY(item.id));
+        const unsure = [...item.manual_facts, ...item.tasks, ...item.seat_modes].filter((x) => x.status === "needs_review").length;
         const ready = inWizard && manual?.status === "distilled";
         main.onclick = null;
         main.innerHTML = `
@@ -510,6 +511,13 @@
                   ${manualForm(!!(item.brand || item.model))}
                 </section>`}
           ${doNowCard(item.tasks, stepIds, planSummary, { source, badge })}
+          ${
+            unsure
+              ? `<section class="card do-clear" aria-label="Lines Muse wasn't sure about"><span class="ref-icon gold" aria-hidden="true">${ic("fact_check")}</span>
+                  <span class="ref-text"><strong>Muse wasn't sure about ${unsure === 1 ? "one line" : `${unsure} lines`}</strong><span class="small muted">A second read checks them against their pages and asks before saving.</span></span>
+                  <button type="button" class="quiet small" id="check-flagged">Check them</button></section>`
+              : ""
+          }
 
           ${
             item.tasks.length
@@ -574,6 +582,9 @@
         ];
         const ask = () => openChat(undefined, () => detail(id), { about: id, starters });
         $("#ask").addEventListener("click", ask);
+        $("#check-flagged")?.addEventListener("click", () =>
+          openChat(`Double-check the lines you weren't sure about for the ${nick} against their pages.`, () => detail(id), { about: id, starters }),
+        );
         const saveLook = async (change) => {
           const { error } = await supa.from("items").update(change).eq("id", id);
           if (error) return toast(error.message);

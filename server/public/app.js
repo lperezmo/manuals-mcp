@@ -374,6 +374,7 @@ const TOOL_NAMES = {
   ask_manual: "Read the manual",
   upcoming: "Checked what's coming up",
   revise_fact: "Revised a fact",
+  check_flagged: "Read the pages again",
   log_done: "Logged it done",
   record_measurement: "Saved a reading",
   car_seat_status: "Checked the car seat",

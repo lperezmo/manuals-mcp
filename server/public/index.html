@@ -428,7 +428,7 @@
             review.length
               ? `<details class="card flat review-fold">
                   <summary><span class="chip gold strong">${review.length}</span> <strong>Muse wasn't sure about ${review.length === 1 ? "one entry" : `${review.length} entries`}</strong></summary>
-                  <p class="small muted" style="margin:10px 0">Tap one to check it against its page.</p>
+                  <div class="row" style="margin:10px 0;gap:10px;align-items:center"><button type="button" class="small" id="check-flagged">Check them with Muse</button><span class="small muted">A second read checks each against its page and asks before saving. Or tap one yourself.</span></div>
                   <div class="rv-grid" role="group" aria-label="To check">${review.map(reviewTile).join("")}</div>
                   <div id="review-open"></div>
                 </details>`
@@ -473,6 +473,8 @@
             load();
           });
         }
+        // The second read: Muse reads each unsure entry's page again and asks before it saves anything.
+        $("#check-flagged")?.addEventListener("click", () => openChat("Double-check the entries you weren't sure about against their pages.", load, { own: true }));
         const reviewOpen = $("#review-open");
         for (const tile of main.querySelectorAll("[data-review-tile]")) {
           tile.addEventListener("click", () => {

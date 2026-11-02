@@ -1,6 +1,7 @@
-import { within } from "../background.js";
+import { background, within } from "../background.js";
 import type { Db, ItemRow, ManualRow } from "../db.js";
 import type { Env } from "../env.js";
+import { recheckAfterRead } from "../recheck.js";
 import { BUDGET_USED, logRun, modelRunsTodayAll } from "../runs.js";
 import { itemLabel } from "../tools/context.js";
 import { saveKnowledge } from "./knowledge.js";
@@ -447,6 +448,8 @@ async function processPdf(args: {
       replace: true,
     });
     outcome.status = "distilled";
+    // A second, separate read of the lines this one flagged; it saves only what it can quote.
+    if (outcome.distilled.needs_review) background(recheckAfterRead(env, db, householdId, item.id));
     if (trimmed || dropped || verified.flagged.length) {
       const doubted = verified.flagged.length;
       outcome.note = [

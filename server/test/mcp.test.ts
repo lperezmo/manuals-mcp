@@ -71,6 +71,7 @@ describe("MCP endpoint", () => {
         "ask_manual",
         "car_seat_status",
         "catch_up",
+        "check_flagged",
         "house_atlas",
         "list_items",
         "log_done",

@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import type { Db } from "../db.js";
 import type { Env } from "../env.js";
 import { LIMITS } from "../finder/knowledge.js";
 import { today } from "../lib/schedule.js";
@@ -28,9 +29,9 @@ const TABLES = {
   },
 } as const;
 
-type Kind = keyof typeof TABLES;
+export type Kind = keyof typeof TABLES;
 
-const changesSchema = z
+export const changesSchema = z
   .object({
     label: z.string().min(1).max(120).optional().describe("fact"),
     value: z.string().min(1).max(1000).optional().describe("fact"),
@@ -111,74 +112,103 @@ export function register(server: McpServer, env: Env) {
     async ({ id, type, changes, not_applicable, reason, source }, ctx) =>
       guarded(async () => {
         const { db, householdId } = await session(env, ctx);
-        const { table, columns } = TABLES[type];
-        const { data: before, error } = await db
-          .from(table)
-          .select(columns)
-          .eq("id", id)
-          .maybeSingle();
-        if (error) throw new Error(error.message);
-        if (!before)
-          throw new Error(`No ${type.replace("_", " ")} with that id in this household.`);
-        const current = before as unknown as Record<string, unknown>;
-
-        const update: Record<string, unknown> = changes ? columnsFor(type, changes) : {};
-        if (not_applicable && type === "task") update.active = false;
-        const changing = Object.keys(update).length > 0 || !!not_applicable;
-        if (changing && current.source === "user" && source === "assistant") {
-          return reply(
-            "The user set this one themselves, so it isn't changed. Tell them what the manual says and ask; if they agree, call again with source user.",
-            { current },
-          );
-        }
-
-        update.source = changing ? source : current.source;
-        update.status = not_applicable ? "not_applicable" : changing ? "revised" : "confirmed";
-
-        if (type === "task" && (update.interval_unit || update.interval_value)) {
-          const unit = (update.interval_unit ?? current.interval_unit) as string;
-          const amount = (update.interval_value ?? current.interval_value) as number | null;
-          const { data: item } = await db
-            .from("items")
-            .select("uses_per_week")
-            .eq("id", current.item_id as string)
-            .single();
-          const { data: next } = await db.rpc("next_due", {
-            unit,
-            amount,
-            from_day: (current.last_done_on as string | null) ?? today(),
-            uses_per_week: item?.uses_per_week ?? null,
-          });
-          update.next_due_on = next ?? null;
-        }
-
-        const { data: after, error: updateError } = await db
-          .from(table)
-          .update(update)
-          .eq("id", id)
-          .select(columns)
-          .single();
-        if (updateError) throw new Error(`Couldn't save it: ${updateError.message}`);
-
-        const { error: logError } = await db.from("revisions").insert({
-          household_id: householdId,
-          target_table: table,
-          target_id: id,
-          before: current,
-          after,
-          source,
+        const out = await applyRevision(db, householdId, {
+          id,
+          type,
+          changes,
+          not_applicable,
           reason,
+          source,
         });
-        if (logError) throw new Error(`Saved, but couldn't log the change: ${logError.message}`);
-
-        return reply(
-          not_applicable
-            ? "Marked as not applying to this one. It's kept in the history."
-            : changing
-              ? `Revised. The earlier version is kept in the history.`
-              : `Confirmed as checked.`,
-          { before: current, after },
-        );
+        return reply(out.message, out.data);
       }),
   );
+}
+
+export type RevisionChanges = z.infer<typeof changesSchema>;
+
+export interface Revision {
+  id: string;
+  type: Kind;
+  changes?: RevisionChanges;
+  not_applicable?: boolean;
+  reason: string;
+  source: "assistant" | "user";
+}
+
+/**
+ * Applies one correction, confirmation or "doesn't apply", and logs its
+ * before and after. Shared by revise_fact and check_flagged.
+ */
+export async function applyRevision(
+  db: Db,
+  householdId: string,
+  { id, type, changes, not_applicable, reason, source }: Revision,
+): Promise<{ ok: boolean; message: string; data?: unknown }> {
+  const { table, columns } = TABLES[type];
+  const { data: before, error } = await db.from(table).select(columns).eq("id", id).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!before) throw new Error(`No ${type.replace("_", " ")} with that id in this household.`);
+  const current = before as unknown as Record<string, unknown>;
+
+  const update: Record<string, unknown> = changes ? columnsFor(type, changes) : {};
+  if (not_applicable && type === "task") update.active = false;
+  const changing = Object.keys(update).length > 0 || !!not_applicable;
+  if (changing && current.source === "user" && source === "assistant") {
+    return {
+      ok: false,
+      message:
+        "The user set this one themselves, so it isn't changed. Tell them what the manual says and ask; if they agree, call again with source user.",
+      data: { current },
+    };
+  }
+
+  update.source = changing ? source : current.source;
+  update.status = not_applicable ? "not_applicable" : changing ? "revised" : "confirmed";
+
+  if (type === "task" && (update.interval_unit || update.interval_value)) {
+    const unit = (update.interval_unit ?? current.interval_unit) as string;
+    const amount = (update.interval_value ?? current.interval_value) as number | null;
+    const { data: item } = await db
+      .from("items")
+      .select("uses_per_week")
+      .eq("id", current.item_id as string)
+      .single();
+    const { data: next } = await db.rpc("next_due", {
+      unit,
+      amount,
+      from_day: (current.last_done_on as string | null) ?? today(),
+      uses_per_week: item?.uses_per_week ?? null,
+    });
+    update.next_due_on = next ?? null;
+  }
+
+  const { data: after, error: updateError } = await db
+    .from(table)
+    .update(update)
+    .eq("id", id)
+    .select(columns)
+    .single();
+  if (updateError) throw new Error(`Couldn't save it: ${updateError.message}`);
+
+  const { error: logError } = await db.from("revisions").insert({
+    household_id: householdId,
+    target_table: table,
+    target_id: id,
+    before: current,
+    after,
+    source,
+    reason,
+  });
+  if (logError) throw new Error(`Saved, but couldn't log the change: ${logError.message}`);
+
+  return {
+    ok: true,
+    message: not_applicable
+      ? "Marked as not applying to this one. It's kept in the history."
+      : changing
+        ? "Revised. The earlier version is kept in the history."
+        : "Confirmed as checked.",
+    data: { before: current, after },
+  };
 }

@@ -28,7 +28,7 @@ function ask(content: string, token?: string) {
 }
 
 describe("website chat", () => {
-  test("offers the model the 11 MCP tools plus update_item and show_card", () => {
+  test("offers the model the 12 MCP tools plus update_item and show_card", () => {
     expect(
       chatTools(env)
         .map((t) => t.name)
@@ -39,6 +39,7 @@ describe("website chat", () => {
         "ask_manual",
         "car_seat_status",
         "catch_up",
+        "check_flagged",
         "house_atlas",
         "list_items",
         "log_done",
@@ -118,8 +119,8 @@ describe("website chat", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ reply: "You have a washer.", tools_used: ["list_items"] });
     expect(sent[0].model).toBe("muse-spark");
-    // The 15 chat tools plus show_diagram, which rides along with ask_manual.
-    expect(sent[0].tools).toHaveLength(16);
+    // The 16 chat tools plus show_diagram, which rides along with ask_manual.
+    expect(sent[0].tools).toHaveLength(17);
     const toolMessage = sent[1].messages.find((m: { role: string }) => m.role === "tool");
     expect(toolMessage.content).toContain("Washer");
     expect(supabaseAuth.every((a) => a === `Bearer ${token}`)).toBe(true);
