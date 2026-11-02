@@ -468,13 +468,13 @@ function renderChatList(editing = null) {
   const log = $(".chat-log", drawer);
   const chats = loadChats();
   log.innerHTML = chats.length
-    ? `<div class="row" style="justify-content:space-between;align-items:center"><p class="small muted" style="margin:0">Previous chats</p><button type="button" class="quiet small" data-chat-clear>Delete all</button></div>${chats
+    ? `<div class="row" style="justify-content:space-between;align-items:center"><p class="small muted" style="margin:0">Previous chats</p><button type="button" class="link small" data-chat-clear>Delete all</button></div>${chats
         .map((c) => {
           const name = esc(chatTitle(c).slice(0, 90));
           const main =
             c.id === editing
               ? `<form class="chat-rename" data-rename-form="${esc(c.id)}"><label class="sr-only" for="chat-rename-input">Chat name</label><input id="chat-rename-input" value="${name}" maxlength="90" autocomplete="off"><button type="submit" class="small">Save</button></form>`
-              : `<button type="button" class="chat-pick${c.id === currentChat() ? " open" : ""}" data-chat="${esc(c.id)}"><span>${name}</span><span class="small muted">${esc(ago(c.updated))}</span></button>`;
+              : `<button type="button" class="chat-pick${c.id === currentChat() ? " open" : ""}" data-chat="${esc(c.id)}"><span class="chat-name">${name}</span><span class="small muted">${esc(ago(c.updated))}</span></button>`;
           return `<div class="chat-row">${main}${
             c.id === editing
               ? ""
@@ -792,21 +792,20 @@ export function openChat(text, onChange, { once = false, own = false } = {}) {
             .then((b) => window.open(URL.createObjectURL(b), "_blank", "noopener"));
         return;
       }
-      // Delete asks once in place (a second tap), so no dialog gets in the way.
+      // One tap, then a plain confirm, the same as deleting a thing.
       const del = e.target.closest("[data-chat-delete], [data-chat-clear]");
       if (del) {
-        if (del.dataset.armed !== "1") {
-          del.dataset.armed = "1";
-          del.classList.add("danger");
-          if (del.dataset.chatClear !== undefined) del.textContent = "Tap again to delete all";
-          else del.setAttribute("aria-label", "Tap again to delete this chat");
-          setTimeout(() => {
-            if (del.isConnected) renderChatList();
-          }, 3000);
-          return;
+        const one = del.dataset.chatDelete;
+        const name = one
+          ? chatTitle(loadChats().find((c) => c.id === one) ?? { messages: [] })
+          : "";
+        const ask = one
+          ? `Delete the chat "${name.slice(0, 60)}"?`
+          : "Delete all your previous chats on this device?";
+        if (confirm(ask)) {
+          deleteChats(one ?? null);
+          renderChatList();
         }
-        deleteChats(del.dataset.chatDelete ?? null);
-        renderChatList();
         return;
       }
       const rename = e.target.closest("[data-chat-rename]");

@@ -2881,16 +2881,36 @@ body:has(.jobs-pill) {
 /* Previous chats: a row each, with rename and delete */
 .chat-row {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 6px;
 }
 .chat-row .chat-pick {
   flex: 1;
   min-width: 0;
+  min-height: 52px;
+  padding: 8px 14px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 14px;
+}
+.chat-row .chat-name {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .chat-row .chat-icon {
+  flex: none;
+  width: 44px;
   min-width: 44px;
   min-height: 44px;
+  padding: 0;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .chat-rename {
   flex: 1;
