@@ -1053,10 +1053,15 @@
        */
       function autoPick(candidates) {
         const usable = candidates.filter((c) => !c.sheet);
+        // Opened here (so it downloads) and either the maker's own or naming the model.
+        const opened = usable.filter((c) => !c.blocked && !c.unchecked && (c.official || c.has_model || c.named));
         return (
           usable.find((c) => c.best) ??
           (candidates.length === 1 && usable.length === 1 ? usable[0] : null) ??
           usable.find((c) => c.official && c.has_model && c.match === "exact") ??
+          // The only one that opened, from the maker with the model in its link (a Whirlpool PDF
+          // whose text says WDF330PAHS while the label reads WDF330PAHS 5).
+          (opened.length === 1 ? opened[0] : null) ??
           null
         );
       }
