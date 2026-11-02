@@ -114,6 +114,17 @@ export function register(server: McpServer, env: Env) {
               out.kind_note = `No ${kind} pages matched, so every page was searched.`;
           }
           if (search.error) throw new Error(`Search failed: ${search.error.message}`);
+          // Every word must match, so one extra word ("overfill float location") finds
+          // nothing. Then any of the words will do, best-ranked pages first.
+          const loose = anyWords(term);
+          if (!search.data?.length && loose) {
+            const wider = await db.rpc("search_manual_pages", {
+              query: loose,
+              p_item: target?.id ?? null,
+              max_results,
+            });
+            if (!wider.error && wider.data?.length) search = wider;
+          }
           if (exact.data?.length) out.exact_facts = exact.data;
           const hits = (search.data ?? []) as Hit[];
           // Jev reads the top pages for the line that answers, or finds none does.
@@ -297,4 +308,19 @@ async function bestMatch(env: Env, db: Db, question: string, itemId?: string) {
   } catch {
     return null;
   }
+}
+
+/** Words people add to a search that no manual page needs ("where is the ... location"). */
+const FILLER = new Set(
+  "a an and are can do does for from how i in is it its location locate me my of on or out the this to what where which with find show".split(
+    " ",
+  ),
+);
+
+/** The query's words joined with "or" for websearch_to_tsquery, or null when there's only one. */
+export function anyWords(term: string): string | null {
+  const words = [...new Set(term.toLowerCase().match(/[a-z0-9]+/g) ?? [])].filter(
+    (w) => w.length > 1 && !FILLER.has(w),
+  );
+  return words.length > 1 ? words.join(" or ") : null;
 }
