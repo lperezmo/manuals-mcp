@@ -159,10 +159,10 @@
             <h1>Model log</h1>
             <p class="muted">Every manual Muse read and every chat question, newest first. Open one to see the details, or copy them for a bug report.</p>
           </section>
-          <section class="stack" style="gap:8px" aria-label="Credits">
+          ${spend.length ? `          <section class="stack" style="gap:8px" aria-label="Credits">
             <div class="credits">${CREDITS.map(creditCard).join("")}${imageCard()}</div>
             <p class="small muted" style="margin:0">Estimated from the tokens logged for every household. Runs from before photo reads logged tokens count as zero, and the providers' billing is the real number.</p>
-          </section>
+          </section>` : ""}
           <section class="run-stats" aria-label="Last 24 hours">
             <div class="card"><strong>${count("chat")}</strong><span class="small muted">chat questions today</span></div>
             <div class="card"><strong>${count("fast") + count("chat") ? `${Math.round((100 * count("fast")) / (count("fast") + count("chat")))}%` : "0%"}</strong><span class="small muted">answered without Muse</span></div>
@@ -208,7 +208,7 @@
       async function start() {
         if (!(await boot("/runs"))) return;
         const client = await db();
-        const [result, items, spent, imageRuns] = await Promise.all([
+        const [result, items, spent] = await Promise.all([
           client
             .from("model_runs")
             .select(
@@ -218,12 +218,13 @@
             .limit(200),
           client.from("items").select("id, nickname"),
           client.rpc("model_spend_all"),
-          client.rpc("image_runs_total"),
         ]);
-        // The same count the server's cap uses: image calls that came back with a picture.
-        images = typeof imageRuns.data === "number" ? imageRuns.data : 0;
         // No spend function yet (the migration isn't in) just leaves the credits at zero.
         spend = spent.data ?? [];
+        // The same count the server's cap uses: image calls that came back with a picture.
+        images = spend
+          .filter((r) => r.model.startsWith("muse-image"))
+          .reduce((n, r) => n + Number(r.ok_runs ?? r.runs), 0);
         if (result.error) throw new Error(result.error.message);
         runs = result.data;
         names = new Map((items.data ?? []).map((i) => [i.id, i.nickname]));
