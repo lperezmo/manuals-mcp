@@ -15,6 +15,20 @@ export function esc(value) {
 
 export const $ = (selector, root = document) => root.querySelector(selector);
 
+/**
+ * A random id. crypto.randomUUID only exists on HTTPS and localhost, so the
+ * local test server opened from a phone over plain http (192.168.1.x) builds
+ * one from getRandomValues, which works everywhere.
+ */
+export function uuid() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
 export function today() {
   const d = new Date();
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -367,7 +381,7 @@ function loadChats() {
     // Once: bring over the chat kept in this tab before chats were saved.
     const old = JSON.parse(sessionStorage.getItem(CHAT_KEY) || "[]");
     if (!old.length) return [];
-    const id = crypto.randomUUID();
+    const id = uuid();
     localStorage.setItem(CURRENT_KEY, id);
     return [{ id, updated: new Date().toISOString(), messages: old }];
   } catch {
@@ -404,7 +418,7 @@ function loadChat() {
 /** Saves the open chat and moves it to the top of the list; an empty one isn't kept. */
 function saveChat(messages, id = currentChat()) {
   if (!messages.length) return;
-  const chatId = id || crypto.randomUUID();
+  const chatId = id || uuid();
   if (!id) openChatId(chatId);
   const others = loadChats().filter((c) => c.id !== chatId);
   storeChats([
@@ -763,7 +777,7 @@ async function send(text, onChange, via, photo) {
   ];
   saveChat(messages);
   renderChat(messages, true);
-  const turn = crypto.randomUUID();
+  const turn = uuid();
   try {
     const history = messages
       .filter((m) => !m.pending)
