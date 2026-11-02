@@ -12,7 +12,7 @@
     />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=add_a_photo,archive,auto_awesome,build,center_focus_strong,check,cleaning_services,close,content_copy,delete,download,edit,event,fact_check,flare,forum,health_and_safety,history,info,inventory_2,ios_share,keyboard,location_on,menu_book,more_horiz,new_releases,open_in_new,palette,photo_camera,picture_as_pdf,receipt_long,schedule,search,settings,share,task_alt,tune,unarchive,upload,zoom_in&display=block"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=add_a_photo,archive,auto_awesome,autorenew,build,center_focus_strong,check,cleaning_services,close,content_copy,delete,download,edit,event,expand_more,fact_check,flare,forum,health_and_safety,history,info,inventory_2,ios_share,keyboard,location_on,menu_book,more_horiz,new_releases,open_in_new,palette,photo_camera,picture_as_pdf,receipt_long,schedule,search,settings,share,task_alt,tune,unarchive,upload,zoom_in&display=block"
     />
     <link rel="stylesheet" href="/theme.css" />
     <script src="/theme.js"></script>
@@ -302,15 +302,17 @@
         ["parts", "Parts"],
         ["warranty", "Warranty"],
       ];
-      async function manualStrip(supa, manual) {
-        if (!manual) return "";
+      /** The manual's PDF link and its pages by kind, for Open and Jump to. */
+      async function manualPages(supa, manual) {
+        const none = { pdf: null, groups: [] };
+        if (!manual) return none;
         // Page numbers only help when they open the PDF there; without one, show nothing.
         let pdf = manual.source_url && !isExample(manual.source_url) ? manual.source_url : null;
         if (!pdf && manual.storage_path) {
           const { data } = await supa.storage.from("manuals").createSignedUrl(manual.storage_path, 3600);
           pdf = data?.signedUrl ?? null;
         }
-        if (!pdf) return "";
+        if (!pdf) return none;
         // Read on its own, so the page still works before pages have kinds.
         const { data: rows, error } = await supa
           .from("manual_pages")
@@ -319,22 +321,36 @@
           .not("kind", "is", null)
           .order("page_number")
           .limit(1000);
-        if (error || !rows?.length) return "";
-        const groups = PAGE_KINDS.map(([kind, label]) => {
-          const pages = rows.filter((r) => r.kind === kind).map((r) => r.page_number);
-          if (!pages.length) return "";
-          const shown = pages
-            .slice(0, 4)
-            .map(
-              (n) =>
-                `<a href="${esc(`${pdf.split("#")[0]}#page=${n}`)}" target="_blank" rel="noopener noreferrer" aria-label="${esc(label)}, page ${n}">p. ${n}</a>`,
-            );
-          const more = pages.length > 4 ? ` +${pages.length - 4}` : "";
-          return `<span class="chip page-kind"><strong>${esc(label)}</strong> ${shown.join(", ")}${more}</span>`;
-        }).filter(Boolean);
-        return groups.length
-          ? `<div class="page-strip" role="group" aria-label="In the manual, by kind of page"><span class="small muted">In the manual</span>${groups.join("")}</div>`
-          : "";
+        if (error || !rows?.length) return { pdf, groups: [] };
+        const groups = PAGE_KINDS.map(([kind, label]) => ({ kind, label, pages: rows.filter((r) => r.kind === kind).map((r) => r.page_number) })).filter((g) => g.pages.length);
+        return { pdf, groups };
+      }
+
+      /** The PDF opened at a page. */
+      const pdfAt = (pdf, n) => `${pdf.split("#")[0]}#page=${n}`;
+
+      /** "Jump to a page": each kind of page with its first page as the big target. */
+      function jumpSheet(manual, pages) {
+        if (!pages.groups.length) return "";
+        const at = (n) => esc(pdfAt(pages.pdf, n));
+        const rows = pages.groups
+          .map((g) => {
+            const [first, ...rest] = g.pages;
+            const also = rest.length
+              ? `Also ${rest.slice(0, 4).map((n) => `<a href="${at(n)}" target="_blank" rel="noopener noreferrer">p. ${n}</a>`).join(", ")}${rest.length > 4 ? ` and ${rest.length - 4} more` : ""}`
+              : "";
+            return `<div class="jump-row"><span class="ref-text"><strong>${esc(g.label)}</strong>${also ? `<span class="small muted">${also}</span>` : ""}</span>
+              <a class="page-chip k-${g.kind}" href="${at(first)}" target="_blank" rel="noopener noreferrer" aria-label="${esc(g.label)}, page ${first}">p. ${first}</a></div>`;
+          })
+          .join("");
+        return `<dialog class="sheet" id="jump-sheet" aria-labelledby="jump-h">
+            <div class="sheet-grip" aria-hidden="true"></div>
+            <h2 id="jump-h" style="margin:0">Jump to a page</h2>
+            <p class="small muted" style="margin:0 0 6px">${esc(manual.title || "The manual")}${manual.page_count ? ` · ${manual.page_count} pages` : ""}</p>
+            ${rows}
+            <a class="button quiet" href="${esc(pages.pdf)}" target="_blank" rel="noopener noreferrer" style="margin-top:8px">${ic("menu_book")}Open the whole PDF</a>
+            <button type="button" class="link" data-close-sheet>Close</button>
+          </dialog>`;
       }
 
       async function detail(id) {
@@ -402,7 +418,7 @@
         const receipt = receipts?.[0] ?? null;
 
         const manual = item.manuals?.[0];
-        const strip = await manualStrip(supa, manual);
+        const pages = await manualPages(supa, manual);
         // Null where the database has no photos yet: the Photo row stays hidden.
         const photoMap = await loadItemPhotos();
         const hasPhoto = !!photoMap?.has(id);
@@ -413,7 +429,8 @@
         const source = (x) =>
           `<span class="row small muted" style="gap:6px"><span class="dot src-${x.source}"></span>${SOURCES[x.source]}${x.source_page ? ` · p. ${x.source_page}` : ""}</span>`;
 
-        const ready = unstash(FRESH_KEY(item.id)) && manual?.status === "distilled";
+        const inWizard = !!unstash(FRESH_KEY(item.id));
+        const ready = inWizard && manual?.status === "distilled";
         main.onclick = null;
         main.innerHTML = `
           ${ready ? readyCard(item) : ""}
@@ -424,17 +441,14 @@
               <div class="icon-wrap">${itemIcon(item, 72)}<button type="button" class="corner-btn" id="look-btn" aria-label="Change name, photo, icon or color" title="Change name, photo, icon or color" aria-controls="look">${ic("palette")}</button></div>
               <div style="flex:1 1 auto;min-width:0">
                 <h1 style="margin:0;cursor:pointer" id="name-h" title="Rename">${esc(item.nickname)}</h1>
-                <p class="muted" style="margin:0">${esc([item.brand, item.model, item.serial && `serial ${item.serial}`].filter(Boolean).join(" · "))}</p>
+                <p class="muted" style="margin:0">${esc([item.brand, item.model].filter(Boolean).join(" · "))}</p>
               </div>
-              <button type="button" class="pin" id="share-btn" aria-label="Share this manual" title="Share this manual" aria-controls="share">${ic("share")}</button>
               <button type="button" class="pin" id="pin" aria-pressed="${!!item.pinned}" aria-label="${item.pinned ? "Unpin" : "Pin"} ${esc(item.nickname)}" title="${item.pinned ? "Unpin" : "Pin to the top"}">${PIN}</button>
             </div>
-            <div class="row">
-              <button type="button" id="ask">${ic("forum")}Ask about the ${esc(item.nickname.toLowerCase())}</button>
-              ${item.archived_at ? "" : `<button type="button" class="quiet" id="catchup-btn" aria-controls="catchup">${ic("history")}${past && past.condition !== "new" ? "Catch it up again" : "Not new? Catch it up"}</button>`}
-              ${manual?.source_url && !isExample(manual.source_url) ? `<a class="button quiet" href="${esc(manual.source_url)}" rel="noopener noreferrer" target="_blank">${ic("menu_book")}Open the manual</a>` : manual?.source_url ? '<span class="small muted">Example manual, no PDF to open</span>' : ""}
+            <div class="ask-row">
+              <button type="button" id="ask" class="ask-big">${ic("forum")}Ask about the ${esc(item.nickname.toLowerCase())}</button>
+              <button type="button" class="more-btn" id="more-btn" aria-haspopup="dialog" aria-controls="more-sheet" aria-label="More: catch it up, the manual, share, archive" title="More">${ic("more_horiz")}</button>
             </div>
-            ${strip}
             <details class="card panel" id="look">
               <summary style="font-weight:700;cursor:pointer">Change name, photo, icon or color</summary>
               <div class="stack" style="margin-top:14px">
@@ -469,9 +483,6 @@
                     .map((k) => `<button type="button" class="swatch ${k}" data-tint="${k}" aria-pressed="${tintKey(item) === k}" aria-label="${TINTS[k]}" title="${TINTS[k]}"></button>`)
                     .join("")}</div>
                 </div>
-                <div class="row" style="justify-content:flex-end;border-top:1px solid var(--line);padding-top:12px">
-                  ${item.archived_at ? "" : `<button type="button" class="quiet small" id="archive-item">${ic("archive")}Sold it or got rid of it? Archive</button>`}
-                </div>
               </div>
             </details>
             <details class="card panel" id="share">
@@ -493,48 +504,17 @@
           </section>
 
           <div id="catchup-live" aria-live="polite"></div>
-          ${
-            steps.length || planSummary
-              ? `<section class="card" id="catchup-card" aria-labelledby="catchup-h">
-                  <h2 id="catchup-h" style="font-size:22px;margin:0 0 6px">Getting it back on track</h2>
-                  ${planSummary ? `<p style="margin:0 0 10px">${esc(planSummary)}</p>` : ""}
-                  ${
-                    steps.length
-                      ? `<div class="lines">${steps
-                          .map(
-                            (t) => `<details class="line">
-                              <summary><span class="line-title">${esc(t.title)}</span><span class="small ${t.next_due_on && t.next_due_on < today() ? "late" : "muted"}">${t.next_due_on ? esc(relDay(t.next_due_on)) : "once"}</span></summary>
-                              <div class="stack line-body">
-                                ${t.details ? `<div>${esc(t.details)}</div>` : ""}
-                                <div class="row">${source(t)}${badge(t)}</div>
-                                <div class="row"><button type="button" class="small" data-done="${t.id}">${ic("check")}Done</button><button type="button" class="quiet small" data-fix="task:${t.id}">${ic("edit")}Fix</button></div>
-                              </div>
-                            </details>`,
-                          )
-                          .join("")}</div>
-                        <p class="small muted" style="margin:10px 0 0">One-time steps. Ones marked To check are general advice, not from the manual.</p>`
-                      : '<p class="small muted" style="margin:0">Every catch-up step is done. Its regular upkeep carries on below.</p>'
-                  }
-                </section>`
-              : ""
-          }
-
-          ${
-            manual
-              ? manualLine(manual)
-              : `<section class="card">
-                  <h2>Add its manual</h2>
-                  <p class="muted">${item.brand || item.model ? "Looking for it online first. Pick the right PDF and Muse reads it into tasks and facts, each with its page." : "Add the brand and model in the details above and Muse can look for it online, or upload the PDF yourself."}</p>
+          ${manual ? "" : `<section class="card" id="manual-section">
+                  ${inWizard ? `<div class="row" style="justify-content:space-between;align-items:center"><h2 id="manual-h" style="margin:0">Finding its manual</h2>${stepDots(3)}</div>` : '<h2 id="manual-h">Add its manual</h2>'}
+                  <p class="muted" id="manual-lede"${inWizard ? " hidden" : ""}>${item.brand || item.model ? "Looking for it online first. Pick the right PDF and Muse reads it into tasks and facts, each with its page." : "Add the brand and model in the details above and Muse can look for it online, or upload the PDF yourself."}</p>
                   ${manualForm(!!(item.brand || item.model))}
-                </section>`
-          }
-
-          ${warrantySection(item, receipt, !receiptsError)}
+                </section>`}
+          ${doNowCard(item.tasks, stepIds, planSummary, { source, badge })}
 
           ${
             item.tasks.length
               ? `<section aria-labelledby="sched-h" id="upkeep">
-                  <div class="section-head"><h2 id="sched-h">Upkeep</h2>${cycles ? `<span class="small muted">${Number(cycles.value)} uses so far${item.uses_per_week ? `, about ${Number(item.uses_per_week)} a week` : ""}</span>` : ""}</div>
+                  <div class="section-head"><h2 id="sched-h">Upkeep</h2><span class="small muted">${item.tasks.filter((t) => t.active).length} tasks${cycles ? ` · ${Number(cycles.value)} uses so far${item.uses_per_week ? `, about ${Number(item.uses_per_week)} a week` : ""}` : ""}</span></div>
                   <div id="upkeep-body"></div>
                 </section>`
               : ""
@@ -557,17 +537,26 @@
               : ""
           }
 
-          ${item.manual_facts.length ? '<div id="facts" class="stack"></div>' : ""}
+          ${item.manual_facts.length || item.tasks.length ? '<div id="facts" class="stack"></div>' : ""}
+
+          <section class="card ref-card" aria-label="Warranty and manual">
+            ${warrantySection(item, receipt, !receiptsError)}
+            ${manual ? manualRow(manual, pages) : ""}
+          </section>
+          <input id="receipt-photo" type="file" accept="image/*" capture="environment" class="sr-only">
+          <input id="receipt-gallery" type="file" accept="image/*" class="sr-only">
 
           ${
             history?.length
-              ? `<section class="card flat"><h2 style="font-size:22px">History</h2>${history
+              ? `<details class="card flat history-fold"><summary><strong>History</strong><span class="small muted">${history.length} change${history.length === 1 ? "" : "s"}</span></summary>${history
                   .map(
                     (h) => `<div class="fact"><div>${esc(h.after.label || h.after.title || h.after.mode)}: <s class="muted">${esc(h.before.value ?? h.before.details ?? h.before.fit_note ?? "")}</s> → <strong>${esc(h.after.value ?? h.after.details ?? h.after.fit_note ?? "")}</strong><div class="small muted">“${esc(h.reason)}”</div></div><span class="small muted">${ago(h.created_at)} · ${h.source === "user" ? "You" : "Assistant"}</span></div>`,
                   )
-                  .join("")}</section>`
+                  .join("")}</details>`
               : ""
-          }`;
+          }
+          ${moreSheet(item, manual, pages, past)}
+          ${manual ? jumpSheet(manual, pages) : ""}`;
 
         // One way in: the thing's own chat, with a few starters when it's empty. Setting it up
         // (Muse asks with small forms) and the cycle count both go through here.
@@ -687,6 +676,27 @@
           });
         }
         wireWarranty(item, receipt, !receiptsError, () => detail(id));
+        // The more menu and Jump to open as sheets from the bottom; a tap outside or on an item closes them.
+        $("#more-btn").addEventListener("click", () => $("#more-sheet").showModal());
+        $("#jump-btn")?.addEventListener("click", () => $("#jump-sheet").showModal());
+        for (const sheet of main.querySelectorAll("dialog.sheet")) {
+          sheet.addEventListener("click", (e) => {
+            const r = sheet.getBoundingClientRect();
+            const outside = e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+            if (e.target.closest("[data-reread]")) toast("Reading it again. About a minute; you'll get a heads-up.");
+            if (outside || e.target.closest("[data-close-sheet], .sheet-item, a")) setTimeout(() => sheet.close(), 0);
+          });
+        }
+        $("[data-open-look]")?.addEventListener("click", () => {
+          $("#look").open = true;
+          $("#look").scrollIntoView({ block: "nearest", behavior: "smooth" });
+        });
+        $("[data-copy-serial]")?.addEventListener("click", () => {
+          navigator.clipboard
+            .writeText(item.serial)
+            .then(() => toast("Serial copied."))
+            .catch(() => toast("Couldn't copy here."));
+        });
         const markDone = async (taskId) => {
           const { error: e } = await supa.rpc("log_task_done", { p_task: taskId });
           if (e) return toast(e.message);
@@ -739,6 +749,8 @@
 
         const upkeep = $("#upkeep");
         let groups = guessGroups(item.tasks);
+        // Safety tasks sit with the safety warnings, so the facts redraw when Jev's groups come back.
+        let drawFacts = () => {};
         const drawUpkeep = () => {
           $("#upkeep-body").innerHTML = upkeepBody(item.tasks, groups, recall(`manuals-upkeep-${id}`), { source, badge });
         };
@@ -765,7 +777,10 @@
             .then((jev) => {
               remember(key, JSON.stringify(jev));
               groups = { ...groups, ...jev };
-              if (document.body.contains(upkeep)) drawUpkeep();
+              if (document.body.contains(upkeep)) {
+                drawUpkeep();
+                drawFacts();
+              }
             })
             .catch(() => {});
         }
@@ -776,7 +791,7 @@
           d.open = !d.open;
           if (d.open) d.scrollIntoView({ block: "nearest", behavior: "smooth" });
         });
-        $("#catchup-card")?.addEventListener("click", (e) => {
+        $("#do-now")?.addEventListener("click", (e) => {
           const done = e.target.closest("[data-done]");
           if (done) markDone(done.dataset.done);
         });
@@ -810,13 +825,29 @@
 
         const facts = $("#facts");
         let openCode = null;
-        const drawFacts = () => {
-          facts.innerHTML = factsBody(item.manual_facts, openCode, { source, badge });
+        let glanceOpen = false;
+        drawFacts = () => {
+          if (!facts) return;
+          const checks = item.tasks.filter((t) => t.active && groups[t.id] === "safety");
+          facts.innerHTML = factsBody(item.manual_facts, openCode, { source, badge }, { checks, glanceOpen });
         };
         facts?.addEventListener("click", (e) => {
           const fix = e.target.closest("[data-fix]");
           const code = e.target.closest("[data-code]");
-          if (fix) fixIt(fix.dataset.fix);
+          const done = e.target.closest("[data-done]");
+          const copyOne = e.target.closest("[data-copy-fact]");
+          if (done) markDone(done.dataset.done);
+          else if (e.target.closest("[data-glance-all]")) {
+            glanceOpen = !glanceOpen;
+            drawFacts();
+          } else if (copyOne) {
+            const f = item.manual_facts.find((x) => x.id === copyOne.dataset.copyFact);
+            if (f)
+              navigator.clipboard
+                .writeText(`${f.label}: ${f.value}`)
+                .then(() => toast("Copied."))
+                .catch(() => toast("Couldn't copy here; select the text instead."));
+          } else if (fix) fixIt(fix.dataset.fix);
           else if (e.target.closest("[data-ask-facts]")) openChat(undefined, () => detail(id));
           else if (e.target.closest("[data-copy-specs]")) {
             // Plain "Label: value" lines, ready to paste into a parts order or a support chat.
@@ -834,7 +865,78 @@
             drawFacts();
           }
         });
-        if (facts) drawFacts();
+        drawFacts();
+      }
+
+      // --- Do now --------------------------------------------------------------
+      // What to do now, in one list: catch-up steps, late tasks and anything due
+      // this week, each with a check. Nothing due is one line with what's next.
+      function doNowCard(tasks, stepIds, planSummary, { source, badge }) {
+        const active = tasks.filter((t) => t.active);
+        if (!active.length) return "";
+        const byDate = (a, b) => (a.next_due_on ?? "9999").localeCompare(b.next_due_on ?? "9999");
+        const now = active.filter((t) => stepIds.has(t.id) || late(t) || (t.next_due_on && daysBetween(today(), t.next_due_on) <= 7)).sort(byDate);
+        const next = active.filter((t) => t.next_due_on && !now.includes(t)).sort(byDate)[0];
+        const nextLine = next ? `Next: ${esc(next.title)}, ${esc(relDay(next.next_due_on))}` : "";
+        if (!now.length)
+          return `<section class="card do-clear" id="do-now"><span class="do-ok" aria-hidden="true">${ic("check")}</span>
+              <span class="ref-text"><strong>Nothing due</strong>${nextLine ? `<span class="small muted">${nextLine}</span>` : ""}</span></section>`;
+        const steps = now.filter((t) => stepIds.has(t.id)).length;
+        const lates = now.filter(late).length;
+        const meta = [steps && `Catching up · ${steps} step${steps === 1 ? "" : "s"} left`, !steps && lates && `${lates} late`].filter(Boolean).join("");
+        const row = (t) => {
+          const when = t.next_due_on ? relDay(t.next_due_on) : "once";
+          const sub = [stepIds.has(t.id) && "Catch-up step", when, t.source_page && `p. ${t.source_page}`].filter(Boolean).join(" · ");
+          return `<div class="do-row${late(t) ? " late" : ""}">
+              <details class="do-line"><summary><span class="do-title">${esc(t.title)}</span><span class="small ${late(t) ? "late" : "muted"}">${esc(sub)}</span></summary>
+                <div class="stack line-body">${t.details ? `<div>${esc(t.details)}</div>` : ""}<div class="row">${source(t)}${badge(t)}<button type="button" class="quiet small" data-fix="task:${t.id}">${ic("edit")}Fix</button></div></div>
+              </details>
+              <button type="button" class="do-check" data-done="${t.id}" aria-label="Mark done: ${esc(t.title)}" title="Done">${ic("check")}</button>
+            </div>`;
+        };
+        return `<section class="card do-card" id="do-now" aria-labelledby="do-h">
+            <div class="section-head" style="margin:0"><h2 id="do-h" style="margin:0">Do now</h2>${meta ? `<span class="small muted">${esc(meta)}</span>` : ""}</div>
+            ${steps && planSummary ? `<p class="small muted do-plan">${esc(planSummary)}</p>` : ""}
+            ${now.map(row).join("")}
+            ${nextLine ? `<p class="small muted" style="margin:0">${ic("schedule")} ${nextLine}</p>` : ""}
+          </section>`;
+      }
+
+      /** The manual as one row: pages and how the read went, with Jump to. A failed read gets its button here. */
+      function manualRow(manual, pages) {
+        const st = manualStatus(manual);
+        const sub = [manual.page_count && `${manual.page_count} pages`, st.detail].filter(Boolean).join(" · ");
+        const action =
+          st.reread === "primary"
+            ? `<button type="button" class="small" data-reread="${esc(manual.id)}">Read it again</button>`
+            : pages.groups.length
+              ? `<button type="button" class="quiet small" id="jump-btn" aria-haspopup="dialog" aria-controls="jump-sheet">Jump to</button>`
+              : pages.pdf
+                ? `<a class="button quiet small" href="${esc(pages.pdf)}" target="_blank" rel="noopener noreferrer">Open</a>`
+                : "";
+        return `<div class="ref-row"><span class="ref-icon violet" aria-hidden="true">${ic("menu_book")}</span>
+            <span class="ref-text"><strong>Manual</strong>${sub ? `<span class="small muted">${esc(sub)}</span>` : ""}</span>${action}</div>`;
+      }
+
+      /** Everything that isn't asking: the thing's ids, catch-up, the manual, sharing, its look and archiving. */
+      function moreSheet(item, manual, pages, past) {
+        const st = manual ? manualStatus(manual) : null;
+        const id = [item.brand, item.model].filter(Boolean).join(" ");
+        return `<dialog class="sheet" id="more-sheet" aria-label="More for the ${esc(item.nickname.toLowerCase())}">
+            <div class="sheet-grip" aria-hidden="true"></div>
+            ${
+              id || item.serial
+                ? `<div class="sheet-id">${id ? `<span class="small muted">${esc(id)}</span>` : ""}${item.serial ? `<span class="row" style="gap:8px">Serial <strong class="code">${esc(item.serial)}</strong><button type="button" class="quiet small" data-copy-serial>Copy</button></span>` : ""}</div>`
+                : ""
+            }
+            ${item.archived_at ? "" : `<button type="button" class="sheet-item" id="catchup-btn" aria-controls="catchup">${ic("history")}${past && past.condition !== "new" ? "Catch it up again" : "Not new? Catch it up"}</button>`}
+            ${pages.pdf ? `<a class="sheet-item" href="${esc(pages.pdf)}" target="_blank" rel="noopener noreferrer">${ic("menu_book")}<span>Open the manual</span><span class="small muted">PDF</span></a>` : ""}
+            ${st?.reread === "quiet" ? `<button type="button" class="sheet-item" data-reread="${esc(manual.id)}">${ic("autorenew")}Read the manual again</button>` : ""}
+            <button type="button" class="sheet-item" id="share-btn" aria-controls="share">${ic("share")}Share this manual</button>
+            <button type="button" class="sheet-item" data-open-look>${ic("palette")}Name, photo, icon or color</button>
+            ${item.archived_at ? "" : `<button type="button" class="sheet-item danger" id="archive-item">${ic("archive")}Sold it or got rid of it? Archive</button>`}
+            <button type="button" class="link" data-close-sheet>Close</button>
+          </dialog>`;
       }
 
       // --- Upkeep tiles -------------------------------------------------------
@@ -866,14 +968,36 @@
       const dueSoon = (t) => t.active && t.next_due_on && daysBetween(today(), t.next_due_on) <= 14;
       const late = (t) => t.active && t.next_due_on && t.next_due_on < today();
 
+      function taskLine(t, { source, badge }) {
+        const when = t.next_due_on
+          ? `<span class="small ${late(t) ? "late" : "muted"}">${esc(relDay(t.next_due_on))}</span>`
+          : `<span class="small muted">${esc(howOften(t.interval_unit, t.interval_value))}</span>`;
+        return `<details class="line">
+            <summary><span class="line-title">${esc(t.title)}</span>${when}</summary>
+            <div class="stack line-body">
+              ${t.details ? `<div>${esc(t.details)}</div>` : ""}
+              <div class="row">${source(t)}${badge(t)}<span class="small muted">${esc(howOften(t.interval_unit, t.interval_value))}</span></div>
+              <div class="row">${t.active ? `<button type="button" class="small" data-done="${t.id}">${ic("check")}Done</button>` : ""}<button type="button" class="quiet small" data-fix="task:${t.id}">${ic("edit")}Fix</button></div>
+            </div>
+          </details>`;
+      }
+
       function upkeepBody(tasks, groups, open, { source, badge }) {
         const members = (key) =>
           key === "due"
             ? tasks.filter(dueSoon).sort((a, b) => a.next_due_on.localeCompare(b.next_due_on))
             : tasks.filter((t) => groups[t.id] === key);
-        const tiles = UPKEEP.map(([key, label]) => {
+        const shown = UPKEEP.filter(([key]) => key !== "due" && key !== "safety");
+        const lines = shown
+          .map(([key, label]) => {
+            const list = members(key);
+            if (list.length !== 1) return "";
+            return `<button type="button" class="uk-line" data-group="${key}" aria-pressed="${open === key}"><strong>${esc(label)}</strong><span class="muted"> · ${esc(list[0].title)}</span></button>`;
+          })
+          .join("");
+        const tiles = shown.map(([key, label]) => {
           const list = members(key);
-          if (!list.length) return "";
+          if (list.length < 2) return "";
           const overdue = list.filter(late).length;
           return `<button type="button" class="uk-tile${key === "due" ? " due" : ""}" data-group="${key}" aria-pressed="${open === key}">
             <span class="msi uk-icon" aria-hidden="true">${UPKEEP_ICONS[key]}</span>
@@ -882,24 +1006,9 @@
             ${overdue ? `<span class="small late">${overdue} late</span>` : ""}
           </button>`;
         }).join("");
-        const when = (t) =>
-          t.next_due_on
-            ? `<span class="small ${late(t) ? "late" : "muted"}">${esc(relDay(t.next_due_on))}</span>`
-            : `<span class="small muted">${esc(howOften(t.interval_unit, t.interval_value))}</span>`;
-        const rows = (open ? members(open) : [])
-          .map(
-            (t) => `<details class="line">
-              <summary><span class="line-title">${esc(t.title)}</span>${when(t)}</summary>
-              <div class="stack line-body">
-                ${t.details ? `<div>${esc(t.details)}</div>` : ""}
-                <div class="row">${source(t)}${badge(t)}<span class="small muted">${esc(howOften(t.interval_unit, t.interval_value))}</span></div>
-                <div class="row">${t.active ? `<button type="button" class="small" data-done="${t.id}">${ic("check")}Done</button>` : ""}<button type="button" class="quiet small" data-fix="task:${t.id}">${ic("edit")}Fix</button></div>
-              </div>
-            </details>`,
-          )
-          .join("");
-        return `<p class="muted" style="margin:0 0 10px">What do you want to work on?</p>
-          <div class="uk-tiles" role="group" aria-label="Kinds of upkeep">${tiles}</div>
+        const rows = (open ? members(open) : []).map((t) => taskLine(t, { source, badge })).join("");
+        return `<div class="uk-tiles" role="group" aria-label="Kinds of upkeep">${tiles}</div>
+          ${lines ? `<div class="uk-lines">${lines}</div>` : ""}
           ${open && members(open).length ? `<div class="card lines">${rows}</div>` : ""}`;
       }
 
@@ -913,21 +1022,26 @@
         return (picked.length ? picked : specs.slice(0, 2)).map((f) => (f.value.length > 24 ? `${f.value.slice(0, 24)}…` : f.value)).join(" · ");
       }
 
-      function factsBody(facts, openCode, { source, badge }) {
+      function factsBody(facts, openCode, { source, badge }, { checks = [], glanceOpen = false } = {}) {
         const of = (kind) => facts.filter((f) => f.kind === kind);
-        const page = (f) => (f.source_page ? `<span class="small muted"> p. ${f.source_page}</span>` : "");
+        const page = (f) => (f.source_page ? ` · p. ${f.source_page}` : "");
         const check = (f) => (f.status === "needs_review" ? ' <span class="chip gold strong">To check</span>' : "");
         const specs = of("spec");
         const codes = of("error_code");
+        // Short, numeric specs first: the ones people look up.
+        const ranked = [...specs.filter((f) => /\d/.test(f.value) && f.value.length <= 40), ...specs.filter((f) => !(/\d/.test(f.value) && f.value.length <= 40))];
+        const rows = (glanceOpen ? specs : ranked.slice(0, 3))
+          .map(
+            (f) => `<div class="gl-row"><div class="gl-text"><span class="small muted">${esc(f.label)}${page(f)}</span><strong>${esc(f.value)}</strong>${check(f)}</div>
+              <button type="button" class="gl-copy" data-copy-fact="${f.id}" aria-label="Copy ${esc(f.label)}" title="Copy">${ic("content_copy")}</button></div>`,
+          )
+          .join("");
         const glance = specs.length
-          ? `<section aria-labelledby="glance-h"><div class="section-head"><h2 id="glance-h">At a glance</h2></div>
-              <div class="card glance-card"><button type="button" class="corner-copy" data-copy-specs aria-label="Copy all specs" title="Copy all specs">${ic("content_copy")}</button>
-                <details class="glance-more"><summary><span class="glance-line">${esc(glanceLine(specs))}</span><span class="glance-all"><span class="when-closed">All ${specs.length}</span><span class="when-open">Less</span></span></summary>
-                  <dl class="glance">${specs
-                    .map((f) => `<dt>${esc(f.label)}</dt><dd>${esc(f.value)}${page(f)}${check(f)}</dd>`)
-                    .join("")}</dl>
-                  <button type="button" class="link small" data-ask-facts>Something off? Ask Muse</button>
-                </details></div></section>`
+          ? `<section class="card glance2" aria-labelledby="glance-h">
+              <div class="section-head" style="margin:0"><h2 id="glance-h" style="margin:0">At a glance</h2>${specs.length > 3 ? `<button type="button" class="link" data-glance-all aria-expanded="${glanceOpen}">${glanceOpen ? "Less" : `All ${specs.length}`}</button>` : ""}</div>
+              <div class="gl-rows">${rows}</div>
+              ${glanceOpen || specs.length <= 3 ? `<div class="row" style="gap:16px"><button type="button" class="link small" data-copy-specs>Copy all specs</button><button type="button" class="link small" data-ask-facts>Something off? Ask Muse</button></div>` : ""}
+            </section>`
           : "";
         const open = codes.find((f) => f.id === openCode);
         const codeCard = codes.length
@@ -942,8 +1056,13 @@
         const folded = ["part", "safety", "other"]
           .map((kind) => {
             const list = of(kind);
-            if (!list.length) return "";
-            return `<details class="card fold"><summary><strong>${KINDS[kind]}</strong> <span class="muted small">${list.length}</span></summary>
+            const safetyChecks = kind === "safety" ? checks : [];
+            if (!list.length && !safetyChecks.length) return "";
+            const count = safetyChecks.length
+              ? [list.length && `${list.length} warning${list.length === 1 ? "" : "s"}`, `${safetyChecks.length} check${safetyChecks.length === 1 ? "" : "s"}`].filter(Boolean).join(" · ")
+              : list.length;
+            return `<details class="card fold"><summary><strong>${KINDS[kind]}</strong> <span class="muted small">${count}</span></summary>
+              ${safetyChecks.length ? `<p class="small muted fold-label">Checks</p><div class="lines">${safetyChecks.map((t) => taskLine(t, { source, badge })).join("")}</div>${list.length ? '<p class="small muted fold-label">Warnings</p>' : ""}` : ""}
               <div class="lines">${list
                 .map(
                   (f) => `<details class="line"><summary><span class="line-title">${esc(f.label)}</span>${f.status === "needs_review" ? '<span class="chip gold strong">To check</span>' : ""}</summary>
@@ -1021,20 +1140,29 @@
             <span class="small muted" style="overflow-wrap:anywhere">${esc(c.host)}${c.page_count ? ` · ${c.page_count} pages` : ""}</span>
             <div class="row" style="gap:6px">${tags}</div>
             ${c.models?.length ? `<p class="small muted" style="margin:4px 0 0">Covers ${c.models.length} models: ${esc(c.models.slice(0, 4).join(", "))}${c.models.length > 4 ? ", …" : ""}</p>` : ""}
-            ${
-              c.blocked
-                ? `<p class="small" style="margin:4px 0 0">${esc(who)} blocks apps from downloading it. Takes 20 seconds:</p>
-                  <ol class="wz-num">
-                    <li><span>Open the PDF</span><a class="button small" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">${ic("open_in_new")}Open</a></li>
-                    <li><span>Tap ${ic("ios_share")} or ⋮, then <strong>Download</strong></span></li>
-                    <li><span>Come back and add it</span><button type="button" class="quiet small" data-add-pdf>${ic("upload")}Add PDF</button></li>
-                  </ol>`
-                : ""
-            }
+            ${c.blocked ? `<p class="small" style="margin:4px 0 0">${esc(who)} blocks apps from downloading it. Takes 20 seconds:</p>${grabSteps(c)}` : ""}
             ${c.model_hint ? `<p class="small" style="margin:4px 0 0">This manual spells it <strong>${esc(c.model_hint)}</strong>; the label photo may have been misread. <button type="button" class="quiet small" data-fix-model="${esc(c.model_hint)}">Fix the model</button></p>` : ""}
           </div>
           ${c.blocked ? "" : `<div class="row"><button type="button" data-use="${esc(c.url)}" data-official="${c.official}">Use this</button><a class="button quiet" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">Open</a></div>`}
         </div>`;
+      }
+
+      /** The three steps to save a PDF a site won't let the app download. */
+      const grabSteps = (c) => `<ol class="wz-num">
+          <li><span>Open the PDF</span><a class="button small" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">${ic("open_in_new")}Open</a></li>
+          <li><span>Tap ${ic("ios_share")} or ⋮, then <strong>Download</strong></span></li>
+          <li><span>Come back and add it</span><button type="button" class="quiet small" data-add-pdf>${ic("upload")}Add PDF</button></li>
+        </ol>`;
+
+      /** The wizard's three steps (label, is it new, manual) as dots. */
+      const stepDots = (n) =>
+        `<div class="wz-dots" role="img" aria-label="Step ${n} of 3">${[1, 2, 3].map((i) => `<span class="${i <= n ? "on" : ""}"></span>`).join("")}</div>`;
+
+      /** The wizard's manual heading, once the search knows what it found. */
+      function manualHeading(text) {
+        const h = $("#manual-h");
+        if (h) h.textContent = text;
+        $("#manual-lede")?.setAttribute("hidden", "");
       }
 
       /**
@@ -1069,12 +1197,14 @@
           <div class="stack" style="gap:6px;min-width:0"><strong style="overflow-wrap:anywhere">${esc(c.title || "Owner's manual")}</strong><div class="row" style="gap:6px">${tags}</div></div></div>`;
       }
 
-      /** Marks the progress steps: those before `now` done, `now` running. */
+      /** Marks the progress steps: those before `now` done, `now` running; each says it in its own tense. */
       function markStep(found, now) {
         const order = ["dl", "read", "facts"];
         for (const li of found.querySelectorAll("[data-st]")) {
           const i = order.indexOf(li.dataset.st);
-          li.className = i < order.indexOf(now) ? "done" : i === order.indexOf(now) ? "now" : "";
+          const state = i < order.indexOf(now) ? "done" : i === order.indexOf(now) ? "now" : "";
+          li.className = state;
+          li.textContent = li.dataset[state || "todo"] ?? li.textContent;
         }
       }
 
@@ -1130,8 +1260,10 @@
 
       // --- Photographing a paper manual ----------------------------------------
       // Each page is snapped one at a time into a grid. Jev looks at each as it
-      // lands: a blurry page is marked for a retake and a page in another
-      // language is skipped. The usable pages become one PDF on the phone, and
+      // lands: a blurry page is marked for a retake. A page in another language
+      // is skipped only when there are English pages too (a manual printed in
+      // several languages); a manual in one language is kept whole and Muse
+      // writes its tasks in English. The usable pages become one PDF on the phone, and
       // that goes up like any upload: the server reads a PDF without a text
       // layer page by page with Muse.
 
@@ -1178,19 +1310,25 @@
         if (!section) return;
         const pages = [];
         let replacing = null;
-        const usable = () => pages.filter((p) => p.check && !p.check.retake && p.check.english);
+        const sound = () => pages.filter((p) => p.check && !p.check.retake);
+        // Other-language pages are left out only beside English ones: a manual in one language is read whole.
+        const hasEnglish = () => sound().some((p) => p.check.english);
+        const skips = (p) => !!p.check && !p.check.retake && !p.check.english && hasEnglish();
+        const usable = () => sound().filter((p) => !skips(p));
+        const langName = (p) => p.check?.language || "another language";
         const draw = () => {
           const ready = usable().length;
           const retakes = pages.filter((p) => p.check?.retake).length;
-          const skipped = pages.filter((p) => p.check && !p.check.retake && !p.check.english).length;
+          const skipped = pages.filter(skips).length;
+          const foreign = !hasEnglish() && sound().find((p) => !p.check.english);
           const checking = pages.filter((p) => !p.check).length;
           section.innerHTML = `<div class="stack" id="pages-flow">
               <div class="row" style="justify-content:space-between"><h2 style="margin:0">Snap each page</h2><span class="small muted">${pages.length} page${pages.length === 1 ? "" : "s"}</span></div>
               <p class="muted" style="margin:0">Care and troubleshooting pages matter most.</p>
               <div class="pg-grid">${pages
                 .map((p, i) => {
-                  const flag = !p.check ? '<span class="pg-flag">Checking…</span>' : p.check.retake ? '<span class="pg-flag gold">Retake</span>' : !p.check.english ? '<span class="pg-flag">Not English</span>' : "";
-                  const cls = p.check?.retake ? "retake" : p.check && !p.check.english ? "skip" : "";
+                  const flag = !p.check ? '<span class="pg-flag">Checking…</span>' : p.check.retake ? '<span class="pg-flag gold">Retake</span>' : skips(p) ? `<span class="pg-flag">${esc(p.check.language ?? "Not English")}, skipped</span>` : "";
+                  const cls = p.check?.retake ? "retake" : skips(p) ? "skip" : "";
                   return `<div class="pg-tile ${cls}">
                     <button type="button" class="pg-shot" data-page="${i}" aria-label="Page ${i + 1}${p.check?.retake ? ", blurry, tap to retake" : ""}">${p.src ? `<img src="${p.src}" alt="">` : ""}</button>
                     ${flag}<span class="pg-num">${i + 1}</span>
@@ -1201,6 +1339,7 @@
                 ${pages.length < MAX_PAGE_PHOTOS ? `<label class="pg-add" for="page-camera">${ic("add_a_photo")}<span>${pages.length ? "Next page" : "First page"}</span></label>` : ""}
               </div>
               <div class="row"><label class="link small" for="page-upload" style="cursor:pointer">Or pick photos you already took</label></div>
+              ${foreign ? `<p class="wz-card small" style="margin:0">${ic("info")} Only in ${esc(langName(foreign))}? That's fine: Muse reads it and writes the tasks in English.</p>` : ""}
               ${pages.length ? `<p class="wz-card small" style="margin:0">${ic("task_alt")} ${[`${ready} ready`, retakes && `${retakes} to retake`, skipped && `${skipped} skipped`, checking && `${checking} checking`].filter(Boolean).join(" · ")}</p>` : ""}
               <button type="button" class="wz-big" id="pages-read" ${ready && !checking ? "" : "disabled"}>${ready ? `Read ${ready} page${ready === 1 ? "" : "s"}` : "Read the pages"}</button>
               <p class="small muted" role="status" id="pages-msg" style="margin:0"></p>
@@ -1219,7 +1358,7 @@
                 .then(async (src) => {
                   page.src = src;
                   draw();
-                  page.check = await api("/api/page-check", { image: src }).catch(() => ({ retake: null, english: true }));
+                  page.check = await api("/api/page-check", { image: src }).catch(() => ({ retake: null, english: true, language: null }));
                 })
                 .catch((err) => {
                   pages.splice(pages.indexOf(page), 1);
@@ -1324,6 +1463,7 @@
             } catch {}
           }
           if (!out.candidates.length) {
+            if (unstash(FRESH_KEY(item.id))) manualHeading("No PDF online");
             found.innerHTML = `<p class="muted small">No PDF turned up for “${esc(out.query)}”.</p>
               <button type="button" class="wz-big" data-pages>${ic("photo_camera")}Photograph the paper manual</button>
               <p class="small muted" style="margin:0">Or find it on the maker's Support page and paste the link or upload the PDF below.</p>`;
@@ -1346,19 +1486,29 @@
           if (pick && !pick.blocked) {
             found.innerHTML = `<div class="wz-found">${foundHead(pick, item)}
                 <ol class="wz-steps" aria-label="Progress">
-                  <li data-st="dl" class="now">Downloading</li>
-                  <li data-st="read">Muse reads it</li>
-                  <li data-st="facts">Upkeep, error codes, specs</li>
+                  <li data-st="dl" class="now" data-todo="Download it" data-now="Downloading" data-done="Downloaded">Downloading</li>
+                  <li data-st="read" data-todo="Muse reads it" data-now="Muse is reading it" data-done="Read">Muse reads it</li>
+                  <li data-st="facts" data-todo="Upkeep, error codes, specs" data-now="Sorting upkeep, error codes, specs" data-done="Upkeep, error codes, specs">Upkeep, error codes, specs</li>
                 </ol>
                 <div class="wz-progress" aria-hidden="true"><span class="wz-indeterminate"></span></div>
-                <p class="small muted" role="status" data-attach-status style="margin:0">Fine to leave; you'll get a heads-up when it's done.</p>
+                <p class="small muted" role="status" data-attach-status style="margin:0">About a minute. Fine to leave; you'll get a heads-up when it's done.</p>
               </div>
               ${others.length ? `<details class="wz-more"><summary>Not this one? ${others.length} more</summary><div class="stack" style="margin-top:10px">${others.map((c) => candidateCard(c, item)).join("")}</div></details>` : ""}`;
+            manualHeading("Found its manual");
+          } else if (pick?.blocked) {
+            // The right PDF, on a site that won't hand it to the app: three steps on the phone, or photograph it.
+            manualHeading("Found it, but you'll need to grab it");
+            found.innerHTML = `<div class="wz-found">${foundHead(pick, item)}${grabSteps(pick)}
+                <p class="small muted" style="margin:0">We'll keep your place here.</p></div>
+              <div class="wz-or" role="separator"><span>or</span></div>
+              <button type="button" class="quiet wz-big" data-pages>${ic("photo_camera")}Photograph the paper manual</button>
+              ${others.length ? `<details class="wz-more"><summary>Not this one? ${others.length} more</summary><div class="stack" style="margin-top:10px">${others.map((c) => candidateCard(c, item)).join("")}</div></details>` : ""}`;
           } else {
-            found.innerHTML = `${pick ? "" : "<h3>Is this yours?</h3>"}${(pick ? [pick, ...others] : out.candidates).map((c) => candidateCard(c, item)).join("")}`;
+            if (unstash(FRESH_KEY(item.id))) manualHeading("Which one is yours?");
+            found.innerHTML = `${pick || unstash(FRESH_KEY(item.id)) ? "" : "<h3>Is this yours?</h3>"}${(pick ? [pick, ...others] : out.candidates).map((c) => candidateCard(c, item)).join("")}`;
           }
           // Only sites that block apps: the PDF has to come in by hand, so show where.
-          if (out.candidates.every((c) => c.blocked)) fallback();
+          if (out.candidates.every((c) => c.blocked) && !pick?.blocked) fallback();
           // The maker's PDF prints the real number; one tap saves it on the thing.
           for (const b of found.querySelectorAll("[data-fix-model]")) {
             b.addEventListener("click", async () => {
@@ -1430,19 +1580,15 @@
       // Any manual with a PDF that isn't read, and isn't being read, can be read again.
       const canReread = (m) => (m.status === "text_ready" || m.status === "pending") && !!m.storage_path && !readingNow(m);
 
-      function manualLine(manual) {
+      /** How the manual's read went, and whether "Read it again" is the thing to do (primary) or a quiet option. */
+      function manualStatus(manual) {
         const detail = readingNow(manual)
           ? "Muse is reading it now"
           : /couldn't distill/.test(manual.status_detail || "")
             ? READ_FAILED
             : manual.status_detail || (canReread(manual) ? "Muse didn't finish reading it" : "");
         // A failed or unread manual gets the button up front; a read one gets a quiet one (your fixes are kept).
-        const button = canReread(manual)
-          ? ` <button type="button" class="small" data-reread="${esc(manual.id)}">Read it again</button>`
-          : manual.status === "distilled"
-            ? ` <button type="button" class="link small" data-reread="${esc(manual.id)}">Read it again</button>`
-            : "";
-        return `<p class="small muted">${esc(manual.title || "Manual")}${manual.page_count ? `, ${manual.page_count} pages` : ""}${detail ? `. ${esc(detail)}` : ""}${button}</p>`;
+        return { detail, reread: canReread(manual) ? "primary" : manual.status === "distilled" ? "quiet" : null };
       }
 
       /**
@@ -1593,9 +1739,12 @@
         else if (r) lines.push("The warranty length isn't saved yet. Add it from the card, or check the manual's warranty page.");
         if (r?.warranty_note) lines.push(`<span class="muted">${esc(r.warranty_note)}</span>`);
         const v = (x) => esc(x ?? "");
-        return `<section aria-labelledby="warranty-h" id="warranty">
-            <div class="section-head"><h2 id="warranty-h">Warranty</h2>${chip}</div>
-            <div class="card stack">
+        const title = ends ? (left < 0 ? "Warranty ended" : `Covered until ${longDate(ends)}`) : bought ? `Bought ${longDate(bought)}` : "Warranty";
+        const sub = ends ? (left < 0 ? longDate(ends) : `${left} day${left === 1 ? "" : "s"} left`) : r ? "Warranty length not saved yet" : "Add the receipt to see how long it's covered";
+        return `<details class="ref-fold" id="warranty">
+            <summary class="ref-row"><span class="ref-icon gold" aria-hidden="true">${ic("receipt_long")}</span>
+              <span class="ref-text"><strong id="warranty-h">${esc(title)}</strong><span class="small muted">${esc(sub)}</span></span>${chip}<span class="ref-chev" aria-hidden="true">${ic("expand_more")}</span></summary>
+            <div class="stack ref-body">
               ${lines.length ? lines.map((l) => `<p style="margin:0">${l}</p>`).join("") : '<p class="muted" style="margin:0">Snap the receipt or warranty card. Muse keeps the purchase date, store, price and warranty, and tells you if a repair is likely still covered.</p>'}
               ${ready ? "" : '<p class="small muted" style="margin:0">Saving receipts needs a database update here. For now only the purchase date is kept.</p>'}
               <div class="row">
@@ -1604,8 +1753,6 @@
                 <button type="button" class="quiet" id="receipt-edit" aria-controls="receipt-form">${ic("edit")}${r ? "Edit" : "Type it in"}</button>
                 ${r?.image_path ? `<a class="button quiet" id="receipt-view" style="display:none" target="_blank" rel="noopener noreferrer">${ic("receipt_long")}See the receipt</a>` : ""}
               </div>
-              <input id="receipt-photo" type="file" accept="image/*" capture="environment" class="sr-only">
-              <input id="receipt-gallery" type="file" accept="image/*" class="sr-only">
               <p class="small muted" id="receipt-msg" role="status" style="margin:0"></p>
               <form class="stack" id="receipt-form" hidden>
                 <label class="small" for="rf-date"><strong>Bought on</strong></label><input id="rf-date" type="date" value="${v(bought)}">
@@ -1617,7 +1764,7 @@
                 <div class="row"><button type="submit">Save</button><button type="button" class="quiet" id="receipt-cancel">Cancel</button></div>
               </form>
             </div>
-          </section>`;
+          </details>`;
       }
 
       function wireWarranty(item, r, ready, after) {
@@ -1781,6 +1928,8 @@
                 .join("")}</select>
               <label class="small" for="f-pdf"><strong>Link to the manual PDF</strong> <span class="muted">(optional; we'll search for it otherwise)</span></label>
               <input id="f-pdf" type="url" placeholder="https://maker.example/manual.pdf" value="${esc(thing.pdf)}">
+              <div class="row" style="gap:10px"><label class="button quiet small" for="f-pdf-file" style="cursor:pointer">${ic("upload")}Or upload the PDF</label><span class="small muted" id="f-pdf-name">${thing.file ? esc(thing.file.name) : ""}</span></div>
+              <input id="f-pdf-file" type="file" accept="application/pdf" class="sr-only">
               <button type="submit">Continue</button>
               <p class="small muted" data-add-msg role="status"></p>
             </form>
@@ -1788,11 +1937,11 @@
         }
 
         // Three steps (label, is it new, manual), shown as dots; the manual is step 3 on the thing's page.
-        function dots(n) {
-          return `<div class="wz-dots" role="img" aria-label="Step ${n} of 3">${[1, 2, 3].map((i) => `<span class="${i <= n ? "on" : ""}"></span>`).join("")}</div>`;
-        }
+        const dots = stepDots;
         const CANCEL = '<a href="/things" class="wz-link">Cancel</a>';
         const BACK = '<button type="button" class="link wz-link" data-back>Back</button>';
+        // Back to the label photo, from a retake or the confirm card.
+        const RESTART = '<button type="button" class="link wz-link" data-restart>Back</button>';
         const RETAKE = '<label class="wz-link" for="photo-camera" style="cursor:pointer">Retake</label>';
         const photoTop = () => (image ? `<img src="${image}" alt="Your label photo" class="wizard-photo">` : "");
 
@@ -1826,6 +1975,7 @@
             $("#f-nick").focus();
           });
           $("[data-continue]")?.addEventListener("click", askHistory);
+          $("[data-restart]")?.addEventListener("click", () => start());
           $("[data-anyway]")?.addEventListener("click", () => readImage(async () => image, true));
           $("#add-form")?.addEventListener("submit", (e) => {
             e.preventDefault();
@@ -1836,6 +1986,11 @@
             thing.kind = $("#f-kind").value;
             thing.pdf = $("#f-pdf").value.trim();
             askHistory();
+          });
+          $("#f-pdf-file")?.addEventListener("change", (e) => {
+            thing.file = e.target.files?.[0] ?? null;
+            const name = $("#f-pdf-name");
+            if (name) name.textContent = thing.file?.name ?? "";
           });
           $("#f-nick-quick")?.addEventListener("input", (e) => {
             thing.nickname = e.target.value;
@@ -1890,7 +2045,7 @@
             <h1 class="wz-title">One more try</h1>
             ${tips(reason === "blurry" ? PHOTO_TIPS : [["search", "Look for the sticker with the model number"], ["location_on", `Usually ${esc(where())}`], ["zoom_in", "Get close enough to fill the frame"]])}
             <label class="button wz-big" for="photo-camera">${ic("photo_camera")}Retake</label>
-            <div class="row" style="justify-content:center"><button type="button" class="link" data-anyway>Read it anyway</button><span class="muted">·</span><button type="button" class="link" data-type>Type it in</button></div>`);
+            <div class="row" style="justify-content:center"><button type="button" class="link" data-anyway>Read it anyway</button><span class="muted">·</span><button type="button" class="link" data-type>Type it in</button></div>`, { left: RESTART });
         }
 
         // Letters a label photo mixes up. Each one in a doubtful model is a button that swaps it.
@@ -1908,11 +2063,24 @@
             const letters = [...thing.model]
               .map((ch, i) => (swapOf(ch) ? `<button type="button" class="wz-letter" data-flip="${i}" aria-label="${esc(ch)}, tap to switch to ${esc(swapOf(ch))}">${esc(ch)}</button>` : `<span>${esc(ch)}</span>`))
               .join("");
+            const doubts = [...thing.model].map((ch, i) => (swapOf(ch) ? i : -1)).filter((i) => i >= 0);
+            // One letter in doubt: ask it as a plain either-or. Several: each highlighted letter flips on a tap.
+            const one = doubts.length === 1 ? doubts[0] : null;
+            const pair = one == null ? null : [thing.model[one].toUpperCase(), swapOf(thing.model[one])];
+            const article = (ch) => (/[AEFHILMNORSX18]/.test(ch) ? "an" : "a");
             step(`<h1 class="wz-title">Is this the model?</h1>
               ${cropImg(crop, "The model number on your label, up close")}
               <div class="wz-card stack">
+                ${doubts.length ? `<span class="chip gold strong" style="align-self:start">${doubts.length} letter${doubts.length === 1 ? "" : "s"} to check</span>` : ""}
                 <div class="wz-model">${letters}</div>
-                ${thing.model.split("").some(swapOf) ? '<p class="small muted" style="margin:0">Tap a highlighted letter to switch it: S and 5, O and 0 look alike.</p>' : ""}
+                ${
+                  pair
+                    ? `<p style="margin:0;font-weight:700">Is that ${article(pair[0])} ${esc(pair[0])} or ${article(pair[1])} ${esc(pair[1])}?</p>
+                      <div class="wz-alts two">${pair.map((ch) => `<button type="button" class="quiet" data-pick-letter="${esc(ch)}">${esc(ch)}</button>`).join("")}</div>`
+                    : doubts.length
+                      ? '<p class="small muted" style="margin:0">Tap a highlighted letter to switch it: S and 5, O and 0 look alike.</p>'
+                      : ""
+                }
               </div>
               <button type="button" class="wz-big" id="doubt-ok">Yes, that's it</button>
               <details class="wz-more"><summary>Type it instead</summary>
@@ -1937,6 +2105,13 @@
                 thing.model = chars.join("");
                 partial();
                 main.querySelector(`[data-flip="${i}"]`)?.focus();
+              });
+            }
+            for (const b of main.querySelectorAll("[data-pick-letter]")) {
+              b.addEventListener("click", () => {
+                const chars = [...thing.model];
+                chars[one] = b.dataset.pickLetter;
+                accept(chars.join(""));
               });
             }
             $("#doubt-ok").addEventListener("click", () => accept(thing.model));
@@ -2003,7 +2178,7 @@
               <label class="wz-row" for="f-nick-quick"><span class="muted">Call it</span><input id="f-nick-quick" class="wz-inline" value="${esc(thing.nickname)}" placeholder="Washer" autocomplete="off">${ic("edit")}</label>
             </div>
             <button type="button" class="wz-big" data-continue>Looks right</button>
-            <p class="small muted" data-add-msg role="status"></p>`, { right: RETAKE });
+            <p class="small muted" data-add-msg role="status"></p>`, { left: RESTART, right: RETAKE });
         }
 
         async function read(file) {
@@ -2125,7 +2300,8 @@
           const msg = main.querySelector("[data-add-msg]");
           if (!named()) return;
           button.disabled = true;
-          if (msg) msg.textContent = thing.pdf ? "Adding it. Muse is reading the manual, up to a minute." : "Adding it…";
+          const hasPdf = !!(thing.pdf || thing.file);
+          if (msg) msg.textContent = hasPdf ? "Adding it. Muse is reading the manual, up to a minute." : "Adding it…";
           const args = { nickname: thing.nickname, kind: thing.kind, ...(thing.category ? { category: thing.category } : {}) };
           for (const key of ["brand", "model", "serial"]) if (thing[key]) args[key] = thing[key];
           if (thing.pdf) args.pdf_url = thing.pdf;
@@ -2137,7 +2313,14 @@
             toast(out.summary.split(".")[0]);
             // The thing's page finishes the wizard: it picks the manual and says when it's ready.
             stash(FRESH_KEY(out.data.item.id), "1");
-            location.assign(`/things?id=${out.data.item.id}${thing.pdf ? "" : "&find=1"}`);
+            // A PDF from the phone goes up now; the read carries on while the thing's page opens.
+            if (thing.file && !thing.pdf) {
+              const say = (t) => {
+                if (msg) msg.textContent = t;
+              };
+              await uploadManual(out.data.item, thing.file, say).catch((err) => toast(err.message));
+            }
+            location.assign(`/things?id=${out.data.item.id}${hasPdf ? "" : "&find=1"}`);
           } catch (err) {
             button.disabled = false;
             if (msg) msg.textContent = err.message;
