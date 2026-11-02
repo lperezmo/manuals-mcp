@@ -424,7 +424,9 @@ function saveChat(messages, id = currentChat()) {
   if (!messages.length) return;
   const chatId = id || uuid();
   if (!id) openChatId(chatId);
-  const others = loadChats().filter((c) => c.id !== chatId);
+  const all = loadChats();
+  const title = all.find((c) => c.id === chatId)?.title;
+  const others = all.filter((c) => c.id !== chatId);
   // Marked photos are a few hundred KB each: keep the last few, so the chats still fit in storage.
   const kept = messages.slice(-30);
   let photos = 0;
@@ -432,21 +434,50 @@ function saveChat(messages, id = currentChat()) {
     if ((kept[i].marked || kept[i].diagram) && ++photos > MARKED_KEPT)
       kept[i] = { ...kept[i], marked: undefined, diagram: undefined, markedGone: true };
   }
-  storeChats([{ id: chatId, updated: new Date().toISOString(), messages: kept }, ...others]);
+  storeChats([
+    { id: chatId, updated: new Date().toISOString(), messages: kept, ...(title ? { title } : {}) },
+    ...others,
+  ]);
 }
 
-/** The chat list: each chat by its first question, newest first. */
-function renderChatList() {
+const PENCIL_ICON =
+  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"></path></svg>';
+const TRASH_ICON =
+  '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"></path></svg>';
+
+const chatTitle = (c) => c.title || c.messages.find((m) => m.role === "user")?.content || "A chat";
+
+/** The chat list: each chat by its name (or first question), newest first, with rename and delete. */
+function renderChatList(editing = null) {
   const log = $(".chat-log", drawer);
   const chats = loadChats();
   log.innerHTML = chats.length
-    ? `<p class="small muted" style="margin:0">Previous chats</p>${chats
+    ? `<div class="row" style="justify-content:space-between;align-items:center"><p class="small muted" style="margin:0">Previous chats</p><button type="button" class="quiet small" data-chat-clear>Delete all</button></div>${chats
         .map((c) => {
-          const first = c.messages.find((m) => m.role === "user")?.content || "A chat";
-          return `<button type="button" class="chat-pick${c.id === currentChat() ? " open" : ""}" data-chat="${esc(c.id)}"><span>${esc(first.slice(0, 90))}</span><span class="small muted">${esc(ago(c.updated))}</span></button>`;
+          const name = esc(chatTitle(c).slice(0, 90));
+          const main =
+            c.id === editing
+              ? `<form class="chat-rename" data-rename-form="${esc(c.id)}"><label class="sr-only" for="chat-rename-input">Chat name</label><input id="chat-rename-input" value="${name}" maxlength="90" autocomplete="off"><button type="submit" class="small">Save</button></form>`
+              : `<button type="button" class="chat-pick${c.id === currentChat() ? " open" : ""}" data-chat="${esc(c.id)}"><span>${name}</span><span class="small muted">${esc(ago(c.updated))}</span></button>`;
+          return `<div class="chat-row">${main}${
+            c.id === editing
+              ? ""
+              : `<button type="button" class="quiet small chat-icon" data-chat-rename="${esc(c.id)}" aria-label="Rename this chat" title="Rename">${PENCIL_ICON}</button><button type="button" class="quiet small chat-icon" data-chat-delete="${esc(c.id)}" aria-label="Delete this chat" title="Delete">${TRASH_ICON}</button>`
+          }</div>`;
         })
         .join("")}`
     : '<p class="muted small">No previous chats yet.</p>';
+  if (editing) {
+    const input = $("#chat-rename-input", drawer);
+    input?.focus();
+    input?.select();
+  }
+}
+
+/** Deletes one chat, or all of them; the open one closes into a new chat. */
+function deleteChats(id) {
+  storeChats(id ? loadChats().filter((c) => c.id !== id) : []);
+  if (!id || id === currentChat()) openChatId(null);
 }
 
 let drawer;
@@ -707,6 +738,18 @@ export function openChat(text, onChange, { once = false, own = false } = {}) {
     $("[data-history]", drawer).addEventListener("click", renderChatList);
     const log = $(".chat-log", drawer);
     log.addEventListener("submit", (e) => {
+      const renaming = e.target.closest("form[data-rename-form]");
+      if (renaming) {
+        e.preventDefault();
+        const name = $("#chat-rename-input", drawer).value.trim();
+        storeChats(
+          loadChats().map((c) =>
+            c.id === renaming.dataset.renameForm ? { ...c, title: name || undefined } : c,
+          ),
+        );
+        renderChatList();
+        return;
+      }
       const form = e.target.closest("form[data-card]");
       if (!form) return;
       e.preventDefault();
@@ -731,6 +774,28 @@ export function openChat(text, onChange, { once = false, own = false } = {}) {
           fetch(src)
             .then((r) => r.blob())
             .then((b) => window.open(URL.createObjectURL(b), "_blank", "noopener"));
+        return;
+      }
+      // Delete asks once in place (a second tap), so no dialog gets in the way.
+      const del = e.target.closest("[data-chat-delete], [data-chat-clear]");
+      if (del) {
+        if (del.dataset.armed !== "1") {
+          del.dataset.armed = "1";
+          del.classList.add("danger");
+          if (del.dataset.chatClear !== undefined) del.textContent = "Tap again to delete all";
+          else del.setAttribute("aria-label", "Tap again to delete this chat");
+          setTimeout(() => {
+            if (del.isConnected) renderChatList();
+          }, 3000);
+          return;
+        }
+        deleteChats(del.dataset.chatDelete ?? null);
+        renderChatList();
+        return;
+      }
+      const rename = e.target.closest("[data-chat-rename]");
+      if (rename) {
+        renderChatList(rename.dataset.chatRename);
         return;
       }
       const pick = e.target.closest("[data-chat]");

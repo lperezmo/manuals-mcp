@@ -2877,3 +2877,27 @@ body:has(.jobs-pill) {
   border-radius: 12px;
   background: #fff;
 }
+
+/* Previous chats: a row each, with rename and delete */
+.chat-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-row .chat-pick {
+  flex: 1;
+  min-width: 0;
+}
+.chat-row .chat-icon {
+  min-width: 44px;
+  min-height: 44px;
+}
+.chat-rename {
+  flex: 1;
+  display: flex;
+  gap: 6px;
+}
+.chat-rename input {
+  flex: 1;
+  min-width: 0;
+}
