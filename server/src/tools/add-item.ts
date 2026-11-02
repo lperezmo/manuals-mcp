@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { quickOrBackground } from "../background.js";
 import { historySchema, saveHistory } from "../catch-up.js";
 import type { ItemRow } from "../db.js";
 import type { Env } from "../env.js";
@@ -28,6 +29,19 @@ export function blockedNext(surface: Surface, itemId: string, pageUrl: string): 
     return " Look for a copy on another site, or save the PDF in a browser and upload it on the Things page.";
   }
   return ` If you can download it yourself (a code sandbox or browser with network access), call request_manual_upload with item "${itemId}", send the PDF there, then call add_item with attach_to and upload_id. Otherwise look for a copy on another site, or ask the person to open ${pageUrl} and tap Upload a PDF.`;
+}
+
+/**
+ * How long add_item waits for the read before answering "still reading". Some
+ * MCP clients give up on a call after 45 seconds (the Muse app does), and a
+ * timed-out client may retry and add the manual twice; the read carries on in
+ * the background either way.
+ */
+export const ANSWER_WITHIN_MS = 35_000;
+
+/** add_item's answer while Muse is still reading the manual. */
+export function stillReading(label: string, added: boolean, notNew: boolean | undefined): string {
+  return `${added ? `Added ${label}. Its` : `Attached the`} manual is saved and Muse is still reading it, about a minute more. Don't add it again: call list_items or upcoming in a minute to see its tasks.${notNew ? " It isn't new: once the read is done, call catch_up to seed its schedule from its history." : ""}`;
 }
 
 export function register(server: McpServer, env: Env, surface: Surface = "mcp") {
@@ -114,8 +128,10 @@ export function register(server: McpServer, env: Env, surface: Surface = "mcp") 
         openWorldHint: true,
       },
     },
-    async ({ attach_to, pdf_url, upload_id, official, history, ...fields }, ctx) =>
-      guarded(async () => {
+    async ({ attach_to, pdf_url, upload_id, official, history, ...fields }, ctx) => {
+      const started = Date.now();
+      const left = () => Math.max(5_000, ANSWER_WITHIN_MS - (Date.now() - started));
+      return guarded(async () => {
         const { db, householdId } = await session(env, ctx);
 
         let item: ItemRow;
@@ -150,21 +166,27 @@ export function register(server: McpServer, env: Env, surface: Surface = "mcp") 
             }
             throw err;
           }
-          const outcome = await ingestPdf({
-            env,
-            db,
-            householdId,
+          const read = await quickOrBackground(
+            ingestPdf({
+              env,
+              db,
+              householdId,
+              item,
+              bytes: upload.bytes,
+              source: "pdf_upload",
+              sourceUrl: pdf_url,
+              official,
+            }).then(async (outcome) => {
+              // The manual has its own copy now; the slot's file isn't needed.
+              await discardUpload(db, upload.path);
+              return outcome;
+            }),
+            left(),
+          );
+          if (!read.done) return reply(stillReading(label, added, notNew), { item, reading: true });
+          return reply(attachedSentence(read.value, label, added, notNew), {
             item,
-            bytes: upload.bytes,
-            source: "pdf_upload",
-            sourceUrl: pdf_url,
-            official,
-          });
-          // The manual has its own copy now; the slot's file isn't needed.
-          await discardUpload(db, upload.path);
-          return reply(attachedSentence(outcome, label, added, notNew), {
-            item,
-            manual: outcome,
+            manual: read.value,
           });
         }
 
@@ -193,18 +215,26 @@ export function register(server: McpServer, env: Env, surface: Surface = "mcp") 
           }
           throw err;
         }
-        const outcome = await ingestPdf({
-          env,
-          db,
-          householdId,
+        const read = await quickOrBackground(
+          ingestPdf({
+            env,
+            db,
+            householdId,
+            item,
+            bytes: fetched.bytes,
+            source: "url",
+            sourceUrl: fetched.finalUrl,
+            official,
+          }),
+          left(),
+        );
+        if (!read.done) return reply(stillReading(label, added, notNew), { item, reading: true });
+        return reply(attachedSentence(read.value, label, added, notNew), {
           item,
-          bytes: fetched.bytes,
-          source: "url",
-          sourceUrl: fetched.finalUrl,
-          official,
+          manual: read.value,
         });
-        return reply(attachedSentence(outcome, label, added, notNew), { item, manual: outcome });
-      }),
+      });
+    },
   );
 }
 
