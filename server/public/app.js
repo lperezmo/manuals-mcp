@@ -407,7 +407,10 @@ function saveChat(messages, id = currentChat()) {
   const chatId = id || crypto.randomUUID();
   if (!id) openChatId(chatId);
   const others = loadChats().filter((c) => c.id !== chatId);
-  storeChats([{ id: chatId, updated: new Date().toISOString(), messages: messages.slice(-30) }, ...others]);
+  storeChats([
+    { id: chatId, updated: new Date().toISOString(), messages: messages.slice(-30) },
+    ...others,
+  ]);
 }
 
 /** The chat list: each chat by its first question, newest first. */
@@ -781,7 +784,14 @@ async function send(text, onChange, via, photo) {
 }
 
 const STILL_WORKING = "Still working on it. The answer shows up here when it's done.";
-const READ_ONLY = ["list_items", "ask_manual", "upcoming", "car_seat_status", "photo_check", "fast_lane"];
+const READ_ONLY = [
+  "list_items",
+  "ask_manual",
+  "upcoming",
+  "car_seat_status",
+  "photo_check",
+  "fast_lane",
+];
 const changedSomething = (tools = []) => tools.some((t) => !READ_ONLY.includes(t));
 
 function assistantMessage({ reply, tools_used, card, fast, history }) {
@@ -827,7 +837,10 @@ async function recoverTurn(turn, onChange) {
       if (!saved.error && changedSomething(saved.tools_used)) onChange?.();
       return;
     }
-    settleTurn(turn, { role: "assistant", content: "Sorry, that answer got lost on the way. Ask again?" });
+    settleTurn(turn, {
+      role: "assistant",
+      content: "Sorry, that answer got lost on the way. Ask again?",
+    });
   } catch {
     recovering.delete(turn);
   }
@@ -840,7 +853,8 @@ function settleTurn(turn, message) {
   if (!chat) return;
   const messages = chat.messages.map((m) => (m.pending === turn ? message : m));
   saveChat(messages, chat.id);
-  if (chat.id === currentChat() && drawer && !drawer.classList.contains("hidden")) renderChat(messages);
+  if (chat.id === currentChat() && drawer && !drawer.classList.contains("hidden"))
+    renderChat(messages);
 }
 
 // Line icons for things, 24px grid, drawn with currentColor. Matched on the

@@ -256,7 +256,7 @@
       }
 
 
-      const SAYS_WHEN = /(every|each|daily|weekly|monthly|yearly|annually|once a)/i;
+      const SAYS_WHEN = /\b(every|each|daily|weekly|monthly|yearly|annually|once a)\b/i;
       const REVIEW_KIND = { fact: "Fact", task: "Upkeep", seat_limit: "Car seat limit" };
       function reviewTile(r) {
         return `<button type="button" class="rv-tile" data-review-tile="${r.id}" aria-pressed="false">

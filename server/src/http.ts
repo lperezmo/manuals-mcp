@@ -71,7 +71,7 @@ import {
   SETUP_MESSAGE,
   toolsFor,
 } from "./router.js";
-import { BUDGET_USED, logRun, modelRunsTodayAll, runsToday } from "./runs.js";
+import { BUDGET_USED, logRun, modelRunsTodayAll, runsToday, type Spent } from "./runs.js";
 import { MAX_IMAGE_BYTES, modelGuess, radioSticker, readLabel } from "./snap.js";
 import { ITEM_COLUMNS, itemLabel } from "./tools/context.js";
 import { groupTasks } from "./upkeep.js";
@@ -759,6 +759,7 @@ export function snapHandler(
     }
     const model = env.chatModel ?? env.reader?.model ?? null;
     const started = Date.now();
+    const spent: Spent = { tokens_in: 0, tokens_out: 0 };
     const photo = { mime: match[1], base64: match[2] };
     // Jev's quick look: a photo with no label or unreadable text is sent back
     // before Muse spends a read on it. "Read it anyway" skips this.
@@ -780,7 +781,7 @@ export function snapHandler(
       return Response.json({ found: false, retake: check.retake });
     }
     try {
-      const label = await readLabel(env, photo, fetchImpl);
+      const label = await readLabel(env, photo, fetchImpl, spent);
       if (!label.model) {
         // No line says "Model": offer the likeliest tagged code for the person to confirm.
         const guess = modelGuess(label.codes);
@@ -802,6 +803,7 @@ export function snapHandler(
         ok: true,
         model,
         ms: Date.now() - started,
+        ...spent,
         raw_output: JSON.stringify(reread ? { ...label, check: reread } : label),
       });
       return Response.json(
@@ -809,7 +811,14 @@ export function snapHandler(
       );
     } catch (err) {
       const error = (err as Error).message;
-      await logRun(db, { kind: "snap", ok: false, model, error, ms: Date.now() - started });
+      await logRun(db, {
+        kind: "snap",
+        ok: false,
+        model,
+        error,
+        ms: Date.now() - started,
+        ...spent,
+      });
       return Response.json({ error: photoError(err as Error) }, { status: 502 });
     }
   };
@@ -873,6 +882,7 @@ export function receiptHandler(
     }
     const model = env.chatModel ?? env.reader?.model ?? null;
     const started = Date.now();
+    const spent: Spent = { tokens_in: 0, tokens_out: 0 };
     const photo = { mime: match[1], base64: match[2] };
     // The same quick look as label photos, asking for a receipt or card instead.
     const check = body.force === true ? null : await checkPhoto(env, photo, fetchImpl, "receipt");
@@ -890,7 +900,7 @@ export function receiptHandler(
       return Response.json({ found: false, retake: check.retake });
     }
     try {
-      const read = await readReceipt(env, photo, fetchImpl);
+      const read = await readReceipt(env, photo, fetchImpl, spent);
       // The same second look: a doubtful date or price is saved, but the
       // person is asked to check it against the photo. Anything read is saved
       // below, found or not, so anything read is checked.
@@ -902,6 +912,7 @@ export function receiptHandler(
         ok: true,
         model,
         ms: Date.now() - started,
+        ...spent,
         item_id: item.id,
         raw_output: JSON.stringify({
           photo: "receipt",
@@ -935,7 +946,14 @@ export function receiptHandler(
       });
     } catch (err) {
       const error = (err as Error).message;
-      await logRun(db, { kind: "snap", ok: false, model, error, ms: Date.now() - started });
+      await logRun(db, {
+        kind: "snap",
+        ok: false,
+        model,
+        error,
+        ms: Date.now() - started,
+        ...spent,
+      });
       return Response.json({ error: photoError(err as Error) }, { status: 502 });
     }
   };

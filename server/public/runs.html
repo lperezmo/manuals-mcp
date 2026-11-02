@@ -37,6 +37,30 @@
         ["failed", "Failed"],
       ];
       let runs = [];
+      let spend = [];
+      // What each credit costs per million tokens, and how much the hackathon gave us.
+      // Estimated from the tokens in the log: the providers' own billing is the real number.
+      const CREDITS = [
+        { name: "Muse on Baseten", match: (m) => m.startsWith("meta-models/"), in: 1.25, out: 4.25, credit: 100 },
+        { name: "Jev on TypeSafe", match: (m) => m.startsWith("jev"), in: 0.042, out: 0, credit: 5 },
+      ];
+      const usd = (n) => (n < 0.01 && n > 0 ? "<$0.01" : `$${n.toFixed(2)}`);
+      function creditCard(c) {
+        const rows = spend.filter((r) => c.match(r.model));
+        const tin = rows.reduce((n, r) => n + Number(r.tokens_in), 0);
+        const tout = rows.reduce((n, r) => n + Number(r.tokens_out), 0);
+        const calls = rows.reduce((n, r) => n + Number(r.runs), 0);
+        const first = rows.map((r) => r.first_at).sort()[0];
+        const used = (tin * c.in + tout * c.out) / 1e6;
+        const left = Math.max(0, c.credit - used);
+        const pct = Math.min(100, (100 * used) / c.credit);
+        return `<div class="card credit">
+          <div class="row" style="justify-content:space-between;align-items:baseline"><strong class="small">${c.name}</strong><span class="small muted">${usd(used)} of $${c.credit} used</span></div>
+          <strong class="credit-left">${usd(left)} left</strong>
+          <div class="credit-bar" role="meter" aria-label="${c.name} credit used" aria-valuemin="0" aria-valuemax="${c.credit}" aria-valuenow="${used.toFixed(2)}"><span style="width:${pct.toFixed(1)}%"></span></div>
+          <span class="small muted">${num(calls)} calls · ${num(tin)} tokens in, ${num(tout)} out${first ? ` · since ${new Date(first).toLocaleDateString()}` : ""}</span>
+        </div>`;
+      }
       let names = new Map();
       let filter = "all";
 
@@ -116,6 +140,10 @@
             <h1>Model log</h1>
             <p class="muted">Every manual Muse read and every chat question, newest first. Open one to see the details, or copy them for a bug report.</p>
           </section>
+          <section class="stack" style="gap:8px" aria-label="Credits">
+            <div class="credits">${CREDITS.map(creditCard).join("")}</div>
+            <p class="small muted" style="margin:0">Estimated from the tokens logged for every household. Runs from before photo reads logged tokens count as zero, and the providers' billing is the real number.</p>
+          </section>
           <section class="run-stats" aria-label="Last 24 hours">
             <div class="card"><strong>${count("chat")}</strong><span class="small muted">chat questions today</span></div>
             <div class="card"><strong>${count("fast") + count("chat") ? `${Math.round((100 * count("fast")) / (count("fast") + count("chat")))}%` : "0%"}</strong><span class="small muted">answered without Muse</span></div>
@@ -161,7 +189,7 @@
       async function start() {
         if (!(await boot("/runs"))) return;
         const client = await db();
-        const [result, items] = await Promise.all([
+        const [result, items, spent] = await Promise.all([
           client
             .from("model_runs")
             .select(
@@ -170,7 +198,10 @@
             .order("created_at", { ascending: false })
             .limit(200),
           client.from("items").select("id, nickname"),
+          client.rpc("model_spend_all"),
         ]);
+        // No spend function yet (the migration isn't in) just leaves the credits at zero.
+        spend = spent.data ?? [];
         if (result.error) throw new Error(result.error.message);
         runs = result.data;
         names = new Map((items.data ?? []).map((i) => [i.id, i.nickname]));

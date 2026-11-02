@@ -23,6 +23,12 @@ export interface ModelRun {
   raw_output?: string | null;
 }
 
+/** Token counts a model call adds to, logged with its run. */
+export interface Spent {
+  tokens_in: number;
+  tokens_out: number;
+}
+
 export async function logRun(db: Db, run: ModelRun): Promise<void> {
   try {
     await db

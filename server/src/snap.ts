@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Env } from "./env.js";
+import type { Spent } from "./runs.js";
 
 // Reads an appliance's rating plate from a photo with the reader model
 // (Muse Spark), so adding a thing can start from one picture.
@@ -78,6 +79,8 @@ export async function readLabel(
   env: Env,
   image: { mime: string; base64: string },
   fetchImpl: typeof fetch = fetch,
+  /** Filled with the call's token counts, for the model log. */
+  spent?: Spent,
 ): Promise<Label> {
   const reader = env.reader;
   if (!reader) throw new Error("The photo reader isn't configured (READER_* settings).");
@@ -107,7 +110,14 @@ export async function readLabel(
     signal: AbortSignal.timeout(45_000),
   });
   if (!res.ok) throw new Error(`The photo reader answered ${res.status}.`);
-  const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  const body = (await res.json()) as {
+    choices?: { message?: { content?: string } }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
+  if (spent) {
+    spent.tokens_in += body.usage?.prompt_tokens ?? 0;
+    spent.tokens_out += body.usage?.completion_tokens ?? 0;
+  }
   return parseLabel(body.choices?.[0]?.message?.content ?? "");
 }
 
