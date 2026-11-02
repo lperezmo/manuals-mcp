@@ -103,7 +103,7 @@ describe("ask_manual's line finder", () => {
     expect(text).toContain('"passages"');
   });
 
-  test("says the manual doesn't cover it when no line answers", async () => {
+  test("says no line answers it, and passes the pages that name it for a drawing", async () => {
     backend({
       jev: () =>
         Response.json({
@@ -111,9 +111,11 @@ describe("ask_manual's line finder", () => {
         }),
     });
     const text = await ask({ query: "comforter", question: "Can I wash a down comforter?" });
-    expect(text).toContain("The manual doesn't seem to cover this");
+    // No sentence answers it, but the pages that name it go along, so a drawing can.
+    expect(text).toContain("No line answers this in words");
+    expect(text).toContain("show_diagram");
     expect(text).toContain('"covered": false');
-    expect(text).toContain('"searched"');
+    expect(text).toContain('"mentioned_on"');
     expect(text).not.toContain('"passages"');
   });
 

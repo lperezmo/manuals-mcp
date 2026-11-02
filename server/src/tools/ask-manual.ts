@@ -25,7 +25,7 @@ export function register(server: McpServer, env: Env) {
         'For a fault, pass kind "fix" to search only the troubleshooting pages (it falls back to every page when none match). With an item, manual_atlas lists its pages by kind (safety, setup, use, care, fix, parts, warranty) for jump links.',
         "Quote the page in your answer. Mention when a fact's status is needs_review.",
         "Pass the person's whole question as question too: when one saved fact or task answers it outright, it comes back first as best_match (a quick check, no reading).",
-        "When the search finds pages, answer_line is the exact line that answers the question, with its page: quote it. covered: false means the pages searched don't answer it: say the manual doesn't seem to cover it rather than guessing.",
+        "When the search finds pages, answer_line is the exact line that answers the question, with its page: quote it. covered: false means no line answers it in words; mentioned_on lists the pages that name it. For where a part is, its drawing on one of those pages may answer it (show_diagram); otherwise say the manual doesn't spell it out rather than guessing.",
       ].join(" "),
       inputSchema: z.object({
         query: z.string().min(1).max(200).optional(),
@@ -181,8 +181,14 @@ export function register(server: McpServer, env: Env) {
             !out.best_match &&
             !out.exact_facts;
           if (uncovered) {
+            // No line answers it in words, but these pages name it: "where is the
+            // overfill float" is answered by page 13's drawing, not by a sentence.
             out.covered = false;
-            out.searched = hits.map((h) => ({ item: h.item_name, page: h.page_number }));
+            out.mentioned_on = hits.map((h) => ({
+              item: h.item_name,
+              page: h.page_number,
+              text: h.snippet,
+            }));
           } else if (hits.length) {
             out.passages = hits.map((h) => ({
               item: h.item_name,
@@ -269,7 +275,7 @@ export function register(server: McpServer, env: Env) {
           out.answer_line
             ? "Here's the line in the manual that answers it. Quote it with its page."
             : out.covered === false
-              ? "The manual doesn't seem to cover this. Say so plainly instead of stretching related pages into an answer."
+              ? "No line answers this in words, but mentioned_on lists the pages that name it. If they asked where a part is, what it looks like or how to reach it, call show_diagram with the page that names it: its drawing may show it. Otherwise say the manual doesn't spell it out, instead of stretching related pages into an answer."
               : "Here's what the manuals say. Cite the page numbers.",
           out,
         );
