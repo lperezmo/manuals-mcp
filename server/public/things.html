@@ -12,7 +12,7 @@
     />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=archive,auto_awesome,build,check,cleaning_services,content_copy,delete,edit,event,fact_check,forum,health_and_safety,history,menu_book,more_horiz,palette,photo_camera,receipt_long,settings,share,tune,unarchive&display=block"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=add_a_photo,archive,auto_awesome,build,center_focus_strong,check,cleaning_services,close,content_copy,delete,download,edit,event,fact_check,flare,forum,health_and_safety,history,info,inventory_2,ios_share,keyboard,location_on,menu_book,more_horiz,new_releases,open_in_new,palette,photo_camera,picture_as_pdf,receipt_long,schedule,search,settings,share,task_alt,tune,unarchive,upload,zoom_in&display=block"
     />
     <link rel="stylesheet" href="/theme.css" />
     <script src="/theme.js"></script>
@@ -216,6 +216,8 @@
       const GOALS = [["keep_running", "Just keep it running"], ["like_new", "Get it back to like new"], ["bare_minimum", "The bare minimum"]];
       // Kept for this visit too, so the page can plan from it before the database has the history columns.
       const HISTORY_KEY = (id) => `manuals-history-${id}`;
+      // Set by the add wizard: the thing's page picks the manual for it and shows a Ready card once it's read.
+      const FRESH_KEY = (id) => `manuals-fresh-${id}`;
       const PLAN_KEY = (id) => `manuals-plan-${id}`;
       const PLANNED_KEY = (id) => `manuals-planned-${id}`;
       const stash = (key, value) => {
@@ -411,8 +413,10 @@
         const source = (x) =>
           `<span class="row small muted" style="gap:6px"><span class="dot src-${x.source}"></span>${SOURCES[x.source]}${x.source_page ? ` · p. ${x.source_page}` : ""}</span>`;
 
+        const ready = unstash(FRESH_KEY(item.id)) && manual?.status === "distilled";
         main.onclick = null;
         main.innerHTML = `
+          ${ready ? readyCard(item) : ""}
           <section class="stack">
             <a href="/things" style="font-weight:700;text-decoration:none">← Your things</a>
             ${item.archived_at ? `<div class="card flat archived-banner"><span>${ic("archive")}Archived. It's hidden from your list, your upcoming tasks and Muse.</span><div class="row"><button type="button" class="small" id="restore-item">${ic("unarchive")}Restore</button><button type="button" class="quiet small danger" id="delete-item">${ic("delete")}Delete for good</button></div></div>` : ""}
@@ -663,6 +667,24 @@
         }
         $("#photo-clear")?.addEventListener("click", () => savePhoto(null, "Back to the icon."));
         wireManualForm(item, () => detail(id));
+        if (ready) {
+          // Shown once: closing it, or any of its buttons, ends the wizard.
+          const done = () => {
+            try {
+              sessionStorage.removeItem(FRESH_KEY(item.id));
+            } catch {}
+            $("#ready-card")?.remove();
+          };
+          $("#ready-close").addEventListener("click", done);
+          $("#ready-receipt").addEventListener("click", () => {
+            done();
+            $("#receipt-photo")?.click();
+          });
+          $("#ready-tune").addEventListener("click", () => {
+            done();
+            openChat(`Set up the ${item.nickname} with me: ask what you need to know.`, () => detail(id), { once: true, own: true });
+          });
+        }
         wireWarranty(item, receipt, !receiptsError, () => detail(id));
         const markDone = async (taskId) => {
           const { error: e } = await supa.rpc("log_task_done", { p_task: taskId });
@@ -953,6 +975,7 @@
             <div class="stack" style="margin-top:10px">
               <form class="field" data-link><label class="sr-only" for="pdf-url">Link to the manual PDF</label>
                 <input id="pdf-url" type="url" placeholder="https://maker.example/manual.pdf"><button type="submit">Read it</button></form>
+              <div class="row"><button type="button" class="quiet" data-pages>${ic("photo_camera")}Photograph the paper manual</button></div>
               <div class="row"><label class="button quiet" for="pdf-file" style="cursor:pointer">Upload a PDF</label>
                 <input id="pdf-file" type="file" accept="application/pdf" class="sr-only"><span class="small muted" data-progress role="status"></span></div>
             </div>
@@ -1007,14 +1030,263 @@
             <span class="small muted" style="overflow-wrap:anywhere">${esc(c.host)}${c.page_count ? ` · ${c.page_count} pages` : ""}</span>
             <div class="row" style="gap:6px">${tags}</div>
             ${c.models?.length ? `<p class="small muted" style="margin:4px 0 0">Covers ${c.models.length} models: ${esc(c.models.slice(0, 4).join(", "))}${c.models.length > 4 ? ", …" : ""}</p>` : ""}
-            ${c.blocked ? `<p class="small" style="margin:4px 0 0">${esc(who)} won't let apps download it. Tap Open, save the PDF, then Upload a PDF.</p>` : ""}
+            ${
+              c.blocked
+                ? `<p class="small" style="margin:4px 0 0">${esc(who)} blocks apps from downloading it. Takes 20 seconds:</p>
+                  <ol class="wz-num">
+                    <li><span>Open the PDF</span><a class="button small" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">${ic("open_in_new")}Open</a></li>
+                    <li><span>Tap ${ic("ios_share")} or ⋮, then <strong>Download</strong></span></li>
+                    <li><span>Come back and add it</span><button type="button" class="quiet small" data-add-pdf>${ic("upload")}Add PDF</button></li>
+                  </ol>`
+                : ""
+            }
             ${c.model_hint ? `<p class="small" style="margin:4px 0 0">This manual spells it <strong>${esc(c.model_hint)}</strong>; the label photo may have been misread. <button type="button" class="quiet small" data-fix-model="${esc(c.model_hint)}">Fix the model</button></p>` : ""}
           </div>
-          <div class="row">
-            ${c.blocked ? "" : `<button type="button" data-use="${esc(c.url)}" data-official="${c.official}">Use this</button>`}
-            <a class="button${c.blocked ? "" : " quiet"}" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">Open</a>
-          </div>
+          ${c.blocked ? "" : `<div class="row"><button type="button" data-use="${esc(c.url)}" data-official="${c.official}">Use this</button><a class="button quiet" href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">Open</a></div>`}
         </div>`;
+      }
+
+      /**
+       * The candidate to use without asking: Jev's pick, else the only one, else the
+       * maker's PDF that names this exact model. Never a spec sheet. Null when it's
+       * a real choice, and the person picks.
+       */
+      function autoPick(candidates) {
+        const usable = candidates.filter((c) => !c.sheet);
+        return (
+          usable.find((c) => c.best) ??
+          (candidates.length === 1 && usable.length === 1 ? usable[0] : null) ??
+          usable.find((c) => c.official && c.has_model && c.match === "exact") ??
+          null
+        );
+      }
+
+      /** A found manual's icon, title and the few tags that matter. */
+      function foundHead(c, item) {
+        const who = c.official && item?.brand ? item.brand : c.host.replace(/^www[.]/, "");
+        const tags = [
+          c.official ? `<span class="chip teal strong">From ${esc(who)}</span>` : `<span class="chip">${esc(who)}</span>`,
+          c.has_model && c.match !== "lookalike" ? `<span class="chip teal strong">${c.match === "family" ? "Same model family" : "Your exact model"}</span>` : "",
+          c.page_count ? `<span class="chip">${c.page_count} pages</span>` : "",
+        ].join("");
+        return `<div class="wz-found-head"><span class="wz-pdf" aria-hidden="true"><i></i><i></i><i></i><b>PDF</b></span>
+          <div class="stack" style="gap:6px;min-width:0"><strong style="overflow-wrap:anywhere">${esc(c.title || "Owner's manual")}</strong><div class="row" style="gap:6px">${tags}</div></div></div>`;
+      }
+
+      /** Marks the progress steps: those before `now` done, `now` running. */
+      function markStep(found, now) {
+        const order = ["dl", "read", "facts"];
+        for (const li of found.querySelectorAll("[data-st]")) {
+          const i = order.indexOf(li.dataset.st);
+          li.className = i < order.indexOf(now) ? "done" : i === order.indexOf(now) ? "now" : "";
+        }
+      }
+
+      // Two calls: download and store (a maker's site can be slow), then Muse's read.
+      // Progress and errors stay on the card, not in a toast that disappears.
+      async function attachManual(found, c, item, after, fallback) {
+        const uses = found.querySelectorAll("[data-use]");
+        for (const other of uses) other.disabled = true;
+        let status = found.querySelector("[data-attach-status]");
+        if (!status) {
+          found.insertAdjacentHTML("beforeend", '<p class="small" role="status" data-attach-status></p>');
+          status = found.querySelector("[data-attach-status]");
+        }
+        const steps = !!found.querySelector("[data-st]");
+        status.style.color = "";
+        if (!steps) status.textContent = "Downloading the manual from the maker's site. Some are slow; this can take a minute or two.";
+        try {
+          // The read starts on the server, so leaving the page doesn't stop it.
+          watchJob({ kind: "read", item: item.id, label: item.nickname });
+          const out = await api("/api/attach", { item_id: item.id, url: c.url, official: !!c.official, read: true });
+          if (out.reading) {
+            if (steps) markStep(found, "read");
+            else status.textContent = READING_IN_BACKGROUND;
+            return;
+          }
+          forgetJob("read", item.id);
+          if (!unstash(FRESH_KEY(item.id))) toast(out.distilled ? `Read it: ${out.distilled.tasks} tasks, ${out.distilled.facts} facts.` : out.note || "Saved.");
+          after();
+        } catch (err) {
+          forgetJob("read", item.id);
+          found.querySelector(".wz-progress")?.remove();
+          status.style.color = "var(--coral)";
+          status.textContent = err.message;
+          for (const other of uses) other.disabled = false;
+          // Saving the PDF by hand is the way forward; show where to add it.
+          fallback();
+        }
+      }
+
+      /** "Add PDF" on a blocked card and "Photograph the paper manual" anywhere in `root`. */
+      function wirePdfButtons(root, item, after) {
+        for (const b of root.querySelectorAll("[data-add-pdf]")) {
+          b.addEventListener("click", () => {
+            const own = $("#own-pdf");
+            if (own) own.open = true;
+            $("#pdf-file")?.click();
+          });
+        }
+        for (const b of root.querySelectorAll("[data-pages]")) {
+          b.addEventListener("click", () => pagesFlow(item, after));
+        }
+      }
+
+      // --- Photographing a paper manual ----------------------------------------
+      // Each page is snapped one at a time into a grid. Jev looks at each as it
+      // lands: a blurry page is marked for a retake and a page in another
+      // language is skipped. The usable pages become one PDF on the phone, and
+      // that goes up like any upload: the server reads a PDF without a text
+      // layer page by page with Muse.
+
+      const MAX_PAGE_PHOTOS = 40;
+      let jsPdfLoading = null;
+      function loadJsPdf() {
+        jsPdfLoading ??= new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+          s.onload = () => resolve(window.jspdf.jsPDF);
+          s.onerror = () => {
+            jsPdfLoading = null;
+            reject(new Error("Couldn't load the PDF maker. Check the connection and try again."));
+          };
+          document.head.append(s);
+        });
+        return jsPdfLoading;
+      }
+
+      /** A data URL's pixel size, for sizing its PDF page. */
+      const imageSize = (src) =>
+        new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve({ w: img.width, h: img.height });
+          img.onerror = () => reject(new Error("Couldn't open a page photo."));
+          img.src = src;
+        });
+
+      async function pagesPdf(pages) {
+        const JsPdf = await loadJsPdf();
+        let doc = null;
+        for (const p of pages) {
+          const { w, h } = await imageSize(p.src);
+          const format = [w, h];
+          if (!doc) doc = new JsPdf({ unit: "px", format, orientation: w > h ? "landscape" : "portrait", hotfixes: ["px_scaling"] });
+          else doc.addPage(format, w > h ? "landscape" : "portrait");
+          doc.addImage(p.src, "JPEG", 0, 0, w, h);
+        }
+        return new File([doc.output("blob")], "Photographed manual.pdf", { type: "application/pdf" });
+      }
+
+      function pagesFlow(item, after) {
+        const section = $("#found")?.closest("section") ?? $("#manual-section");
+        if (!section) return;
+        const pages = [];
+        let replacing = null;
+        const usable = () => pages.filter((p) => p.check && !p.check.retake && p.check.english);
+        const draw = () => {
+          const ready = usable().length;
+          const retakes = pages.filter((p) => p.check?.retake).length;
+          const skipped = pages.filter((p) => p.check && !p.check.retake && !p.check.english).length;
+          const checking = pages.filter((p) => !p.check).length;
+          section.innerHTML = `<div class="stack" id="pages-flow">
+              <div class="row" style="justify-content:space-between"><h2 style="margin:0">Snap each page</h2><span class="small muted">${pages.length} page${pages.length === 1 ? "" : "s"}</span></div>
+              <p class="muted" style="margin:0">Care and troubleshooting pages matter most.</p>
+              <div class="pg-grid">${pages
+                .map((p, i) => {
+                  const flag = !p.check ? '<span class="pg-flag">Checking…</span>' : p.check.retake ? '<span class="pg-flag gold">Retake</span>' : !p.check.english ? '<span class="pg-flag">Not English</span>' : "";
+                  const cls = p.check?.retake ? "retake" : p.check && !p.check.english ? "skip" : "";
+                  return `<div class="pg-tile ${cls}">
+                    <button type="button" class="pg-shot" data-page="${i}" aria-label="Page ${i + 1}${p.check?.retake ? ", blurry, tap to retake" : ""}">${p.src ? `<img src="${p.src}" alt="">` : ""}</button>
+                    ${flag}<span class="pg-num">${i + 1}</span>
+                    <button type="button" class="pg-x" data-drop="${i}" aria-label="Remove page ${i + 1}">${ic("close")}</button>
+                  </div>`;
+                })
+                .join("")}
+                ${pages.length < MAX_PAGE_PHOTOS ? `<label class="pg-add" for="page-camera">${ic("add_a_photo")}<span>${pages.length ? "Next page" : "First page"}</span></label>` : ""}
+              </div>
+              <div class="row"><label class="link small" for="page-upload" style="cursor:pointer">Or pick photos you already took</label></div>
+              ${pages.length ? `<p class="wz-card small" style="margin:0">${ic("task_alt")} ${[`${ready} ready`, retakes && `${retakes} to retake`, skipped && `${skipped} skipped`, checking && `${checking} checking`].filter(Boolean).join(" · ")}</p>` : ""}
+              <button type="button" class="wz-big" id="pages-read" ${ready && !checking ? "" : "disabled"}>${ready ? `Read ${ready} page${ready === 1 ? "" : "s"}` : "Read the pages"}</button>
+              <p class="small muted" role="status" id="pages-msg" style="margin:0"></p>
+              <button type="button" class="link small" id="pages-cancel" style="align-self:start">Cancel</button>
+              <input id="page-camera" type="file" accept="image/*" capture="environment" class="sr-only">
+              <input id="page-upload" type="file" accept="image/*" multiple class="sr-only">
+            </div>`;
+          const add = (files) => {
+            for (const file of files) {
+              if (pages.length >= MAX_PAGE_PHOTOS && replacing == null) break;
+              const page = { src: null, check: null };
+              if (replacing != null) pages[replacing] = page;
+              else pages.push(page);
+              replacing = null;
+              shrink(file, 1568)
+                .then(async (src) => {
+                  page.src = src;
+                  draw();
+                  page.check = await api("/api/page-check", { image: src }).catch(() => ({ retake: null, english: true }));
+                })
+                .catch((err) => {
+                  pages.splice(pages.indexOf(page), 1);
+                  toast(err.message);
+                })
+                .finally(draw);
+            }
+            draw();
+          };
+          $("#page-camera").addEventListener("change", (e) => add([...e.target.files]));
+          $("#page-upload").addEventListener("change", (e) => add([...e.target.files]));
+          for (const b of section.querySelectorAll("[data-page]")) {
+            b.addEventListener("click", () => {
+              replacing = Number(b.dataset.page);
+              $("#page-camera").click();
+            });
+          }
+          for (const b of section.querySelectorAll("[data-drop]")) {
+            b.addEventListener("click", () => {
+              pages.splice(Number(b.dataset.drop), 1);
+              draw();
+            });
+          }
+          $("#pages-cancel").addEventListener("click", after);
+          $("#pages-read").addEventListener("click", async (e) => {
+            const button = e.currentTarget;
+            const msg = $("#pages-msg");
+            button.disabled = true;
+            try {
+              msg.textContent = "Putting the pages together…";
+              const file = await pagesPdf(usable());
+              const out = await uploadManual(item, file, (t) => {
+                msg.textContent = t;
+              });
+              if (!out?.background) after();
+            } catch (err) {
+              button.disabled = false;
+              msg.style.color = "var(--coral)";
+              msg.textContent = err.message;
+            }
+          });
+        };
+        draw();
+        section.scrollIntoView({ block: "start", behavior: "smooth" });
+      }
+
+      /** The wizard's last step, on the thing's page once its manual is read: what Muse found and what's first. */
+      function readyCard(item) {
+        const tasks = item.tasks.filter((t) => t.active);
+        const codes = item.manual_facts.filter((f) => f.kind === "error_code").length;
+        const specs = item.manual_facts.filter((f) => f.kind === "spec").length;
+        const first = tasks.filter((t) => t.next_due_on).sort((a, b) => a.next_due_on.localeCompare(b.next_due_on))[0];
+        const stat = (n, what) => `<div class="wz-stat"><strong>${n}</strong><span class="small muted">${what}</span></div>`;
+        return `<section class="card wz-ready" id="ready-card" aria-labelledby="ready-h">
+            <div class="row" style="justify-content:space-between;align-items:center"><span class="wz-ok big" aria-hidden="true">${ic("check")}</span><button type="button" class="quiet small" id="ready-close" aria-label="Close">${ic("close")}</button></div>
+            <h2 id="ready-h" style="margin:0">${esc(item.nickname)} is ready</h2>
+            <div class="wz-stats">${stat(tasks.length, tasks.length === 1 ? "upkeep task" : "upkeep tasks")}${stat(codes, codes === 1 ? "error code" : "error codes")}${stat(specs, specs === 1 ? "spec" : "specs")}</div>
+            ${first ? `<div class="wz-card row" style="gap:12px;flex-wrap:nowrap">${ic("event")}<div class="stack" style="gap:2px"><strong>${esc(first.title)}</strong><span class="small muted">First up, ${esc(relDay(first.next_due_on))}</span></div></div>` : ""}
+            <div class="wz-alts two">
+              <button type="button" class="quiet" id="ready-receipt">${ic("receipt_long")}Add receipt</button>
+              <button type="button" class="quiet" id="ready-tune">${ic("auto_awesome")}Tune with Muse</button>
+            </div>
+          </section>`;
       }
 
       async function findOnline(item, after, fresh = false) {
@@ -1056,11 +1328,39 @@
             } catch {}
           }
           if (!out.candidates.length) {
-            found.innerHTML = `<p class="muted small">Couldn't find a PDF that looks like this one for “${esc(out.query)}”. If you have the paper manual, the maker's site often has it under Support; paste that link or upload the PDF below.</p>`;
+            found.innerHTML = `<p class="muted small">No PDF turned up for “${esc(out.query)}”.</p>
+              <button type="button" class="wz-big" data-pages>${ic("photo_camera")}Photograph the paper manual</button>
+              <p class="small muted" style="margin:0">Or find it on the maker's Support page and paste the link or upload the PDF below.</p>`;
+            wirePdfButtons(found, item, after);
             fallback();
             return;
           }
-          found.innerHTML = `<h3>Is this yours?</h3>${out.candidates.map((c) => candidateCard(c, item)).join("")}`;
+          // Fresh from the add wizard: Jev's pick (or the one clear match) is used without asking.
+          const pick = unstash(FRESH_KEY(item.id)) ? autoPick(out.candidates) : null;
+          if (pick?.model_hint) {
+            // The maker's PDF prints the real number: the label photo was misread, so fix it quietly.
+            const { error } = await (await db()).from("items").update({ model: pick.model_hint }).eq("id", item.id);
+            if (!error) {
+              item.model = pick.model_hint;
+              toast(`Model saved as ${item.model}, the maker's spelling.`);
+            }
+            pick.model_hint = null;
+          }
+          const others = out.candidates.filter((c) => c !== pick);
+          if (pick && !pick.blocked) {
+            found.innerHTML = `<div class="wz-found">${foundHead(pick, item)}
+                <ol class="wz-steps" aria-label="Progress">
+                  <li data-st="dl" class="now">Downloading</li>
+                  <li data-st="read">Muse reads it</li>
+                  <li data-st="facts">Upkeep, error codes, specs</li>
+                </ol>
+                <div class="wz-progress" aria-hidden="true"><span class="wz-indeterminate"></span></div>
+                <p class="small muted" role="status" data-attach-status style="margin:0">Fine to leave; you'll get a heads-up when it's done.</p>
+              </div>
+              ${others.length ? `<details class="wz-more"><summary>Not this one? ${others.length} more</summary><div class="stack" style="margin-top:10px">${others.map((c) => candidateCard(c, item)).join("")}</div></details>` : ""}`;
+          } else {
+            found.innerHTML = `${pick ? "" : "<h3>Is this yours?</h3>"}${(pick ? [pick, ...others] : out.candidates).map((c) => candidateCard(c, item)).join("")}`;
+          }
           // Only sites that block apps: the PDF has to come in by hand, so show where.
           if (out.candidates.every((c) => c.blocked)) fallback();
           // The maker's PDF prints the real number; one tap saves it on the thing.
@@ -1077,40 +1377,11 @@
               toast(`Model saved as ${item.model}.`);
             });
           }
-          // Two calls: download and store (a maker's site can be slow), then Muse's read.
-          // Progress and errors stay on the card, not in a toast that disappears.
           for (const b of found.querySelectorAll("[data-use]")) {
-            b.addEventListener("click", async () => {
-              const uses = found.querySelectorAll("[data-use]");
-              for (const other of uses) other.disabled = true;
-              let status = found.querySelector("[data-attach-status]");
-              if (!status) {
-                found.insertAdjacentHTML("beforeend", '<p class="small" role="status" data-attach-status></p>');
-                status = found.querySelector("[data-attach-status]");
-              }
-              status.style.color = "";
-              status.textContent = "Downloading the manual from the maker's site. Some are slow; this can take a minute or two.";
-              try {
-                // The read starts on the server, so leaving the page doesn't stop it.
-                watchJob({ kind: "read", item: item.id, label: item.nickname });
-                const out = await api("/api/attach", { item_id: item.id, url: b.dataset.use, official: b.dataset.official === "true", read: true });
-                if (out.reading) {
-                  status.textContent = READING_IN_BACKGROUND;
-                  return;
-                }
-                forgetJob("read", item.id);
-                toast(out.distilled ? `Read it: ${out.distilled.tasks} tasks, ${out.distilled.facts} facts.` : out.note || "Saved.");
-                after();
-              } catch (err) {
-                forgetJob("read", item.id);
-                status.style.color = "var(--coral)";
-                status.textContent = err.message;
-                for (const other of uses) other.disabled = false;
-                // Saving the PDF by hand is the way forward; show where to add it.
-                fallback();
-              }
-            });
+            b.addEventListener("click", () => attachManual(found, { url: b.dataset.use, official: b.dataset.official === "true" }, item, after, fallback));
           }
+          wirePdfButtons(found, item, after);
+          if (pick && !pick.blocked) attachManual(found, pick, item, after, fallback);
         } catch (err) {
           found.innerHTML = `<p class="small" style="color:var(--coral)">${esc(err.message)}</p>`;
           fallback();
@@ -1126,6 +1397,7 @@
         const link = main.querySelector("[data-link]");
         if (!link) return;
         $("#find-manual")?.addEventListener("click", () => findOnline(item, after, true));
+        wirePdfButtons($("#own-pdf"), item, after);
         if (params.get("find") === "1") history.replaceState(null, "", `/things?id=${item.id}`);
         if (item.brand || item.model) findOnline(item, after);
         const progress = $("[data-progress]");
@@ -1477,13 +1749,7 @@
         // What we know so far; the photo fills it, the person corrects it.
         const thing = { nickname: "", brand: "", model: "", serial: "", category: null, kind: "appliance", pdf: "" };
         let image = null;
-        let receipt = null;
         let manual = params.get("add") === "pdf";
-
-        const head = `<section class="stack">
-            <a href="/things" style="font-weight:700;text-decoration:none">← Your things</a>
-            <h1>Add a thing</h1>
-          </section>`;
 
         function where() {
           const key = thing.category ? iconKey({ category: thing.category }) : null;
@@ -1499,14 +1765,9 @@
           </div>`;
         }
 
-        // The camera opens straight away; Upload picks one already in the gallery, like the home page.
-        function photoButton(text, quiet = false) {
-          return `<label class="button ${quiet ? "outline" : ""}" for="photo-camera" style="cursor:pointer">${text}</label><label class="button outline" for="photo" style="cursor:pointer">Upload a photo</label>`;
-        }
-
         function detailsForm(open) {
-          return `<details class="card" id="manual-entry" ${open ? "open" : ""}>
-            <summary style="font-weight:700;cursor:pointer">${open ? "Details" : "Enter the details yourself"}</summary>
+          return `<details class="card wz-details" id="manual-entry" ${open ? "open" : ""}>
+            <summary style="font-weight:700;cursor:pointer">${open ? "Details" : thing.brand || thing.model ? "Edit the details" : "Enter the details yourself"}</summary>
             <form class="stack" id="add-form" style="margin-top:12px">
               <label class="small" for="f-nick"><strong>What do you call it?</strong></label>
               <input id="f-nick" required placeholder="Washer" value="${esc(thing.nickname)}">
@@ -1519,37 +1780,35 @@
                 .join("")}</select>
               <label class="small" for="f-pdf"><strong>Link to the manual PDF</strong> <span class="muted">(optional; we'll search for it otherwise)</span></label>
               <input id="f-pdf" type="url" placeholder="https://maker.example/manual.pdf" value="${esc(thing.pdf)}">
-              <div class="stack" data-receipt-slot></div>
               <button type="submit">Continue</button>
               <p class="small muted" data-add-msg role="status"></p>
             </form>
           </details>`;
         }
 
-        function step(body, withDetails = true) {
-          main.innerHTML = `${head}
-            <section class="card wizard" style="max-width:640px">${body}</section>
+        // Three steps (label, is it new, manual), shown as dots; the manual is step 3 on the thing's page.
+        function dots(n) {
+          return `<div class="wz-dots" role="img" aria-label="Step ${n} of 3">${[1, 2, 3].map((i) => `<span class="${i <= n ? "on" : ""}"></span>`).join("")}</div>`;
+        }
+        const CANCEL = '<a href="/things" class="wz-link">Cancel</a>';
+        const BACK = '<button type="button" class="link wz-link" data-back>Back</button>';
+        const RETAKE = '<label class="wz-link" for="photo-camera" style="cursor:pointer">Retake</label>';
+        const photoTop = () => (image ? `<img src="${image}" alt="Your label photo" class="wizard-photo">` : "");
+
+        function step(body, { n = 1, details = true, left = CANCEL, right = "" } = {}) {
+          main.innerHTML = `<section class="wizard-shell">
+              <div class="wz-top">${left}${dots(n)}${right || '<span class="wz-link" aria-hidden="true"></span>'}</div>
+              <section class="wizard stack">${body}</section>
+              ${details ? detailsForm(manual) : ""}
+            </section>
             <input id="photo-camera" type="file" accept="image/*" capture="environment" class="sr-only">
-            <input id="photo" type="file" accept="image/*" class="sr-only">
-            <input id="receipt-photo" type="file" accept="image/*" class="sr-only">
-            ${withDetails ? `<div style="max-width:640px">${detailsForm(manual)}</div>` : ""}`;
+            <input id="photo" type="file" accept="image/*" class="sr-only">`;
           for (const id of ["#photo-camera", "#photo"]) {
             $(id).addEventListener("change", (e) => {
               const file = e.target.files?.[0];
               if (file) read(file);
             });
           }
-          $("#receipt-photo").addEventListener("change", async (e) => {
-            const file = e.target.files?.[0];
-            if (!file) return;
-            try {
-              receipt = await shrink(file, 1568);
-              drawReceipt();
-            } catch (err) {
-              toast(err.message);
-            }
-          });
-          drawReceipt();
           for (const b of main.querySelectorAll("[data-what]")) {
             b.addEventListener("click", () => {
               // The person's pick beats Muse's guess, and renames a thing still called by that guess.
@@ -1587,92 +1846,123 @@
 
         function start() {
           redraw = start;
-          step(`<div class="stack" style="justify-items:start">
-            <h2>Take a photo of its label</h2>
-            <p class="muted">Muse reads the brand and model off it, then finds the manual for you. The label is usually ${esc(where())}.</p>
-            <div class="row">${photoButton(`<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg> Take a photo`)}</div>
-            <div class="row"><button type="button" class="link" data-type>Type it in instead</button><span class="muted">·</span><a href="/things?add=pdf" class="link">I already have the PDF</a></div>
-          </div>`);
+          step(`<h1 class="wz-title">Snap its label</h1>
+            <label class="wz-frame" for="photo-camera">
+              <span class="wz-brackets" aria-hidden="true"><span></span><span></span><span></span><span></span><span class="wz-sticker"><i></i><i></i><i></i></span></span>
+              <span class="muted">Fill the frame with the sticker</span>
+              <span class="wz-hint">${ic("location_on")}Usually ${esc(where())}</span>
+            </label>
+            <label class="button wz-big" for="photo-camera">${ic("photo_camera")}Take photo</label>
+            <div class="wz-alts">
+              <label class="button quiet" for="photo">${ic("upload")}Upload</label>
+              <button type="button" class="quiet" data-type>${ic("keyboard")}Type it</button>
+              <a class="button quiet" href="/things?add=pdf">${ic("picture_as_pdf")}Have PDF</a>
+            </div>`);
         }
 
         function reading() {
-          step(`<div class="stack">
-            ${image ? `<img src="${image}" alt="Your label photo" class="wizard-photo">` : ""}
-            <p class="muted" role="status">Reading the label…</p>
-          </div>`);
+          step(`${photoTop()}
+            <h1 class="wz-title">Reading the label…</h1>
+            <div class="wz-progress" role="progressbar" aria-label="Reading the label"><span class="wz-indeterminate"></span></div>`, { details: false });
         }
+
+        /** Three short tips, each with an icon, in place of a paragraph. */
+        function tips(list) {
+          return `<ul class="wz-tips">${list.map(([icon, text]) => `<li>${ic(icon)}<span>${text}</span></li>`).join("")}</ul>`;
+        }
+        const PHOTO_TIPS = [["center_focus_strong", "Tap the sticker to focus"], ["zoom_in", "Move closer, hold still"], ["flare", "Tilt to dodge glare"]];
 
         function notFound() {
           redraw = notFound;
-          step(`<div class="stack">
-            ${image ? `<img src="${image}" alt="Your label photo" class="wizard-photo">` : ""}
-            <h2>Couldn't read a label in that one</h2>
-            <p class="muted">Get close enough that the text fills most of the photo, in good light, without glare. ${thing.category ? `On a ${esc(ICONS[iconKey({ category: thing.category })][0].toLowerCase())} it's usually ${esc(where())}.` : "Tell me what it is and I'll say where to look."}</p>
-            ${picker("What is it?")}
-            <div class="row">${photoButton("Take another photo")}<button type="button" class="quiet" data-type>Type it in</button></div>
-          </div>`);
+          step(`${photoTop()}
+            <h1 class="wz-title">Couldn't read a label</h1>
+            ${tips(PHOTO_TIPS)}
+            ${thing.category ? `<p class="muted" style="margin:0">On a ${esc(ICONS[iconKey({ category: thing.category })][0].toLowerCase())} it's usually ${esc(where())}.</p>` : picker("What is it? I'll say where to look.")}
+            <label class="button wz-big" for="photo-camera">${ic("photo_camera")}Retake</label>
+            <button type="button" class="link" data-type style="align-self:center">Type it in instead</button>`);
         }
 
         // Jev's quick look found no label, or text too blurry to read; Muse wasn't asked yet.
         function retake(reason) {
           redraw = () => retake(reason);
-          step(`<div class="stack">
-            ${image ? `<img src="${image}" alt="Your label photo" class="wizard-photo">` : ""}
-            <h2>${reason === "blurry" ? "That one's a little blurry" : "I don't see a label in that one"}</h2>
-            <p class="muted">${reason === "blurry" ? "Hold steady a moment, tap to focus, and avoid glare on the sticker." : "Look for a sticker with the model number, usually inside the door, on the back or under the base."} A close photo of just the label works best.</p>
-            <div class="row">${photoButton("Take another photo")}<button type="button" class="quiet" data-anyway>Read it anyway</button><button type="button" class="quiet" data-type>Type it in</button></div>
-          </div>`);
+          step(`<div class="wz-photo-flag">${photoTop()}<span class="chip gold strong">${reason === "blurry" ? "Too blurry to read" : "No label in this one"}</span></div>
+            <h1 class="wz-title">One more try</h1>
+            ${tips(reason === "blurry" ? PHOTO_TIPS : [["search", "Look for the sticker with the model number"], ["location_on", `Usually ${esc(where())}`], ["zoom_in", "Get close enough to fill the frame"]])}
+            <label class="button wz-big" for="photo-camera">${ic("photo_camera")}Retake</label>
+            <div class="row" style="justify-content:center"><button type="button" class="link" data-anyway>Read it anyway</button><span class="muted">·</span><button type="button" class="link" data-type>Type it in</button></div>`);
         }
+
+        // Letters a label photo mixes up. Each one in a doubtful model is a button that swaps it.
+        const LOOKALIKES = ["S5", "O0", "I1L", "B8", "Z2", "G6"];
+        const swapOf = (ch) => {
+          const set = LOOKALIKES.find((s) => s.includes(ch.toUpperCase()));
+          return set ? set[(set.indexOf(ch.toUpperCase()) + 1) % set.length] : null;
+        };
 
         function partial() {
           redraw = partial;
-          // Jev found the doubtful model on the photo: show that strip next to what was read, to fix in place.
+          // Jev found the doubtful model on the photo: show that strip, and let each look-alike letter be flipped in place.
           const crop = thing.model && thing.doubtful?.includes("model") && thing.crops?.model;
           if (crop) {
-            step(`<div class="stack">
-              <h2>Is this the model number?</h2>
-              <p>Fix any letter that's off; S and 5, O and 0 look alike.</p>
+            const letters = [...thing.model]
+              .map((ch, i) => (swapOf(ch) ? `<button type="button" class="wz-letter" data-flip="${i}" aria-label="${esc(ch)}, tap to switch to ${esc(swapOf(ch))}">${esc(ch)}</button>` : `<span>${esc(ch)}</span>`))
+              .join("");
+            step(`<h1 class="wz-title">Is this the model?</h1>
               ${cropImg(crop, "The model number on your label, up close")}
-              <form class="row" id="doubt-form">
-                <input id="doubt-model" value="${esc(thing.model)}" aria-label="Model number" autocomplete="off" autocapitalize="characters" spellcheck="false" style="flex:1;min-width:10ch;font-family:ui-monospace,monospace">
-                <button type="submit">Yes, that's it</button>
-              </form>
-              <div class="row">${photoButton("Take a closer photo", true)}</div>
-              <p class="small muted" data-add-msg role="status"></p>
-            </div>`);
-            $("#doubt-form").addEventListener("submit", (e) => {
-              e.preventDefault();
-              const model = $("#doubt-model").value.trim();
+              <div class="wz-card stack">
+                <div class="wz-model">${letters}</div>
+                ${thing.model.split("").some(swapOf) ? '<p class="small muted" style="margin:0">Tap a highlighted letter to switch it: S and 5, O and 0 look alike.</p>' : ""}
+              </div>
+              <button type="button" class="wz-big" id="doubt-ok">Yes, that's it</button>
+              <details class="wz-more"><summary>Type it instead</summary>
+                <form class="row" id="doubt-form" style="margin-top:10px">
+                  <input id="doubt-model" value="${esc(thing.model)}" aria-label="Model number" autocomplete="off" autocapitalize="characters" spellcheck="false" style="flex:1;min-width:10ch;font-family:ui-monospace,monospace">
+                  <button type="submit">Save</button>
+                </form>
+              </details>
+              <p class="small muted" data-add-msg role="status"></p>`, { right: RETAKE });
+            const accept = (model) => {
               if (!model) return $("#doubt-model").focus();
               thing.model = model;
               thing.doubtful = thing.doubtful.filter((f) => f !== "model");
               delete thing.crops.model;
               confirm();
+            };
+            for (const b of main.querySelectorAll("[data-flip]")) {
+              b.addEventListener("click", () => {
+                const i = Number(b.dataset.flip);
+                const chars = [...thing.model];
+                chars[i] = swapOf(chars[i]);
+                thing.model = chars.join("");
+                partial();
+                main.querySelector(`[data-flip="${i}"]`)?.focus();
+              });
+            }
+            $("#doubt-ok").addEventListener("click", () => accept(thing.model));
+            $("#doubt-form").addEventListener("submit", (e) => {
+              e.preventDefault();
+              accept($("#doubt-model").value.trim());
             });
             return;
           }
           // Where to look, only when we know what it is: the person said, or Muse read a model off its plate.
           // A category guessed from a sticker with no model (a Wi-Fi label, say) is often wrong.
           const sure = thing.category && (thing.picked || thing.model);
-          const spot = sure
-            ? `On a ${esc(ICONS[iconKey({ category: thing.category })][0].toLowerCase())} the model label is usually ${esc(where())}.`
-            : "";
-          const wifi = thing.radio ? "This looks like the Wi-Fi sticker, so the model label may be somewhere else. " : "";
+          const spot = sure ? `Usually ${esc(where())}` : "";
+          const wifi = thing.radio ? "That's the Wi-Fi sticker; the model label is elsewhere." : "";
           // No line said "Model", but a code like "MO: R0698201" might be it: ask.
           if (!thing.model && thing.guess) {
-            step(`<div class="stack">
-              ${image ? `<img src="${image}" alt="Your label photo" class="wizard-photo">` : ""}
-              <h2>Is this the model number?</h2>
-              <p>${thing.brand ? `I read <strong>${esc(thing.brand)}</strong>. ` : ""}No line says "Model", but this code might be it. Fix it if it's off.</p>
-              <form class="row" id="guess-form">
-                <input id="guess-model" value="${esc(thing.guess)}" aria-label="Model number" autocomplete="off" autocapitalize="characters" spellcheck="false" style="flex:1;min-width:10ch;font-family:ui-monospace,monospace">
-                <button type="submit">Yes, that's it</button>
+            step(`${photoTop()}
+              <h1 class="wz-title">Is this the model?</h1>
+              ${thing.brand ? `<p class="muted" style="margin:0">${esc(thing.brand)} · no line says "Model", but this code might be it.</p>` : ""}
+              <form class="stack" id="guess-form">
+                <input id="guess-model" value="${esc(thing.guess)}" aria-label="Model number" autocomplete="off" autocapitalize="characters" spellcheck="false" class="wz-model-input">
+                <button type="submit" class="wz-big">Yes, that's it</button>
               </form>
-              <p class="muted">${wifi}${spot}</p>
+              ${wifi || spot ? tips([wifi && ["info", wifi], spot && ["location_on", spot]].filter(Boolean)) : ""}
               ${sure ? "" : picker("What is it?")}
-              <div class="row">${photoButton("Take a photo of the model label", true)}<button type="button" class="quiet" data-continue>Continue without it</button></div>
-              <p class="small muted" data-add-msg role="status"></p>
-            </div>`);
+              <div class="row" style="justify-content:center"><label class="link" for="photo-camera" style="cursor:pointer">Photo of the model label</label><span class="muted">·</span><button type="button" class="link" data-continue>Skip it</button></div>
+              <p class="small muted" data-add-msg role="status"></p>`, { right: RETAKE });
             $("#guess-model").addEventListener("input", (e) => {
               thing.guess = e.target.value;
             });
@@ -1686,57 +1976,37 @@
             });
             return;
           }
-          const got = [thing.brand && `<strong>${esc(thing.brand)}</strong>`, thing.model && `model <strong>${esc(thing.model)}</strong>`].filter(Boolean).join(", ");
-          const missing = !thing.model ? "the model number" : thing.doubtful?.includes("model") ? "the model number for sure" : "all of it clearly";
-          step(`<div class="stack">
-            ${image ? `<img src="${image}" alt="Your label photo" class="wizard-photo">` : ""}
-            <h2>Almost</h2>
-            <p>I read ${got || "part of it"}, but not ${missing}. ${wifi}${spot} A close photo of just that sticker works best.</p>
+          const got = [thing.brand && `<strong>${esc(thing.brand)}</strong>`, thing.model && `<strong>${esc(thing.model)}</strong>`].filter(Boolean).join(" · ");
+          const missing = !thing.model ? "Missing the model number" : thing.doubtful?.includes("model") ? "Not sure of the model number" : "Some of it was hard to read";
+          step(`${photoTop()}
+            <h1 class="wz-title">Almost</h1>
+            <div class="wz-card stack" style="gap:6px">${got ? `<span>${got}</span>` : ""}<span class="chip gold strong" style="justify-self:start">${missing}</span></div>
+            ${tips([wifi && ["info", wifi], spot && ["location_on", spot], ["zoom_in", "A close photo of just that sticker works best"]].filter(Boolean))}
             ${sure ? "" : picker("What is it?")}
-            <div class="row">${photoButton("Take a closer photo")}<button type="button" class="quiet" data-type>Type the model</button><button type="button" class="quiet" data-continue>Continue without it</button></div>
-            <p class="small muted" data-add-msg role="status"></p>
-          </div>`);
+            <label class="button wz-big" for="photo-camera">${ic("photo_camera")}Closer photo</label>
+            <div class="row" style="justify-content:center"><button type="button" class="link" data-type>Type the model</button><span class="muted">·</span><button type="button" class="link" data-continue>Skip it</button></div>
+            <p class="small muted" data-add-msg role="status"></p>`);
         }
 
         function confirm() {
           redraw = confirm;
           const key = iconKey(thing);
-          step(`<div class="stack">
-            <div class="row" style="gap:14px;flex-wrap:nowrap">
-              ${itemIcon(thing, 64)}
-              <div style="min-width:0">
-                <h2 style="margin:0">${esc([thing.brand, ICONS[key][0].toLowerCase() === "other" ? "" : ICONS[key][0].toLowerCase()].filter(Boolean).join(" "))}</h2>
-                <p class="muted" style="margin:0">Model ${esc(thing.model)}${thing.serial ? ` · serial ${esc(thing.serial)}` : ""}</p>
-              </div>
+          const what = ICONS[key][0].toLowerCase() === "other" ? "" : ICONS[key][0].toLowerCase();
+          if (!thing.nickname) thing.nickname = thing.autoName = thing.category ? ICONS[key][0] : "";
+          const ok = `<span class="wz-ok" aria-label="read">${ic("check")}</span>`;
+          step(`<div class="wz-head">${itemIcon(thing, 64)}<div style="min-width:0"><h1 class="wz-title" style="margin:0">${esc([thing.brand, what].filter(Boolean).join(" ") || "Your thing")}</h1><p class="muted" style="margin:2px 0 0">Read off your photo</p></div></div>
+            <div class="wz-card wz-rows">
+              ${thing.brand ? `<div class="wz-row"><span class="muted">Brand</span><strong>${esc(thing.brand)}${ok}</strong></div>` : ""}
+              <div class="wz-row"><span class="muted">Model</span><strong class="mono">${esc(thing.model)}${ok}</strong></div>
+              ${thing.serial ? `<div class="wz-row"><span class="muted">Serial</span><span class="mono small">${esc(thing.serial)}</span></div>` : ""}
+              <label class="wz-row" for="f-nick-quick"><span class="muted">Call it</span><input id="f-nick-quick" class="wz-inline" value="${esc(thing.nickname)}" placeholder="Washer" autocomplete="off">${ic("edit")}</label>
             </div>
-            <label class="small" for="f-nick-quick"><strong>What do you call it?</strong></label>
-            <input id="f-nick-quick" value="${esc(thing.nickname)}" placeholder="Washer">
-            <div class="stack" data-receipt-slot></div>
-            <div class="row"><button type="button" data-continue>Continue</button>${photoButton("Retake", true)}</div>
-            <p class="small muted">Something off? Fix it in the details below.</p>
-            <p class="small muted" data-add-msg role="status"></p>
-          </div>`);
+            <button type="button" class="wz-big" data-continue>Looks right</button>
+            <p class="small muted" data-add-msg role="status"></p>`, { right: RETAKE });
         }
 
         async function read(file) {
           return readImage(() => shrink(file));
-        }
-
-        // An optional receipt or warranty card photo, read once the thing is saved.
-        function receiptPicker() {
-          return receipt
-            ? `<div class="row small" style="gap:10px;flex-wrap:nowrap"><img src="${receipt}" alt="Your receipt photo" style="width:48px;height:48px;object-fit:cover;border-radius:8px"><span>Receipt added. Muse reads it after the thing is saved.</span><button type="button" class="link small" data-receipt-clear>Remove</button></div>`
-            : `<label class="button outline" for="receipt-photo" style="cursor:pointer;justify-self:start">${ic("receipt_long")}Add the receipt or warranty card <span class="muted small">(optional)</span></label>`;
-        }
-
-        function drawReceipt() {
-          for (const slot of main.querySelectorAll("[data-receipt-slot]")) slot.innerHTML = receiptPicker();
-          for (const b of main.querySelectorAll("[data-receipt-clear]")) {
-            b.addEventListener("click", () => {
-              receipt = null;
-              drawReceipt();
-            });
-          }
         }
 
         async function readImage(getImage, force = false) {
@@ -1786,29 +2056,34 @@
         }
 
         // Is it new? A used or stored thing gets a catch-up plan once its manual is read,
-        // instead of a schedule that starts as if it was serviced today.
+        // instead of a schedule that starts as if it was serviced today. Three tiles, then
+        // one row of chips; the full form stays folded for anyone who wants to say more.
+        const SERVICED = [["this month", "This month"], ["a few months ago", "A few months"], ["over a year ago", "Over a year"], ["", "No idea"]];
+        const STORED = [["3", "A few months"], ["12", "About a year"], ["24", "Two years +"], ["", "Not sure"]];
         function askHistory() {
           if (!named()) return;
           if (redraw !== askHistory) beforeHistory = redraw;
           redraw = askHistory;
           const h = thing.history;
+          const tile = (cond, icon, text) =>
+            `<button type="button" class="wz-tile" data-cond="${cond}" aria-pressed="${h?.condition === cond}">${ic(icon)}<span>${text}</span></button>`;
+          const chips = (list, key, value) =>
+            `<div class="wz-chips" role="group">${list.map(([v, t]) => `<button type="button" data-${key}="${v}" aria-pressed="${value === v}">${t}</button>`).join("")}</div>`;
           step(
-            `<div class="stack">
-              <h2>Is it new?</h2>
-              <p class="muted">If it has been in use or in storage, Muse plans what to catch up on, so its schedule doesn't start as if it was serviced today.</p>
-              <div class="row" role="group" aria-label="Is it new?">${CONDITIONS.slice()
-                .reverse()
-                .map(([v, t]) => `<button type="button" class="${h?.condition === v ? "" : "quiet"}" data-cond="${v}" aria-pressed="${h?.condition === v}">${t}</button>`)
-                .join("")}</div>
+            `<h1 class="wz-title">Is it new?</h1>
+              ${tile("new", "new_releases", "Brand new")}
+              ${tile("used", "schedule", "Had it a while")}
+              ${h?.condition === "used" ? `<div class="wz-sub"><span class="muted">Last cleaned or serviced?</span>${chips(SERVICED, "serviced", h.serviced)}</div>` : ""}
+              ${tile("stored", "inventory_2", "Was in storage")}
+              ${h?.condition === "stored" ? `<div class="wz-sub"><span class="muted">In storage for?</span>${chips(STORED, "stored", h.idle_months == null ? "" : String(h.idle_months))}</div>` : ""}
               ${
                 h && h.condition !== "new"
-                  ? `<form class="stack" id="history-form">${historyFields(h, false)}<div class="row"><button type="submit">Add it and find the manual</button></div></form>`
+                  ? `<details class="wz-more"><summary>Add more (optional)</summary><div class="stack" style="margin-top:10px">${historyFields(h, false)}</div></details>
+                     <button type="button" class="wz-big" id="history-go">Add it</button>`
                   : ""
               }
-              <div class="row"><button type="button" class="link" data-back>Back</button></div>
-              <p class="small muted" data-add-msg role="status"></p>
-            </div>`,
-            false,
+              <p class="small muted" data-add-msg role="status"></p>`,
+            { n: 2, details: false, left: BACK },
           );
           for (const b of main.querySelectorAll("[data-cond]")) {
             b.addEventListener("click", () => {
@@ -1818,14 +2093,30 @@
               }
               thing.history = { ...(thing.history ?? {}), condition: b.dataset.cond };
               askHistory();
-              $("#h-done")?.focus();
+            });
+          }
+          for (const b of main.querySelectorAll("[data-serviced]")) {
+            b.addEventListener("click", () => {
+              const v = b.dataset.serviced;
+              thing.history.serviced = v;
+              thing.history.idle_months = 0;
+              thing.history.done = v ? `Last cleaned or serviced ${v}.` : "No idea when it was last cleaned or serviced.";
+              askHistory();
+            });
+          }
+          for (const b of main.querySelectorAll("[data-stored]")) {
+            b.addEventListener("click", () => {
+              const v = b.dataset.stored;
+              if (v === "") delete thing.history.idle_months;
+              else thing.history.idle_months = Number(v);
+              askHistory();
             });
           }
           $("[data-back]").addEventListener("click", () => beforeHistory());
-          $("#history-form")?.addEventListener("submit", (e) => {
-            e.preventDefault();
-            thing.history = readHistory(thing.history.condition);
-            save($("#history-form [type=submit]"));
+          $("#history-go")?.addEventListener("click", (e) => {
+            const { serviced: _, ...rest } = thing.history;
+            thing.history = { ...rest, ...readHistory(thing.history.condition) };
+            save(e.currentTarget);
           });
         }
 
@@ -1843,13 +2134,8 @@
             // The thing's page plans the catch-up once the manual is read.
             if (thing.history) stash(HISTORY_KEY(out.data.item.id), JSON.stringify(thing.history));
             toast(out.summary.split(".")[0]);
-            if (receipt) {
-              // The thing is saved either way; a receipt that can't be read is added again from its page.
-              if (msg) msg.textContent = "Muse is reading the receipt…";
-              await api("/api/receipt", { item_id: out.data.item.id, image: receipt })
-                .then((r) => toast(r.found && !r.retake ? receiptSaid(r, "Receipt saved.") || "Receipt saved." : "Couldn't read the receipt. Add it again from the thing's page."))
-                .catch((err) => toast(`The receipt wasn't saved: ${err.message}`));
-            }
+            // The thing's page finishes the wizard: it picks the manual and says when it's ready.
+            stash(FRESH_KEY(out.data.item.id), "1");
             location.assign(`/things?id=${out.data.item.id}${thing.pdf ? "" : "&find=1"}`);
           } catch (err) {
             button.disabled = false;

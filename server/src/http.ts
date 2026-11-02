@@ -52,7 +52,7 @@ import {
 import { blockedMessage, findManual } from "./finder/search.js";
 import { INSTRUCTIONS, registerTools, SERVER_INFO } from "./mcp.js";
 import { isSafetyTurn, memoryTag, noteFrom, notesForMuse, saveNote } from "./memory.js";
-import { checkPhoto, checkRead, lookAtPhoto } from "./photo-check.js";
+import { checkPage, checkPhoto, checkRead, lookAtPhoto } from "./photo-check.js";
 import { buildPulse, pulseLog } from "./pulse.js";
 import { readReceipt, saveReceipt, warrantyStatus } from "./receipt.js";
 import {
@@ -829,6 +829,39 @@ export function snapHandler(
  * photo, and answers with when the warranty ends. Counts toward the daily
  * photo limit, like a label photo.
  */
+/**
+ * One photographed manual page, checked by Jev as the person snaps it (see
+ * checkPage). Only Jev is asked, so it doesn't count toward the photo limit.
+ * Answers {retake, english}, or {retake: null, english: true} when Jev is
+ * unset or down, so the page is kept.
+ */
+export function pageCheckHandler(
+  env: Env,
+  verify: Verify = supabaseVerifier(env),
+  fetchImpl: typeof fetch = fetch,
+) {
+  return async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    const auth = await verify(bearer(req));
+    if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
+    let image: unknown;
+    try {
+      image = ((await req.json()) as { image?: unknown }).image;
+    } catch {}
+    const match = typeof image === "string" ? image.match(DATA_URL) : null;
+    if (!match?.[1] || !match[2]) {
+      return Response.json({ error: "Send a JPEG or PNG photo." }, { status: 400 });
+    }
+    if (match[2].length * 0.75 > MAX_IMAGE_BYTES) {
+      return Response.json({ error: "That photo is too big; try a smaller one." }, { status: 413 });
+    }
+    const check = await checkPage(env, { mime: match[1], base64: match[2] }, fetchImpl);
+    return Response.json(
+      check ? { retake: check.retake, english: check.english } : { retake: null, english: true },
+    );
+  };
+}
+
 export function receiptHandler(
   env: Env,
   verify: Verify = supabaseVerifier(env),

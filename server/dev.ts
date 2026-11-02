@@ -9,6 +9,7 @@ import {
   mcpHandler,
   publicConfigHandler,
   pulseHandler,
+  pageCheckHandler,
   receiptHandler,
   reportHandler,
   resourceMetadataHandler,
@@ -30,6 +31,7 @@ const tool = toolHandler(config);
 const snap = snapHandler(config);
 const suggest = suggestHandler(config);
 const receipt = receiptHandler(config);
+const pageCheck = pageCheckHandler(config);
 const attach = attachHandler(config);
 const upkeepGroups = upkeepGroupsHandler(config);
 const pulse = pulseHandler(config);
@@ -50,6 +52,7 @@ Bun.serve({
     if (pathname === "/api/snap") return snap(req);
     if (pathname === "/api/suggest") return suggest(req);
     if (pathname === "/api/receipt") return receipt(req);
+    if (pathname === "/api/page-check") return pageCheck(req);
     if (pathname === "/api/attach") return attach(req);
     if (pathname === "/api/upkeep-groups") return upkeepGroups(req);
     if (pathname === "/api/pulse") return pulse(req);

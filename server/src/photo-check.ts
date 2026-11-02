@@ -115,6 +115,77 @@ export async function checkPhoto(
   }
 }
 
+// A photographed page of a paper manual, checked as the person snaps it: is
+// it a manual page, is it sharp, and is it in English. The page grid marks a
+// blurry page for a retake and a page in another language as skipped, so
+// Muse is only sent pages it can use. Fails open: no answer marks nothing.
+
+export interface PageCheck {
+  /** "blurry" or "not_a_page": worth a retake. */
+  retake: Retake | "not_a_page" | null;
+  /** False only when Jev is sure the page isn't in English. */
+  english: boolean;
+  tokens_in: number | null;
+}
+
+export async function checkPage(
+  env: Env,
+  image: { mime: string; base64: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<PageCheck | null> {
+  const router = env.router;
+  const format = { "image/jpeg": "jpg", "image/png": "png" }[image.mime];
+  if (!router || !format) return null;
+  try {
+    const res = await askJev(
+      router,
+      {
+        state: { photo: "page-photo" },
+        assets: { "page-photo": { type: "image", format, data_base64: image.base64 } },
+        questions: {
+          page: {
+            type: "noul",
+            instructions:
+              "Does `photo` show a printed page of a manual or instruction booklet, with paragraphs, steps, a table or diagrams?",
+          },
+          sharp: {
+            type: "noul",
+            instructions:
+              "Is the printed text in `photo` sharp, in focus and lit well enough to read?",
+          },
+          english: {
+            type: "noul",
+            instructions: "Is most of the text on the page in `photo` written in English?",
+          },
+        },
+      },
+      5_000,
+      fetchImpl,
+    );
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      answers?: Record<string, { noul?: number }>;
+      usage?: { input_tokens?: number };
+    };
+    const p = (k: string) => body.answers?.[k]?.noul;
+    const page = p("page");
+    const sharp = p("sharp");
+    const english = p("english");
+    return {
+      retake:
+        typeof page === "number" && page < RETAKE_BELOW
+          ? "not_a_page"
+          : typeof sharp === "number" && sharp < RETAKE_BELOW
+            ? "blurry"
+            : null,
+      english: !(typeof english === "number" && english < RETAKE_BELOW),
+      tokens_in: body.usage?.input_tokens ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // A photo in the chat. When the question is a simple yes/no about how
 // something looks (is the filter clogged, is this light on), Jev answers it
 // from the image and Muse gets Jev's finding as text instead of the picture,
