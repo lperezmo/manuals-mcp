@@ -32,7 +32,7 @@ export function register(server: McpServer, env: Env) {
       description: [
         `A second, separate read of the lines Muse flagged as not sure (needs_review), up to ${RECHECK_MAX} at a time, each against its own page.`,
         "Call it with no apply first: it saves nothing and returns a verdict per line (confirm, fix with the new fields, not_applicable, or unsure), each with a quote from the page.",
-        'Show the verdicts briefly with their pages, then ask the user "Apply these?". On yes, call it again with apply set to the run_id it returned (and only, to apply some of them). Lines still unsure stay flagged for the user to look at.',
+        'Show the verdicts briefly with their pages, then ask the user "Apply these?". On yes, call it once more with apply set to the run_id it returned, or "latest" (and only, to apply some of them). Do not save them one by one with revise_fact. Lines still unsure stay flagged for the user to look at.',
       ].join(" "),
       inputSchema: z.object({
         item: z
@@ -40,9 +40,11 @@ export function register(server: McpServer, env: Env) {
           .optional()
           .describe("Only this thing's lines (its id or name). Leave out for the whole house."),
         apply: z
-          .uuid()
+          .union([z.uuid(), z.literal("latest")])
           .optional()
-          .describe("The run_id from an earlier check_flagged call, once the user said yes."),
+          .describe(
+            'Once the user said yes: the run_id from the earlier check_flagged call, or "latest" for the most recent check (the run_id may not be in the chat anymore).',
+          ),
         only: z
           .array(z.uuid())
           .optional()
@@ -59,12 +61,20 @@ export function register(server: McpServer, env: Env) {
       guarded(async () => {
         const { db, householdId } = await session(env, ctx);
         if (apply) {
-          const { data: run, error } = await db
+          // "latest": the newest check in the last hour, for this thing when one is named.
+          let query = db
             .from("model_runs")
             .select("raw_output")
-            .eq("id", apply)
             .eq("kind", "recheck")
-            .maybeSingle();
+            .eq("ok", true);
+          if (apply === "latest") {
+            if (item) query = query.eq("item_id", (await findItem(db, item)).id);
+            query = query
+              .gte("created_at", new Date(Date.now() - 3_600_000).toISOString())
+              .order("created_at", { ascending: false })
+              .limit(1);
+          } else query = query.eq("id", apply);
+          const { data: run, error } = await query.maybeSingle();
           if (error) throw new Error(error.message);
           if (!run?.raw_output) throw new Error("No check with that run_id in this household.");
           const saved = (JSON.parse(run.raw_output as string) as { checks?: Check[] }).checks ?? [];

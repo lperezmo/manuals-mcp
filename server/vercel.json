@@ -11,7 +11,7 @@
       "maxDuration": 150
     },
     "api/chat.ts": {
-      "maxDuration": 150
+      "maxDuration": 300
     },
     "api/tool.ts": {
       "maxDuration": 150

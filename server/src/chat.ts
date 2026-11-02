@@ -11,7 +11,11 @@ import * as updateItem from "./tools/update-item.js";
 // signed-in user so RLS applies exactly as it does over MCP. Kept small on
 // purpose: a few tool rounds, short answers, and a capped history.
 
-const MAX_STEPS = 6;
+// Tool rounds per message: room for a long job (a review, a house-wide
+// question); CHAT_BUDGET_MS is what keeps it inside the function's time.
+export const MAX_STEPS = 40;
+/** Wall-clock for one message's tool rounds, under api/chat's 300 s maxDuration. */
+export const CHAT_BUDGET_MS = 240_000;
 const MAX_HISTORY = 20;
 const MAX_MESSAGE_CHARS = 2_000;
 const MAX_TOOL_RESULT_CHARS = 12_000;
@@ -296,7 +300,17 @@ export async function runChat(
   // Set when Muse stopped on a promise to ask and was told to show the form.
   let intro = "";
 
+  const startedAt = Date.now();
   for (let step = 0; step < MAX_STEPS; step++) {
+    // Out of time: one last call without tools, so Muse says what it did and what's left.
+    const last = Date.now() - startedAt > CHAT_BUDGET_MS;
+    if (last) {
+      messages.push({
+        role: "system",
+        content:
+          "Time's up for tools on this message. In two or three short sentences, tell the user what you finished and what's left, and that saying keep going picks it up.",
+      } as Message);
+    }
     const res = await fetchImpl(`${reader.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
@@ -306,7 +320,7 @@ export async function runChat(
       body: JSON.stringify({
         model: env.chatModel ?? reader.model,
         messages,
-        ...(definitions.length ? { tools: definitions } : {}),
+        ...(definitions.length && !last ? { tools: definitions } : {}),
         // Muse's thinking counts here too; too low a cap cuts a long answer off.
         max_tokens: 4000,
       }),
