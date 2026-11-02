@@ -439,6 +439,10 @@ function loadChat() {
 }
 
 const MARKED_KEPT = 3;
+// What the open chat was opened for: its thing (kept on a new chat), the chips an empty one offers, and who to tell of changes.
+let nextAbout = null;
+let chatStarters = [];
+let chatChange = null;
 
 /** Saves the open chat and moves it to the top of the list; an empty one isn't kept. */
 function saveChat(messages, id = currentChat()) {
@@ -446,7 +450,9 @@ function saveChat(messages, id = currentChat()) {
   const chatId = id || uuid();
   if (!id) openChatId(chatId);
   const all = loadChats();
-  const title = all.find((c) => c.id === chatId)?.title;
+  const before = all.find((c) => c.id === chatId);
+  const title = before?.title;
+  const about = before?.about ?? (id ? null : nextAbout);
   const others = all.filter((c) => c.id !== chatId);
   // Marked photos are a few hundred KB each: keep the last few, so the chats still fit in storage.
   const kept = messages.slice(-30);
@@ -456,7 +462,13 @@ function saveChat(messages, id = currentChat()) {
       kept[i] = { ...kept[i], marked: undefined, diagram: undefined, markedGone: true };
   }
   storeChats([
-    { id: chatId, updated: new Date().toISOString(), messages: kept, ...(title ? { title } : {}) },
+    {
+      id: chatId,
+      updated: new Date().toISOString(),
+      messages: kept,
+      ...(title ? { title } : {}),
+      ...(about ? { about } : {}),
+    },
     ...others,
   ]);
 }
@@ -532,8 +544,14 @@ function renderChat(messages, busy) {
       })
       .join("") + (busy ? '<div class="msg muse muted">Reading…</div>' : "");
   if (!messages.length && !busy) {
-    log.innerHTML =
-      '<p class="muted small">Ask about anything you own, or tell it something: "I just cleaned the dishwasher filter", "the washer is at 230 washes".</p>';
+    log.innerHTML = chatStarters.length
+      ? `<p class="muted small" style="margin:0">Ask anything, or start with:</p><div class="chat-starters">${chatStarters
+          .map(
+            (st, i) =>
+              `<button type="button" class="quiet" data-starter="${i}">${esc(st.label)}</button>`,
+          )
+          .join("")}</div>`
+      : '<p class="muted small">Ask about anything you own, or tell it something: "I just cleaned the dishwasher filter", "the washer is at 230 washes".</p>';
   }
   log.scrollTop = log.scrollHeight;
 }
@@ -703,7 +721,25 @@ export function typeAhead(input, onPick, { above = false } = {}) {
  * that started with it if there is one, else a new chat, so a setup doesn't
  * drag in (or bloat) whatever was being discussed before.
  */
-export function openChat(text, onChange, { once = false, own = false } = {}) {
+/**
+ * Opens the chat drawer, sending `text` if given. `once` skips a text the open
+ * chat already sent; `own` gives the text a chat of its own. `about` opens that
+ * thing's latest chat (or a new one for it), and `starters` are the chips an
+ * empty chat offers: each sends its text, or with `draft` puts it in the box
+ * to finish ("The Washer's counter shows ").
+ */
+export function openChat(
+  text,
+  onChange,
+  { once = false, own = false, about = null, starters = [] } = {},
+) {
+  chatChange = onChange;
+  chatStarters = starters;
+  if (about) {
+    const latest = loadChats().find((c) => c.about === about);
+    openChatId(latest?.id ?? null);
+    nextAbout = latest ? null : about;
+  } else nextAbout = null;
   if (own && text) {
     const mine = loadChats().find((c) =>
       c.messages.some((m) => m.role === "user" && m.content === text),
@@ -811,6 +847,18 @@ export function openChat(text, onChange, { once = false, own = false } = {}) {
           deleteChats(one ?? null);
           renderChatList();
         }
+        return;
+      }
+      const starter = e.target.closest("[data-starter]");
+      if (starter) {
+        const st = chatStarters[Number(starter.dataset.starter)];
+        if (!st) return;
+        if (st.draft) {
+          const input = $("#chat-input", drawer);
+          input.value = st.text;
+          input.focus();
+          input.setSelectionRange(st.text.length, st.text.length);
+        } else send(st.text, chatChange ?? onChange);
         return;
       }
       const rename = e.target.closest("[data-chat-rename]");

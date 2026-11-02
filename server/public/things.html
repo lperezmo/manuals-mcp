@@ -431,7 +431,6 @@
             </div>
             <div class="row">
               <button type="button" id="ask">${ic("forum")}Ask about the ${esc(item.nickname.toLowerCase())}</button>
-              ${manual && !(item.purchased_on && item.uses_per_week) ? `<button type="button" class="quiet" id="setup">${ic("auto_awesome")}Set it up with Muse</button>` : ""}
               ${item.archived_at ? "" : `<button type="button" class="quiet" id="catchup-btn" aria-controls="catchup">${ic("history")}${past && past.condition !== "new" ? "Catch it up again" : "Not new? Catch it up"}</button>`}
               ${manual?.source_url && !isExample(manual.source_url) ? `<a class="button quiet" href="${esc(manual.source_url)}" rel="noopener noreferrer" target="_blank">${ic("menu_book")}Open the manual</a>` : manual?.source_url ? '<span class="small muted">Example manual, no PDF to open</span>' : ""}
             </div>
@@ -561,15 +560,6 @@
           ${item.manual_facts.length ? '<div id="facts" class="stack"></div>' : ""}
 
           ${
-            item.tasks.some((t) => t.interval_unit === "cycles")
-              ? `<section class="card flat"><h2 style="font-size:22px">Log a reading</h2>
-                  <p class="muted small">The cycle count from its display keeps "every 30 washes" tasks on real dates.</p>
-                  <form class="field" id="reading"><label class="sr-only" for="cycles">Cycle count</label>
-                  <input id="cycles" type="number" min="0" step="1" required placeholder="${cycles ? `Last: ${Number(cycles.value)}` : "Cycle count"}"><button type="submit">Save</button></form></section>`
-              : ""
-          }
-
-          ${
             history?.length
               ? `<section class="card flat"><h2 style="font-size:22px">History</h2>${history
                   .map(
@@ -579,11 +569,22 @@
               : ""
           }`;
 
-        $("#ask").addEventListener("click", () => openChat(undefined, () => detail(id)));
-        // Muse asks a few questions with small forms (who it's for, when it was bought) and trims the task list.
-        $("#setup")?.addEventListener("click", () =>
-          openChat(`Set up the ${item.nickname} with me: ask what you need to know.`, () => detail(id), { once: true, own: true }),
-        );
+        // One way in: the thing's own chat, with a few starters when it's empty. Setting it up
+        // (Muse asks with small forms) and the cycle count both go through here.
+        const nick = item.nickname;
+        const counted = item.tasks.some((t) => t.active && t.interval_unit === "cycles");
+        const starters = [
+          ...(manual && !(item.purchased_on && item.uses_per_week)
+            ? [{ label: "Set it up with me", text: `Set up the ${nick} with me: ask what you need to know.` }]
+            : []),
+          ...(counted
+            ? [{ label: cycles ? `Log the count (last ${Number(cycles.value)})` : "Log the cycle count", text: `The ${nick}'s cycle counter shows `, draft: true }]
+            : []),
+          { label: "What's due soon?", text: `What's coming up for the ${nick}?` },
+          { label: "Something's wrong", text: `Something's wrong with the ${nick}: `, draft: true },
+        ];
+        const ask = () => openChat(undefined, () => detail(id), { about: id, starters });
+        $("#ask").addEventListener("click", ask);
         const saveLook = async (change) => {
           const { error } = await supa.from("items").update(change).eq("id", id);
           if (error) return toast(error.message);
@@ -682,7 +683,7 @@
           });
           $("#ready-tune").addEventListener("click", () => {
             done();
-            openChat(`Set up the ${item.nickname} with me: ask what you need to know.`, () => detail(id), { once: true, own: true });
+            openChat(`Set up the ${item.nickname} with me: ask what you need to know.`, () => detail(id), { once: true, about: id, starters });
           });
         }
         wireWarranty(item, receipt, !receiptsError, () => detail(id));
@@ -834,16 +835,6 @@
           }
         });
         if (facts) drawFacts();
-        $("#reading")?.addEventListener("submit", async (e) => {
-          e.preventDefault();
-          try {
-            const out = await tool("record_measurement", { item: id, cycles: Number($("#cycles").value) });
-            toast(out.summary);
-            detail(id);
-          } catch (err) {
-            toast(err.message);
-          }
-        });
       }
 
       // --- Upkeep tiles -------------------------------------------------------

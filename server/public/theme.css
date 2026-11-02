@@ -3069,3 +3069,15 @@ body:has(.jobs-pill) {
 .menu .seg button {
   padding: 0 11px;
 }
+
+/* An empty thing chat's starters */
+.chat-starters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.chat-starters button {
+  min-height: 44px;
+  border-radius: 999px;
+}
