@@ -662,10 +662,15 @@ export function openChat(text, onChange, { once = false, own = false } = {}) {
       </div>
       <form class="field">
         <label class="sr-only" for="chat-input">Ask or tell</label>
-        <label class="button quiet chat-attach" title="Add a photo">
-          ${CAMERA_ICON}<span class="sr-only">Add a photo</span>
-          <input id="chat-photo" type="file" accept="image/*" class="sr-only">
-        </label>
+        <details class="chat-attach-menu">
+          <summary class="button quiet chat-attach" title="Add a photo">${CAMERA_ICON}<span class="sr-only">Add a photo</span></summary>
+          <div class="chat-attach-pop" role="group" aria-label="Add a photo">
+            <label class="button quiet small" for="chat-camera">Take photo</label>
+            <label class="button quiet small" for="chat-photo">Choose photo</label>
+          </div>
+        </details>
+        <input id="chat-camera" type="file" accept="image/*" capture="environment" class="sr-only">
+        <input id="chat-photo" type="file" accept="image/*" class="sr-only">
         <input id="chat-input" autocomplete="off" placeholder="Ask or tell">
         <button type="submit">Send</button>
       </form>`;
@@ -715,7 +720,9 @@ export function openChat(text, onChange, { once = false, own = false } = {}) {
       const form = e.target.closest("[data-skip]")?.closest("form[data-card]");
       if (form) answerCard(Number(form.dataset.card), () => "Skip that for now.", onChange);
     });
-    $("#chat-photo", drawer).addEventListener("change", async (e) => {
+    // The camera straight away, or one already in the gallery: Android shows only the gallery without `capture`.
+    const pickPhoto = async (e) => {
+      $(".chat-attach-menu", drawer).open = false;
       const file = e.target.files?.[0];
       e.target.value = "";
       if (!file) return;
@@ -726,7 +733,9 @@ export function openChat(text, onChange, { once = false, own = false } = {}) {
       } catch (err) {
         toast(err.message);
       }
-    });
+    };
+    $("#chat-camera", drawer).addEventListener("change", pickPhoto);
+    $("#chat-photo", drawer).addEventListener("change", pickPhoto);
     $("[data-unphoto]", drawer).addEventListener("click", () => {
       pendingPhoto = null;
       showPendingPhoto();

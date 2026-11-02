@@ -1609,10 +1609,12 @@
               ${ready ? "" : '<p class="small muted" style="margin:0">Saving receipts needs a database update here. For now only the purchase date is kept.</p>'}
               <div class="row">
                 <label class="button ${r ? "quiet" : ""}" for="receipt-photo" style="cursor:pointer">${ic("photo_camera")}${r ? "New photo" : "Add a photo"}</label>
+                <label class="button quiet" for="receipt-gallery" style="cursor:pointer">${ic("upload")}Choose photo</label>
                 <button type="button" class="quiet" id="receipt-edit" aria-controls="receipt-form">${ic("edit")}${r ? "Edit" : "Type it in"}</button>
                 ${r?.image_path ? `<a class="button quiet" id="receipt-view" style="display:none" target="_blank" rel="noopener noreferrer">${ic("receipt_long")}See the receipt</a>` : ""}
               </div>
-              <input id="receipt-photo" type="file" accept="image/*" class="sr-only">
+              <input id="receipt-photo" type="file" accept="image/*" capture="environment" class="sr-only">
+              <input id="receipt-gallery" type="file" accept="image/*" class="sr-only">
               <p class="small muted" id="receipt-msg" role="status" style="margin:0"></p>
               <form class="stack" id="receipt-form" hidden>
                 <label class="small" for="rf-date"><strong>Bought on</strong></label><input id="rf-date" type="date" value="${v(bought)}">
@@ -1684,7 +1686,8 @@
             });
           }
         };
-        $("#receipt-photo").addEventListener("change", async (e) => {
+        // The camera, or a photo already in the gallery (Android offers only the gallery without `capture`).
+        const pickReceipt = async (e) => {
           const file = e.target.files?.[0];
           if (!file) return;
           try {
@@ -1693,7 +1696,9 @@
             msg.textContent = err.message;
           }
           e.target.value = "";
-        });
+        };
+        $("#receipt-photo").addEventListener("change", pickReceipt);
+        $("#receipt-gallery").addEventListener("change", pickReceipt);
         form.addEventListener("submit", async (e) => {
           e.preventDefault();
           const v = (sel) => $(sel).value.trim() || null;

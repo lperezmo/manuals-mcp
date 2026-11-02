@@ -2818,3 +2818,36 @@ body:has(.jobs-pill) {
   font-size: 28px;
   line-height: 1.1;
 }
+
+/* The chat's photo button: a small menu, Take photo or Choose photo */
+.chat-attach-menu {
+  position: relative;
+  flex: none;
+}
+.chat-attach-menu > summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.chat-attach-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.chat-attach-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 5;
+  display: grid;
+  gap: 6px;
+  min-width: 170px;
+  padding: 8px;
+  border-radius: 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+.chat-attach-pop .button {
+  justify-content: flex-start;
+  min-height: 44px;
+}
