@@ -17,6 +17,7 @@ import {
   withCard,
 } from "./chat.js";
 import { type Db, householdId, type ItemRow, userDb } from "./db.js";
+import { findDrawing } from "./diagram.js";
 import {
   answerDisplay,
   type DisplayAnswer,
@@ -593,6 +594,7 @@ export function chatHandler(
           photo && env.image
             ? (instruction) => markFor(env, db, photo, instruction, fetchImpl)
             : undefined,
+        diagram: (args) => findDrawing(env, db, args, fetchImpl),
       });
       await logRun(db, {
         kind: "chat",

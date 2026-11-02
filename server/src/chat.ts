@@ -20,7 +20,7 @@ const CHAT_INSTRUCTIONS = `${INSTRUCTIONS}
 
 You are Muse, answering inside the Manuals website. Answer in two to five short sentences, plain text, no markdown tables, no em dashes (use a comma, colon or period). Use the tools; never guess what a manual says. You can't browse the web here, so to add a manual the user pastes a PDF link or uploads one on the Things page.
 
-Photos: the user can attach a photo (an error display, a part, a label, a filter). Say what you see, match it to their things with list_items, and check the manual with ask_manual before giving steps. Point at parts by how they look and where they sit ("the round cup in the middle of the mesh"), not only by the manual's name: a manual's "upper" and "lower" often aren't what the owner sees. When they ask which part is which, where something is, or aren't sure what they're looking at, call mark_photo to circle it on their photo, then answer in a few lines. Older photos show as [photo] in the history; you can't see them anymore. A note like [photo, checked by Jev: ...] means a quick image checker already looked at the photo for you: trust its answer and add what the manual says.
+Photos: the user can attach a photo (an error display, a part, a label, a filter). Say what you see, match it to their things with list_items, and check the manual with ask_manual before giving steps. Point at parts by how they look and where they sit ("the round cup in the middle of the mesh"), not only by the manual's name: a manual's "upper" and "lower" often aren't what the owner sees. When they ask which part is which, where something is, or aren't sure what they're looking at, call mark_photo to circle it on their photo, then answer in a few lines. Without a photo, when they ask where a part is or how to get at it, find the page with ask_manual, then call show_diagram so they see the manual's drawing with it circled. Older photos show as [photo] in the history; you can't see them anymore. A note like [photo, checked by Jev: ...] means a quick image checker already looked at the photo for you: trust its answer and add what the manual says.
 
 A note like [jev hint: ...] under the user's message is a quick matcher's guess at which thing they mean (with its item id) and which saved lines may answer it. Use the item id with ask_manual instead of calling list_items first, check the lines against what the tools return, and never mention the hint. After an instant answer (a reply that quotes one saved line and its page), "Tell me more" asks you to go further: read the manual around that page and add what helps.
 
@@ -139,7 +139,34 @@ export interface ChatReply {
   card?: Card;
   /** The person's photo with the part circled (a JPEG data URL), when Muse marked it. */
   marked?: string;
+  /** The manual's own drawing of the part, circled, when Muse showed one. */
+  diagram?: { image: string; page: number; circled: boolean };
 }
+
+/**
+ * The manual's own drawing of a part, with the part circled on the real page
+ * (diagram.ts). The caller finds the PDF and the drawing.
+ */
+export const SHOW_DIAGRAM = {
+  name: "show_diagram",
+  description:
+    "Show the manual's own drawing of a part, with the part circled, after ask_manual found the page about it. Use it when the user asks where a part is, what it looks like, or how to remove or reach it. Not for error codes, specs or schedules. The user sees the drawing above your answer.",
+  schema: z.object({
+    item: z.string().min(1).describe("The item's id or name, as ask_manual reported it."),
+    page: z.number().int().min(1).describe("The manual page ask_manual cited for this part."),
+    part: z
+      .string()
+      .min(3)
+      .max(120)
+      .describe(
+        'The part as the manual names it, plus how it looks: "the upper filter assembly (the round cup filter)".',
+      ),
+  }),
+};
+
+export type DiagramFn = (
+  args: z.infer<typeof SHOW_DIAGRAM.schema>,
+) => Promise<{ image: string; page: number; circled: boolean } | { error: string }>;
 
 /**
  * Offered only on a turn with a photo: Meta's image model circles the part
@@ -181,6 +208,8 @@ export async function runChat(
     context?: string | null;
     /** Marks the turn's photo; offered as mark_photo when set. */
     mark?: MarkFn;
+    /** Shows a manual drawing; offered as show_diagram when set. */
+    diagram?: DiagramFn;
   } = {},
 ): Promise<ChatReply> {
   const reader = env.reader;
@@ -188,7 +217,11 @@ export async function runChat(
   const offered = only ? new Set(only.length ? [...only, SHOW_CARD.name] : []) : null;
   const tools = chatTools(env).filter((t) => !offered || offered.has(t.name));
   const byName = new Map(tools.map((t) => [t.name, t]));
-  const definitions = [...tools, ...(opts.mark ? [MARK_PHOTO] : [])].map((t) => ({
+  const extra = [
+    ...(opts.mark ? [MARK_PHOTO] : []),
+    ...(opts.diagram && byName.has("ask_manual") ? [SHOW_DIAGRAM] : []),
+  ];
+  const definitions = [...tools, ...extra].map((t) => ({
     type: "function",
     function: {
       name: t.name,
@@ -197,6 +230,30 @@ export async function runChat(
     },
   }));
   let marked: string | undefined;
+  let diagram: ChatReply["diagram"];
+  /** One drawing per turn, like the marked photo. */
+  const diagramOnce = async (call: ToolCall): Promise<string> => {
+    let raw: unknown = {};
+    try {
+      raw = JSON.parse(call.function.arguments || "{}");
+    } catch {}
+    const args = SHOW_DIAGRAM.schema.safeParse(raw);
+    if (!args.success) return `Invalid arguments: ${args.error.message}`;
+    if (diagram) return "A drawing is already shown this turn.";
+    let out: Awaited<ReturnType<DiagramFn>>;
+    try {
+      out = (await opts.diagram?.(args.data)) ?? { error: "not available" };
+    } catch (err) {
+      out = { error: (err as Error).message };
+    }
+    if ("error" in out)
+      return `Couldn't show the drawing: ${out.error}. Describe where it is in words.`;
+    diagram = out;
+    used.push(SHOW_DIAGRAM.name);
+    return out.circled
+      ? `Shown: the drawing from page ${out.page} with the part circled. Answer briefly; don't repeat the page number.`
+      : `Shown: the drawing from page ${out.page}, but the part couldn't be pinpointed in it, so say which part of the drawing to look at.`;
+  };
   /** One marked photo per turn; Muse is told how it went and answers in words either way. */
   const markOnce = async (call: ToolCall): Promise<string> => {
     let raw: unknown = {};
@@ -280,12 +337,17 @@ export async function runChat(
           [intro.trim(), reply].filter(Boolean).join("\n\n") || "Sorry, I didn't get an answer.",
         tools_used: used,
         ...(marked ? { marked } : {}),
+        ...(diagram ? { diagram } : {}),
       };
     }
 
     messages.push({ role: "assistant", content: message?.content ?? null, tool_calls: calls });
     let card: { message: string; card: Card } | undefined;
     for (const call of calls) {
+      if (call.function.name === SHOW_DIAGRAM.name && opts.diagram && byName.has("ask_manual")) {
+        messages.push({ role: "tool", tool_call_id: call.id, content: await diagramOnce(call) });
+        continue;
+      }
       if (call.function.name === MARK_PHOTO.name && opts.mark) {
         messages.push({ role: "tool", tool_call_id: call.id, content: await markOnce(call) });
         continue;
@@ -312,7 +374,13 @@ export async function runChat(
     }
     if (card) {
       const reply = [intro.trim(), card.message].filter(Boolean).join("\n\n");
-      return { reply, tools_used: used, card: card.card, ...(marked ? { marked } : {}) };
+      return {
+        reply,
+        tools_used: used,
+        card: card.card,
+        ...(marked ? { marked } : {}),
+        ...(diagram ? { diagram } : {}),
+      };
     }
   }
   return {

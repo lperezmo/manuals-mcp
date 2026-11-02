@@ -2863,3 +2863,17 @@ body:has(.jobs-pill) {
   max-width: 420px;
   border-radius: 14px;
 }
+
+/* The manual's own drawing in a chat answer, with the part circled */
+.msg-diagram {
+  margin: 0 0 10px;
+  display: grid;
+  gap: 4px;
+}
+.msg-diagram img {
+  display: block;
+  width: 100%;
+  max-width: 420px;
+  border-radius: 12px;
+  background: #fff;
+}

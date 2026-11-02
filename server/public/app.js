@@ -348,6 +348,7 @@ const CHAT_KEY = "manuals-chat";
 const TOOL_NAMES = {
   add_item: "Added a thing",
   mark_photo: "Marked your photo",
+  show_diagram: "Showed the manual's drawing",
   list_items: "Looked at your things",
   ask_manual: "Read the manual",
   upcoming: "Checked what's coming up",
@@ -428,8 +429,8 @@ function saveChat(messages, id = currentChat()) {
   const kept = messages.slice(-30);
   let photos = 0;
   for (let i = kept.length - 1; i >= 0; i--) {
-    if (kept[i].marked && ++photos > MARKED_KEPT)
-      kept[i] = { ...kept[i], marked: undefined, markedGone: true };
+    if ((kept[i].marked || kept[i].diagram) && ++photos > MARKED_KEPT)
+      kept[i] = { ...kept[i], marked: undefined, diagram: undefined, markedGone: true };
   }
   storeChats([{ id: chatId, updated: new Date().toISOString(), messages: kept }, ...others]);
 }
@@ -464,10 +465,12 @@ function renderChat(messages, busy) {
         const photo = m.photo?.startsWith("data:image/")
           ? `<img class="msg-photo" src="${esc(m.photo)}" alt="Your photo">`
           : m.marked?.startsWith("data:image/")
-            ? `<a href="${esc(m.marked)}" target="_blank" rel="noopener" class="msg-marked" aria-label="Your photo, marked by Muse. Open it full size"><img src="${esc(m.marked)}" alt="Your photo with the part circled"></a>`
-            : m.markedGone
-              ? '<p class="small muted" style="margin:0 0 6px">(Marked photo no longer kept.)</p>'
-              : "";
+            ? `<a href="#" data-full="${i}" class="msg-marked" aria-label="Your photo, marked by Muse. Open it full size"><img src="${esc(m.marked)}" alt="Your photo with the part circled"></a>`
+            : m.diagram?.image?.startsWith("data:image/")
+              ? `<figure class="msg-diagram"><a href="#" data-full="${i}" aria-label="The manual's drawing, page ${Number(m.diagram.page)}. Open it full size"><img src="${esc(m.diagram.image)}" alt="Drawing from page ${Number(m.diagram.page)} of the manual${m.diagram.circled ? ", with the part circled" : ""}"></a><figcaption class="small muted">Page ${Number(m.diagram.page)} of your manual${m.diagram.circled ? "" : " · couldn't pinpoint the part"}</figcaption></figure>`
+              : m.markedGone
+                ? '<p class="small muted" style="margin:0 0 6px">(Picture no longer kept.)</p>'
+                : "";
         // An instant answer from a saved line: one tap asks Muse to go further.
         const more =
           m.fast && i === messages.length - 1 && !busy
@@ -718,6 +721,18 @@ export function openChat(text, onChange, { once = false, own = false } = {}) {
       if (!exact.hidden) exact.focus();
     });
     log.addEventListener("click", (e) => {
+      // Full size: browsers won't open a data: URL in a tab, so open it as a blob.
+      const full = e.target.closest("[data-full]");
+      if (full) {
+        e.preventDefault();
+        const m = loadChat()[Number(full.dataset.full)];
+        const src = m?.marked || m?.diagram?.image;
+        if (src)
+          fetch(src)
+            .then((r) => r.blob())
+            .then((b) => window.open(URL.createObjectURL(b), "_blank", "noopener"));
+        return;
+      }
       const pick = e.target.closest("[data-chat]");
       if (pick) {
         openChatId(pick.dataset.chat);
@@ -840,7 +855,7 @@ const READ_ONLY = [
 ];
 const changedSomething = (tools = []) => tools.some((t) => !READ_ONLY.includes(t));
 
-function assistantMessage({ reply, tools_used, card, fast, history, marked }) {
+function assistantMessage({ reply, tools_used, card, fast, history, marked, diagram }) {
   return {
     role: "assistant",
     content: reply,
@@ -848,6 +863,7 @@ function assistantMessage({ reply, tools_used, card, fast, history, marked }) {
     card,
     ...(fast ? { fast: true } : {}),
     ...(marked ? { marked } : {}),
+    ...(diagram ? { diagram } : {}),
     history,
   };
 }

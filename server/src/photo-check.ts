@@ -21,7 +21,7 @@ export const RETRY_WAIT_MS = 300;
 const RETRY_MIN_MS = 1_000;
 
 /** One Jev call with an image, capped at `ms` in all, with the one retry of a 503. */
-async function askJev(
+export async function askJev(
   router: NonNullable<Env["router"]>,
   body: object,
   ms: number,
