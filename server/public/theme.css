@@ -2901,3 +2901,139 @@ body:has(.jobs-pill) {
   flex: 1;
   min-width: 0;
 }
+
+/* Color palettes: the accent and a tinted ground, in light and dark. Lavender is the default above. */
+:root[data-palette="ocean"] {
+  --bg: #f6f9fc;
+  --card: #ffffff;
+  --soft: #ebf2f9;
+  --line: #dbe5ef;
+  --accent: #1f6fb2;
+  --accent-soft: #deedfb;
+  --on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="ocean"]:not([data-theme="light"]) {
+    --bg: #11161d;
+    --card: #18202a;
+    --soft: #1f2a36;
+    --line: #2c3a4a;
+    --accent: #8cc4ff;
+    --accent-soft: #18324d;
+    --on-accent: #0b1a2b;
+  }
+}
+:root[data-palette="ocean"][data-theme="dark"] {
+  --bg: #11161d;
+  --card: #18202a;
+  --soft: #1f2a36;
+  --line: #2c3a4a;
+  --accent: #8cc4ff;
+  --accent-soft: #18324d;
+  --on-accent: #0b1a2b;
+}
+:root[data-palette="forest"] {
+  --bg: #f7faf6;
+  --card: #ffffff;
+  --soft: #edf3ec;
+  --line: #dde7dc;
+  --accent: #2f6b45;
+  --accent-soft: #dcefe2;
+  --on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="forest"]:not([data-theme="light"]) {
+    --bg: #121813;
+    --card: #1a221b;
+    --soft: #222c23;
+    --line: #2f3d30;
+    --accent: #8fd3a5;
+    --accent-soft: #1d3526;
+    --on-accent: #0e1f13;
+  }
+}
+:root[data-palette="forest"][data-theme="dark"] {
+  --bg: #121813;
+  --card: #1a221b;
+  --soft: #222c23;
+  --line: #2f3d30;
+  --accent: #8fd3a5;
+  --accent-soft: #1d3526;
+  --on-accent: #0e1f13;
+}
+:root[data-palette="sunset"] {
+  --bg: #fdf8f4;
+  --card: #ffffff;
+  --soft: #f6ece5;
+  --line: #eddcd1;
+  --accent: #b0491f;
+  --accent-soft: #fbe6da;
+  --on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="sunset"]:not([data-theme="light"]) {
+    --bg: #1a1412;
+    --card: #241b18;
+    --soft: #2e2420;
+    --line: #40312b;
+    --accent: #ffab85;
+    --accent-soft: #43271c;
+    --on-accent: #2a120a;
+  }
+}
+:root[data-palette="sunset"][data-theme="dark"] {
+  --bg: #1a1412;
+  --card: #241b18;
+  --soft: #2e2420;
+  --line: #40312b;
+  --accent: #ffab85;
+  --accent-soft: #43271c;
+  --on-accent: #2a120a;
+}
+:root[data-palette="rose"] {
+  --bg: #fdf7f9;
+  --card: #ffffff;
+  --soft: #f5eaef;
+  --line: #ecdbe3;
+  --accent: #a83e6b;
+  --accent-soft: #f8e1eb;
+  --on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="rose"]:not([data-theme="light"]) {
+    --bg: #1a1216;
+    --card: #241a20;
+    --soft: #2e2229;
+    --line: #40303a;
+    --accent: #f5a3c7;
+    --accent-soft: #3e1f2d;
+    --on-accent: #2a0f1c;
+  }
+}
+:root[data-palette="rose"][data-theme="dark"] {
+  --bg: #1a1216;
+  --card: #241a20;
+  --soft: #2e2229;
+  --line: #40303a;
+  --accent: #f5a3c7;
+  --accent-soft: #3e1f2d;
+  --on-accent: #2a0f1c;
+}
+/* The Color row's swatches */
+.swatches {
+  display: flex;
+  gap: 8px;
+}
+.swatches button {
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  background: var(--swatch);
+  border: 2px solid transparent;
+  box-shadow: inset 0 0 0 2px var(--card);
+}
+.swatches button[aria-pressed="true"] {
+  border-color: var(--ink);
+}

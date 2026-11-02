@@ -142,11 +142,23 @@ const PREFS = {
   ],
 };
 
+// Color palettes on top of light and dark; theme.css has each one's tokens.
+// The swatch is the palette's accent in light mode.
+const PALETTES = [
+  ["lavender", "Lavender", "#6a4bc4"],
+  ["ocean", "Ocean", "#1f6fb2"],
+  ["forest", "Forest", "#2f6b45"],
+  ["sunset", "Sunset", "#b4532a"],
+  ["rose", "Rose", "#a83e6b"],
+];
+const DATASET = { "manuals-size": "size", "manuals-font": "font", "manuals-palette": "palette" };
+
 function pref(key) {
+  const first = key === "manuals-palette" ? PALETTES[0][0] : PREFS[key][1][0][0];
   try {
-    return localStorage.getItem(key) || PREFS[key][1][0][0];
+    return localStorage.getItem(key) || first;
   } catch {
-    return PREFS[key][1][0][0];
+    return first;
   }
 }
 
@@ -154,7 +166,7 @@ function setPref(key, value) {
   try {
     localStorage.setItem(key, value);
   } catch {}
-  document.documentElement.dataset[key === "manuals-size" ? "size" : "font"] = value;
+  document.documentElement.dataset[DATASET[key]] = value;
 }
 
 function header(current, session) {
@@ -185,6 +197,10 @@ function header(current, session) {
       <div class="menu" id="account-menu" hidden>
         <div class="menu-who"><span class="avatar" aria-hidden="true">${esc(initial)}</span><div><strong>Signed in</strong><span class="small muted">${esc(email)}</span></div></div>
         <div class="menu-row"><span>Theme</span><div class="theme-toggle"></div></div>
+        <div class="menu-row"><span>Color</span><div class="swatches" role="group" aria-label="Color">${PALETTES.map(
+          ([value, name, hex]) =>
+            `<button type="button" data-pref="manuals-palette" data-value="${value}" aria-pressed="${pref("manuals-palette") === value}" aria-label="${name}" title="${name}" style="--swatch:${hex}"></button>`,
+        ).join("")}</div></div>
         ${prefs}
         <hr>
         <a class="menu-link" href="/household">Your household</a>

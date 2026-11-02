@@ -17,12 +17,14 @@
     }
   };
   apply(read());
-  // Text size and heading font, set from the account menu.
+  // Text size, heading font and color palette, set from the account menu.
   try {
     const size = localStorage.getItem("manuals-size");
     const font = localStorage.getItem("manuals-font");
     if (size) document.documentElement.dataset.size = size;
     if (font) document.documentElement.dataset.font = font;
+    const palette = localStorage.getItem("manuals-palette");
+    if (palette) document.documentElement.dataset.palette = palette;
   } catch {}
 
   const ICONS = {
