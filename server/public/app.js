@@ -1,6 +1,7 @@
 // Shared by every page: Supabase sign-in, the header, calls to the server's
 // tools, and the Muse chat drawer. Pages import what they need.
 
+import { createDictation, speechCtor } from "/dictate.js";
 import { couldntFinish, JOB_MAX_MS, readVerdict, withTimeout } from "/jobs.js";
 
 let client;
@@ -395,6 +396,15 @@ const HISTORY_ICON =
   '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l3 2"></path></svg>';
 const CAMERA_ICON =
   '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"></path><circle cx="12" cy="13" r="3.5"></circle></svg>';
+export const MIC_ICON =
+  '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11a7 7 0 0 0 14 0M12 18v3"></path></svg>';
+/** Muse's mark: a sparkle, on the Home pill that opens a chat. */
+export const SPARKLE_ICON =
+  '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11 2.5l1.9 5.6 5.6 1.9-5.6 1.9L11 17.5l-1.9-5.6L3.5 10l5.6-1.9z"></path><path d="M18.5 14l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"></path></svg>';
+/** True where the browser can turn speech into text (not Firefox), so a mic is worth showing. */
+export const canDictate = () => !!speechCtor();
+// The chat box's mic, made with the drawer (null where the browser has no speech-to-text).
+let dictation = null;
 // The photo waiting to be sent: the full image for Muse and a small one for the bubble.
 let pendingPhoto = null;
 
@@ -734,11 +744,12 @@ export function typeAhead(input, onPick, { above = false } = {}) {
  * empty chat offers: each sends its text, or with `draft` puts it in the box
  * to finish ("The Washer's counter shows "). `fresh` always starts a new chat
  * (still tagged with `about`), for a job that shouldn't pile onto an old one.
+ * `listen` starts the mic straight away (the Home pill's mic).
  */
 export function openChat(
   text,
   onChange,
-  { once = false, own = false, about = null, starters = [], fresh = false } = {},
+  { once = false, own = false, about = null, starters = [], fresh = false, listen = false } = {},
 ) {
   chatChange = onChange;
   chatStarters = starters;
@@ -784,9 +795,11 @@ export function openChat(
         <input id="chat-camera" type="file" accept="image/*" capture="environment" class="sr-only">
         <input id="chat-photo" type="file" accept="image/*" class="sr-only">
         <input id="chat-input" autocomplete="off" placeholder="Ask or tell">
+        ${canDictate() ? `<button type="button" class="quiet chat-mic" data-mic aria-pressed="false" aria-label="Talk instead of typing" title="Talk">${MIC_ICON}</button>` : ""}
         <button type="submit">Send</button>
       </form>`;
     document.body.append(drawer);
+    wireMic();
     typeAhead(
       $("#chat-input", drawer),
       (text) => {
@@ -795,7 +808,10 @@ export function openChat(
       },
       { above: true },
     );
-    $("[data-close]", drawer).addEventListener("click", () => drawer.classList.add("hidden"));
+    $("[data-close]", drawer).addEventListener("click", () => {
+      dictation?.cancel();
+      drawer.classList.add("hidden");
+    });
     // A new chat; the old one stays under Previous chats.
     $("[data-clear]", drawer).addEventListener("click", () => {
       openChatId(null);
@@ -915,6 +931,8 @@ export function openChat(
       const value = input.value.trim();
       const photo = pendingPhoto;
       if (!value && !photo) return;
+      // Sent: anything the mic hears after this would refill the box.
+      dictation?.cancel();
       input.value = "";
       pendingPhoto = null;
       showPendingPhoto();
@@ -928,7 +946,38 @@ export function openChat(
   const sent = once && past.some((m) => m.role === "user" && m.content === text);
   if (text && !sent) send(text, onChange);
   else if (sent) $(".chat-log", drawer).lastElementChild?.scrollIntoView({ block: "end" });
-  else $("#chat-input", drawer).focus();
+  // Still inside the tap, so the browser lets the mic start (and asks for it the first time).
+  // Talking leaves the keyboard down; typing brings it up.
+  else if (listen && dictation) {
+    if (!dictation.listening) dictation.start();
+  } else $("#chat-input", drawer).focus();
+}
+
+/** The chat box's mic: tap to talk, the words appear in the box as you speak, tap again to stop. */
+function wireMic() {
+  const button = $("[data-mic]", drawer);
+  const input = $("#chat-input", drawer);
+  if (!button) return;
+  const placeholder = input.placeholder;
+  dictation = createDictation({
+    Ctor: speechCtor(),
+    lang: navigator.language || "en-US",
+    read: () => input.value,
+    onText: (text, final) => {
+      input.value = text;
+      input.setSelectionRange?.(text.length, text.length);
+      // Once a sentence is done, the saved answers under the box catch up with it.
+      if (final) input.dispatchEvent(new Event("input", { bubbles: true }));
+    },
+    onState: (listening) => {
+      button.classList.toggle("listening", listening);
+      button.setAttribute("aria-pressed", String(listening));
+      button.setAttribute("aria-label", listening ? "Stop talking" : "Talk instead of typing");
+      input.placeholder = listening ? "Listening…" : placeholder;
+    },
+    onError: toast,
+  });
+  button.addEventListener("click", () => dictation.toggle());
 }
 
 function showPendingPhoto() {

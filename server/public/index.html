@@ -34,20 +34,23 @@
         ago,
         api,
         boot,
+        canDictate,
         daysBetween,
         db,
         esc,
         handOffPhoto,
         howOften,
         itemIcon,
+        MIC_ICON,
         openChat,
         relDay,
+        SPARKLE_ICON,
         signIn,
         toast,
         today,
         tool,
-        typeAhead,
       } from "/app.js";
+      import { homeStarters } from "/starters.js";
 
       const main = $("#main");
       const ITEM = "items!inner(id, nickname, brand, model, kind, category, icon, tint, archived_at)";
@@ -473,11 +476,13 @@
             <h1 class="sr-only">Home</h1>
             <p class="muted" style="font-weight:600">${esc(date)}</p>
             ${hero()}
-            <form class="field" id="ask" style="margin-top:6px">
-              <label class="sr-only" for="ask-input">Ask or tell</label>
-              <input id="ask-input" autocomplete="off" placeholder="Ask or tell Muse">
-              <button type="submit">Go</button>
-            </form>
+            <div class="ask-pill" id="ask">
+              <button type="button" class="ask-pill-main" data-ask-open>
+                <span class="ask-pill-spark">${SPARKLE_ICON}</span>
+                <span class="ask-pill-text">Ask about your things</span>
+              </button>
+              ${canDictate() ? `<button type="button" class="ask-pill-mic" data-ask-talk aria-label="Talk to Muse" title="Talk">${MIC_ICON}</button>` : ""}
+            </div>
             <nav class="home-tiles" aria-label="Home sections">${tiles.map(tile).join("")}</nav>
           </section>`;
       }
@@ -578,18 +583,11 @@
         if (!view) fillPulseTile();
 
         wireHero();
-        if ($("#ask-input"))
-          typeAhead($("#ask-input"), (text) => {
-            $("#ask-input").value = "";
-            openChat(text, load, { fresh: true });
-          });
-        $("#ask")?.addEventListener("submit", (e) => {
-          e.preventDefault();
-          const text = $("#ask-input").value.trim();
-          $("#ask-input").value = "";
-          // A question typed on Home starts its own chat; an empty Go reopens the last one.
-          openChat(text || undefined, load, { fresh: !!text });
-        });
+        // The pill opens a new chat, keyboard up, with a few starters from what's due.
+        // Its mic opens the same chat already listening. Older chats are under Previous chats.
+        const ask = (listen) => openChat(undefined, load, { fresh: true, starters: homeStarters(due), listen });
+        $("[data-ask-open]")?.addEventListener("click", () => ask(false));
+        $("[data-ask-talk]")?.addEventListener("click", () => ask(true));
         for (const b of main.querySelectorAll("[data-done]")) {
           b.addEventListener("click", async () => {
             b.disabled = true;
