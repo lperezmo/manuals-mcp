@@ -1,6 +1,15 @@
 import { z } from "zod";
 import type { Db } from "../db.js";
 import { toCm, toKg } from "../lib/units.js";
+import {
+  alsoInLine,
+  disagreementNote,
+  findDisagreement,
+  findSameTask,
+  type GuideRow,
+  guideName,
+  withAlsoIn,
+} from "./guides.js";
 
 // The distilled layer of a manual: upkeep tasks with intervals, typed facts,
 // and car seat limits, each pointing back to its page. The server's reader
@@ -205,36 +214,88 @@ export async function saveKnowledge(args: SaveKnowledgeArgs) {
     );
   }
 
-  const tasks = knowledge.tasks
-    .filter(
-      (t) => t.interval_value || t.interval_unit === "once" || t.interval_unit === "as_needed",
-    )
-    .map((t) => ({
-      household_id: householdId,
-      item_id: itemId,
-      title: t.title,
-      details: t.details ?? null,
-      interval_unit: t.interval_unit,
-      interval_value: t.interval_value ?? null,
-      source_manual_id: manualId,
-      source_page: t.source_page ?? null,
-      source: "reader",
-      status: status(t),
-    }));
-  if (tasks.length) await check(db.from("tasks").insert(tasks), "save tasks");
+  // Another guide for the same thing (a quick start beside the owner's manual)
+  // repeats much of it: a task it repeats gets a second citation instead of a
+  // second copy, and a fact it states differently is flagged with a note.
+  const others = manualId ? await otherGuides(db, itemId, manualId) : null;
+  const thisGuide = guideName(others?.self);
 
-  const facts = knowledge.facts.map((f) => ({
+  const kept = knowledge.tasks.filter(
+    (t) => t.interval_value || t.interval_unit === "once" || t.interval_unit === "as_needed",
+  );
+  let repeated = 0;
+  const fresh: typeof kept = [];
+  for (const t of kept) {
+    const same = others ? findSameTask(t, others.tasks) : null;
+    if (!same) {
+      fresh.push(t);
+      continue;
+    }
+    repeated++;
+    // Only the reader's own lines get the extra citation; a person's or an assistant's stay as they are.
+    if (same.source !== "reader" || !same.source_manual_id) continue;
+    const details = withAlsoIn(
+      same.details,
+      alsoInLine(thisGuide, t.source_page),
+      LIMITS.task_details,
+    );
+    if (details === null) continue;
+    same.details = details;
+    await check(db.from("tasks").update({ details }).eq("id", same.id), "add a citation");
+  }
+
+  const tasks = fresh.map((t) => ({
     household_id: householdId,
     item_id: itemId,
-    manual_id: manualId,
-    kind: f.kind,
-    label: f.label,
-    value: f.value,
-    source_page: f.source_page ?? null,
+    title: t.title,
+    details: t.details ?? null,
+    interval_unit: t.interval_unit,
+    interval_value: t.interval_value ?? null,
+    source_manual_id: manualId,
+    source_page: t.source_page ?? null,
     source: "reader",
-    status: status(f),
+    status: status(t),
   }));
-  if (facts.length) await check(db.from("manual_facts").insert(facts), "save facts");
+  if (tasks.length) await check(db.from("tasks").insert(tasks), "save tasks");
+
+  let disagreements = 0;
+  const facts = knowledge.facts.map((f) => {
+    const other = others ? findDisagreement(f, others.facts) : null;
+    if (other) disagreements++;
+    return {
+      household_id: householdId,
+      item_id: itemId,
+      manual_id: manualId,
+      kind: f.kind,
+      label: f.label,
+      value: f.value,
+      source_page: f.source_page ?? null,
+      source: "reader",
+      status: other ? "needs_review" : status(f),
+      ...(other
+        ? {
+            note: disagreementNote(
+              guideName(others?.manuals.find((m) => m.id === other.manual_id)),
+              other,
+              LIMITS.fit_note,
+            ),
+          }
+        : {}),
+    };
+  });
+  // Facts with a note go in on their own: before the note column exists, they're saved without it.
+  const plain = facts.filter((f) => !("note" in f));
+  const noted = facts.filter((f) => "note" in f);
+  if (plain.length) await check(db.from("manual_facts").insert(plain), "save facts");
+  if (noted.length) {
+    const { error } = await db.from("manual_facts").insert(noted);
+    if (error) {
+      await check(
+        db.from("manual_facts").insert(noted.map(({ note: _note, ...f }) => f)),
+        "save facts",
+      );
+    }
+  }
 
   const seats = knowledge.seat_modes.map((s) => ({
     household_id: householdId,
@@ -267,14 +328,71 @@ export async function saveKnowledge(args: SaveKnowledgeArgs) {
       "update manual",
     );
   }
-  const needsReview = [...knowledge.tasks, ...knowledge.facts, ...knowledge.seat_modes].filter(
-    (x) => x.unsure,
-  ).length;
+  // A fact flagged only because another guide says otherwise counts too: it starts the second read.
+  const flaggedByGuide = knowledge.facts.filter((f, i) => !f.unsure && "note" in (facts[i] ?? {}));
+  const needsReview =
+    [...knowledge.tasks, ...knowledge.facts, ...knowledge.seat_modes].filter((x) => x.unsure)
+      .length + flaggedByGuide.length;
   return {
     tasks: tasks.length,
     facts: facts.length,
     seat_modes: seats.length,
     needs_review: needsReview,
+    ...(others ? { repeated, disagreements } : {}),
+  };
+}
+
+interface OtherTask {
+  id: string;
+  title: string;
+  details: string | null;
+  interval_unit: string | null;
+  source: string;
+  source_manual_id: string | null;
+}
+interface OtherFact {
+  label: string;
+  value: string;
+  source_page: number | null;
+  manual_id: string | null;
+}
+
+/**
+ * The thing's other guides, and what they already saved: active tasks not
+ * from this manual and facts from another manual. Null when this is its only
+ * guide, or nothing came from another one yet.
+ */
+async function otherGuides(db: Db, itemId: string, manualId: string) {
+  // Every column, so the kind comes along once it exists and nothing breaks before.
+  const { data: manuals, error } = await db.from("manuals").select("*").eq("item_id", itemId);
+  if (error || !manuals) return null;
+  const list = manuals as GuideRow[];
+  if (!list.some((m) => m.id !== manualId)) return null;
+  const [tasks, facts] = await Promise.all([
+    db
+      .from("tasks")
+      .select("id, title, details, interval_unit, source, source_manual_id")
+      .eq("item_id", itemId)
+      .eq("active", true),
+    db
+      .from("manual_facts")
+      .select("label, value, source_page, manual_id, status")
+      .eq("item_id", itemId)
+      .neq("status", "not_applicable"),
+  ]);
+  const otherTasks = ((tasks.data ?? []) as OtherTask[]).filter(
+    (t) => t.source_manual_id !== manualId,
+  );
+  const otherFacts = ((facts.data ?? []) as OtherFact[]).filter(
+    (f) => f.manual_id && f.manual_id !== manualId,
+  );
+  // Only what another guide saved makes this a second read; a thing with just its own lines is as before.
+  if (!otherTasks.some((t) => t.source_manual_id) && !otherFacts.length) return null;
+  return {
+    self: list.find((m) => m.id === manualId) ?? null,
+    manuals: list,
+    tasks: otherTasks,
+    facts: otherFacts,
   };
 }
 

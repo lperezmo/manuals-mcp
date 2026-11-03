@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Manuals">
+<defs><mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="120" height="120"><rect width="120" height="120" fill="#fff"/><g transform="translate(82 38) rotate(45)"><circle r="15" fill="#000"/><path d="M0 6 V62" stroke="#000" stroke-width="13" stroke-linecap="round"/></g></mask></defs>
+<g mask="url(#m)"><circle cx="60" cy="60" r="46" fill="none" stroke="#b9a5ff" stroke-width="4" stroke-dasharray="196 93" stroke-linecap="round" transform="rotate(13 60 60)"/><path d="M60 44 C52 38 40 38 32 40 V76 C40 74 52 74 60 80 Z" fill="#efedf6"/><path d="M60 44 C68 38 80 38 88 40 V76 C80 74 68 74 60 80 Z" fill="#b9a5ff"/></g>
+<g transform="translate(82 38) rotate(45)"><path d="M-3.6 -11.45 A12 12 0 1 0 3.6 -11.45 L3.6 -3 A3.6 3.6 0 0 1 -3.6 -3 Z" transform="scale(1)" fill="#f4a68f"/><path d="M0 6 V62" stroke="#f4a68f" stroke-width="8" stroke-linecap="round"/></g>
+</svg>

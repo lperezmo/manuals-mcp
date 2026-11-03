@@ -22,6 +22,7 @@ export const SERVER_INFO = { name: "manuals", version: "0.2.0" };
 export const INSTRUCTIONS = `Manuals keeps the user's household manuals and upkeep: appliances, baby gear and other things, each with its manual, an upkeep schedule, facts (error codes, parts, specs, safety) and for car seats the limits per mode. A model (Muse Spark) reads each manual when it's added. The user is often a tired parent; keep answers short and practical.
 
 - Quote the manual page whenever an answer comes from a manual.
+- A thing can have several guides; say which guide and page an answer comes from. For safety rules and limits, the owner's manual wins over a quick start or recipe book.
 - To set up a new thing: find the official manual PDF on the maker's site, then add_item with pdf_url.
 - If add_item says the site won't let apps download it but you can (a code sandbox or browser with network access), call request_manual_upload, PUT the PDF's raw bytes to its upload_url, then add_item with attach_to and upload_id. Never paste a file into the chat.
 - Some facts are flagged needs_review. Mention it when you use one, and offer to check it.

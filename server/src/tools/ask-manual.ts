@@ -4,12 +4,13 @@ import type { Db, TaskRow } from "../db.js";
 import type { Env } from "../env.js";
 import { answerFrom, loadSnapshot, quickAnswer } from "../fastlane.js";
 import { findLine, LINE_PAGES, type LineFinding } from "../finder/find-line.js";
+import { type GuideRow, guideName, primaryManual } from "../finder/guides.js";
 import { PAGE_KIND_KEYS, type PageKind, pageStrip } from "../finder/page-kinds.js";
 import { describeInterval, relativeDay } from "../lib/schedule.js";
 import { latestReceipts, warrantyStatus } from "../receipt.js";
 import { findItem, guarded, itemLabel, reply, session } from "./context.js";
 
-const FACT_COLUMNS = "id, item_id, kind, label, value, source_page, source, status";
+const FACT_COLUMNS = "id, item_id, manual_id, kind, label, value, source_page, source, status";
 const MAX_PAGE_CHARS = 20_000;
 
 export function register(server: McpServer, env: Env) {
@@ -24,6 +25,7 @@ export function register(server: McpServer, env: Env) {
         "To check a fact against its source, pass item and page to get that page's full text; if the fact is wrong, fix it with revise_fact.",
         'For a fault, pass kind "fix" to search only the troubleshooting pages (it falls back to every page when none match). With an item, manual_atlas lists its pages by kind (safety, setup, use, care, fix, parts, warranty) for jump links.',
         "Quote the page in your answer. Mention when a fact's status is needs_review.",
+        'When a thing has several guides, each page, fact and task carries guide: cite it as "Quick start, p. 6".',
         "Pass the person's whole question as question too: when one saved fact or task answers it outright, it comes back first as best_match (a quick check, no reading).",
         "When the search finds pages, answer_line is the exact line that answers the question, with its page: quote it. covered: false means no line answers it in words; mentioned_on lists the pages that name it. For where a part is, its drawing on one of those pages may answer it (show_diagram); otherwise say the manual doesn't spell it out rather than guessing.",
       ].join(" "),
@@ -65,17 +67,29 @@ export function register(server: McpServer, env: Env) {
 
         if (page) {
           if (!target) throw new Error("Pass item with page, so I know which manual.");
-          const { data, error } = await db
-            .from("manual_pages")
-            .select("page_number, content, manuals!inner(item_id)")
-            .eq("manuals.item_id", target.id)
-            .eq("page_number", page)
-            .limit(1);
+          const [{ data, error }, guides] = await Promise.all([
+            db
+              .from("manual_pages")
+              .select("manual_id, page_number, content, manuals!inner(item_id)")
+              .eq("manuals.item_id", target.id)
+              .eq("page_number", page)
+              .limit(5),
+            guidesOf(db, [target.id]),
+          ]);
           if (error) throw new Error(error.message);
-          const hit = data?.[0];
-          out.page = hit
-            ? { page: hit.page_number, text: hit.content.slice(0, MAX_PAGE_CHARS) }
-            : `No text saved for page ${page}.`;
+          // Several guides can each have this page: the primary guide's comes first.
+          const primary = guides.primary.get(target.id);
+          const rows = [...(data ?? [])].sort(
+            (a, b) => Number(b.manual_id === primary) - Number(a.manual_id === primary),
+          );
+          const [hit, ...more] = rows;
+          const shown = (r: { manual_id: string; page_number: number; content: string }) => ({
+            ...guides.label(r.manual_id),
+            page: r.page_number,
+            text: r.content.slice(0, MAX_PAGE_CHARS),
+          });
+          out.page = hit ? shown(hit) : `No text saved for page ${page}.`;
+          if (more.length) out.same_page_in_other_guides = more.map(shown);
         }
 
         if (query) {
@@ -159,8 +173,18 @@ export function register(server: McpServer, env: Env) {
           }
           if (exact.data?.length) out.exact_facts = exact.data;
           const hits = (search.data ?? []) as Hit[];
+          // Which guide each page is from, for things that have more than one.
+          const guides = await guidesOf(db, [...new Set(hits.map((h) => h.item_id))]);
+          const where = (h: Hit) => ({
+            item: h.item_name,
+            ...guides.label(h.manual_id),
+            page: h.page_number,
+            text: h.snippet,
+          });
           // Jev reads the top pages for the line that answers, or finds none does.
-          const finding = hits.length ? await lineFor(env, db, question ?? term, hits) : null;
+          const finding = hits.length
+            ? await lineFor(env, db, question ?? term, hits, guides)
+            : null;
           const line = finding?.line;
           if (finding?.verdict === "found" && line) {
             out.answer_line = {
@@ -184,22 +208,14 @@ export function register(server: McpServer, env: Env) {
             // No line answers it in words, but these pages name it: "where is the
             // overfill float" is answered by page 13's drawing, not by a sentence.
             out.covered = false;
-            out.mentioned_on = hits.map((h) => ({
-              item: h.item_name,
-              page: h.page_number,
-              text: h.snippet,
-            }));
+            out.mentioned_on = hits.map(where);
           } else if (hits.length) {
-            out.passages = hits.map((h) => ({
-              item: h.item_name,
-              page: h.page_number,
-              text: h.snippet,
-            }));
+            out.passages = hits.map(where);
           }
         }
 
         if (target) {
-          const [facts, tasks, seats, receipts, kinds] = await Promise.all([
+          const [facts, tasks, seats, receipts, kinds, guides] = await Promise.all([
             db
               .from("manual_facts")
               .select(FACT_COLUMNS)
@@ -209,7 +225,7 @@ export function register(server: McpServer, env: Env) {
             db
               .from("tasks")
               .select(
-                "id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source, status, active",
+                "id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source_manual_id, source, status, active",
               )
               .eq("item_id", target.id)
               .order("next_due_on", { ascending: true, nullsFirst: false }),
@@ -228,6 +244,7 @@ export function register(server: McpServer, env: Env) {
               .not("kind", "is", null)
               .order("page_number")
               .limit(500),
+            guidesOf(db, [target.id]),
           ]);
           // A saved receipt rides along, so a question about a fault also learns the warranty.
           const receipt = receipts?.get(target.id);
@@ -236,23 +253,32 @@ export function register(server: McpServer, env: Env) {
             name: itemLabel(target),
             ...(receipt ? { warranty: warrantyStatus(receipt).summary } : {}),
           };
-          if (facts.data?.length) out.facts = facts.data;
+          if (facts.data?.length)
+            out.facts = facts.data.map(({ manual_id, ...f }) => ({
+              ...f,
+              ...guides.label(manual_id),
+            }));
           if (tasks.data?.length) {
-            out.schedule = (tasks.data as (TaskRow & { source: string; status: string })[]).map(
-              (t) => ({
-                id: t.id,
-                title: t.title,
-                how_often: describeInterval(t.interval_unit, t.interval_value),
-                details: t.details,
-                next_due: t.next_due_on ? relativeDay(t.next_due_on) : null,
-                next_due_on: t.next_due_on,
-                last_done_on: t.last_done_on,
-                page: t.source_page,
-                source: t.source,
-                status: t.status,
-                active: t.active,
-              }),
-            );
+            out.schedule = (
+              tasks.data as (TaskRow & {
+                source: string;
+                status: string;
+                source_manual_id: string | null;
+              })[]
+            ).map((t) => ({
+              id: t.id,
+              title: t.title,
+              how_often: describeInterval(t.interval_unit, t.interval_value),
+              details: t.details,
+              next_due: t.next_due_on ? relativeDay(t.next_due_on) : null,
+              next_due_on: t.next_due_on,
+              last_done_on: t.last_done_on,
+              page: t.source_page,
+              ...guides.label(t.source_manual_id),
+              source: t.source,
+              status: t.status,
+              active: t.active,
+            }));
           }
           if (seats.data?.length) out.seat_limits = seats.data;
           // Fails quietly on a database without page kinds: no strip, same answer.
@@ -285,9 +311,55 @@ export function register(server: McpServer, env: Env) {
 
 interface Hit {
   manual_id: string;
+  item_id: string;
   item_name: string;
   page_number: number;
   snippet: string;
+}
+
+interface Guides {
+  /** `{ guide: "Quick start" }` for a line from a thing with several guides, else nothing. */
+  label: (manualId: string | null | undefined) => { guide?: string };
+  /** Each thing's primary guide (its owner's manual, else its first). */
+  primary: Map<string, string>;
+}
+
+/**
+ * The guides of these things, so a line from a thing with more than one can
+ * say which guide it's from. Reads every column, so the kind comes along once
+ * it exists; on any error, lines simply carry no guide.
+ */
+export async function guidesOf(db: Db, itemIds: string[]): Promise<Guides> {
+  const none: Guides = { label: () => ({}), primary: new Map() };
+  if (!itemIds.length) return none;
+  try {
+    const { data, error } = await db.from("manuals").select("*").in("item_id", itemIds);
+    if (error || !Array.isArray(data)) return none;
+    return guideLabels(data as (GuideRow & { item_id: string })[]);
+  } catch {
+    return none;
+  }
+}
+
+/** Builds the guide labels from a list of manuals (pure, for tests). */
+export function guideLabels(manuals: (GuideRow & { item_id: string })[]): Guides {
+  const byItem = new Map<string, (GuideRow & { item_id: string })[]>();
+  for (const m of manuals) byItem.set(m.item_id, [...(byItem.get(m.item_id) ?? []), m]);
+  const names = new Map<string, string>();
+  const primary = new Map<string, string>();
+  for (const [item, list] of byItem) {
+    const first = primaryManual(list);
+    if (first) primary.set(item, first.id);
+    if (list.length < 2) continue;
+    for (const m of list) names.set(m.id, guideName(m));
+  }
+  return {
+    label: (id) => {
+      const name = id ? names.get(id) : undefined;
+      return name ? { guide: name } : {};
+    },
+    primary,
+  };
 }
 
 /**
@@ -300,6 +372,7 @@ async function lineFor(
   db: Db,
   question: string,
   hits: Hit[],
+  guides: Guides,
 ): Promise<LineFinding | null> {
   if (!env.router) return null;
   try {
@@ -313,7 +386,10 @@ async function lineFor(
     const rows = (data ?? []) as { manual_id: string; page_number: number; content: string }[];
     const pages = top.flatMap((h) => {
       const row = rows.find((r) => r.manual_id === h.manual_id && r.page_number === h.page_number);
-      return row ? [{ item: h.item_name, page: h.page_number, text: row.content }] : [];
+      // "Air fryer, Quick start" when the thing has several guides, so the answer names it.
+      const guide = guides.label(h.manual_id).guide;
+      const item = guide ? `${h.item_name}, ${guide}` : h.item_name;
+      return row ? [{ item, page: h.page_number, text: row.content }] : [];
     });
     return pages.length ? await findLine(env, question, pages) : null;
   } catch {

@@ -3,6 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#faf8fc" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#15131c" media="(prefers-color-scheme: dark)" />
     <title>Manuals</title>
     <meta name="description" content="Every manual in the house, one question away." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -241,7 +247,7 @@
                   .join(" · ");
                 return `<li class="agenda-row">
                   ${itemIcon(item)}
-                  <div class="agenda-what"><strong>${esc(t.title)}</strong><span class="small muted">${esc(meta)}</span></div>
+                  <button type="button" class="agenda-what agenda-open" data-task-open="${t.id}" aria-haspopup="dialog"><strong>${esc(t.title)}</strong><span class="small muted">${esc(meta)}</span></button>
                   <div class="agenda-when"><strong class="${d < 0 ? "late" : ""}">${esc(when.charAt(0).toUpperCase() + when.slice(1))}</strong><span class="small muted">${esc(date.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }))}</span></div>
                   <button type="button" class="agenda-done" data-done="${t.id}" aria-label="Mark ${esc(t.title)} done" title="Done">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
@@ -447,19 +453,21 @@
                   ${revisions.map(change).join("")}
                 </section>`
               : ""
-          }`;
+          }
+          <dialog class="sheet" id="task-sheet" aria-label="About this task"></dialog>`;
 
         wireHero();
         loadPulse();
         typeAhead($("#ask-input"), (text) => {
           $("#ask-input").value = "";
-          openChat(text, load);
+          openChat(text, load, { fresh: true });
         });
         $("#ask").addEventListener("submit", (e) => {
           e.preventDefault();
           const text = $("#ask-input").value.trim();
           $("#ask-input").value = "";
-          openChat(text || undefined, load);
+          // A question typed on Home starts its own chat; an empty Go reopens the last one.
+          openChat(text || undefined, load, { fresh: !!text });
         });
         for (const b of main.querySelectorAll("[data-done]")) {
           b.addEventListener("click", async () => {
@@ -578,16 +586,148 @@
         return `<li class="agenda-row" data-pulse="${esc(c.key)}">
           ${itemIcon(c.item)}
           <div class="agenda-what">
-            <strong>${esc(c.title)}</strong>
-            <span class="small muted">${esc(c.item.nickname)} · ${esc(c.sub)}</span>
+            ${
+              c.kind === "task"
+                ? `<button type="button" class="agenda-open" data-task-open="${esc(c.task_id)}" data-chip="${esc(c.chip ?? "")}" aria-haspopup="dialog"><strong>${esc(c.title)}</strong><span class="small muted">${esc(c.item.nickname)} · ${esc(c.sub)}</span></button>`
+                : `<strong>${esc(c.title)}</strong><span class="small muted">${esc(c.item.nickname)} · ${esc(c.sub)}</span>`
+            }
             <span class="row" style="gap:10px;align-items:center;margin-top:4px">
               ${chip ? `<span class="chip ${chip[1]} strong" style="font-size:12px;padding:2px 10px">${chip[0]}</span>` : ""}
+              ${c.kind === "task" ? `<button type="button" class="link small" data-task-open="${esc(c.task_id)}" data-chip="${esc(c.chip ?? "")}" aria-haspopup="dialog">What's this?</button>` : ""}
               <button type="button" class="link small" data-pulse-later="${esc(c.key)}" data-days="${Number(c.snooze_days) || 7}">Not now</button>
             </span>
           </div>
           ${act}
         </li>`;
       }
+
+      // --- What's this? ---------------------------------------------------------
+      // Tapping a task on Home opens a sheet: what it is, why it's shown, and
+      // what its manual page says, with Ask Muse (a new chat about just this),
+      // Done, and the thing's page.
+      const PULSE_WHY = {
+        safety: "On top because it's a safety check.",
+        money: "Shown because skipping it can cost money.",
+        worse: "Shown because it gets worse if it waits.",
+        quick: "Shown because it takes about 5 minutes.",
+      };
+      // The example home's manuals are made up, so there is no PDF to open.
+      const isExample = (url) => /^https:\/\/example\.com\//.test(url);
+      let openingTask = null;
+
+      async function openTask(id, chip) {
+        const sheet = $("#task-sheet");
+        if (!sheet) return;
+        openingTask = id;
+        sheet.innerHTML = '<div class="sheet-grip" aria-hidden="true"></div><p class="small muted" style="padding:8px 4px">Opening…</p>';
+        if (!sheet.open) sheet.showModal();
+        const supa = await db();
+        const { data: t, error } = await supa
+          .from("tasks")
+          .select(
+            `id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source_manual_id, status, active, ${ITEM}`,
+          )
+          .eq("id", id)
+          .maybeSingle();
+        if (openingTask !== id || !sheet.open) return;
+        if (error || !t) {
+          sheet.innerHTML = `<div class="sheet-grip" aria-hidden="true"></div><p style="padding:8px 4px">${esc(error?.message ?? "That task isn't here anymore.")}</p><button type="button" class="link" data-close-sheet>Close</button>`;
+          return;
+        }
+        const item = one(t.items);
+        let pageText = null;
+        let pdf = null;
+        if (t.source_manual_id && t.source_page) {
+          const [page, manual] = await Promise.all([
+            supa
+              .from("manual_pages")
+              .select("content")
+              .eq("manual_id", t.source_manual_id)
+              .eq("page_number", t.source_page)
+              .maybeSingle(),
+            supa.from("manuals").select("source_url, storage_path").eq("id", t.source_manual_id).maybeSingle(),
+          ]);
+          pageText = page.data?.content ?? null;
+          const m = manual.data;
+          if (m?.source_url && !isExample(m.source_url)) pdf = m.source_url;
+          else if (m?.storage_path) {
+            const { data } = await supa.storage.from("manuals").createSignedUrl(m.storage_path, 3600);
+            pdf = data?.signedUrl ?? null;
+          }
+        }
+        if (openingTask !== id || !sheet.open) return;
+        const n = t.source_page;
+        const pageLink = pdf && n ? `<a class="small" href="${esc(`${pdf.split("#")[0]}#page=${n}`)}" target="_blank" rel="noopener noreferrer">Open page ${n} of the manual</a>` : "";
+        const page = n
+          ? `<div class="panel"><div class="label">Page ${n} says</div>${
+              pageText
+                ? `<p style="margin-top:6px">${excerpt(pageText, `${t.title} ${t.details ?? ""}`)}</p>`
+                : '<p class="muted" style="margin-top:6px">The page text isn\'t saved, so check the paper manual.</p>'
+            }${pageLink ? `<div style="margin-top:8px">${pageLink}</div>` : ""}</div>`
+          : "";
+        const when = [
+          t.next_due_on ? `Due ${relDay(t.next_due_on)}` : "",
+          howOften(t.interval_unit, t.interval_value),
+          t.last_done_on ? `last done ${relDay(t.last_done_on).replace(" late", " ago")}` : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        const late = t.next_due_on && t.next_due_on < today();
+        sheet.dataset.about = item?.id ?? "";
+        sheet.dataset.ask = `What does "${t.title}" mean for the ${item?.nickname ?? "thing"}, why does it matter, and how do I do it?`;
+        sheet.innerHTML = `<div class="sheet-grip" aria-hidden="true"></div>
+          <div class="task-sheet">
+            <span class="small muted">${esc(item?.nickname ?? "")}</span>
+            <h2 class="task-sheet-title">${esc(t.title)}</h2>
+            <span class="small ${late ? "late" : "muted"}">${esc(when)}</span>
+            ${chip && PULSE_WHY[chip] ? `<p class="small">${PULSE_WHY[chip]}</p>` : ""}
+            ${t.details ? `<p>${esc(t.details)}</p>` : ""}
+            ${t.status === "needs_review" ? '<p class="small muted">Muse wasn\'t sure it read this one right, so check it against the page.</p>' : ""}
+            ${page}
+            <div class="task-sheet-actions">
+              <button type="button" data-task-ask>Ask Muse about this</button>
+              ${t.active ? `<button type="button" class="quiet" data-task-done="${esc(t.id)}">Done</button>` : ""}
+            </div>
+            <span class="small muted">Asking starts a new chat about just this.</span>
+            ${item ? `<a class="small" href="/things?id=${esc(item.id)}">Open the ${esc(item.nickname)}</a>` : ""}
+            <button type="button" class="link" data-close-sheet>Close</button>
+          </div>`;
+      }
+
+      // One listener for the whole page: rows open the sheet, and the sheet's buttons work.
+      main.addEventListener("click", async (e) => {
+        const opener = e.target.closest("[data-task-open]");
+        if (opener) {
+          e.preventDefault();
+          openTask(opener.dataset.taskOpen, opener.dataset.chip || null);
+          return;
+        }
+        const sheet = e.target.closest("#task-sheet");
+        if (!sheet) return;
+        // Only a click on the dialog itself can be the backdrop; a key press on a button has no position.
+        const r = sheet.getBoundingClientRect();
+        const outside =
+          e.target === sheet && (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom);
+        if (outside || e.target.closest("[data-close-sheet]")) return sheet.close();
+        if (e.target.closest("a")) return setTimeout(() => sheet.close(), 0);
+        if (e.target.closest("[data-task-ask]")) {
+          sheet.close();
+          openChat(sheet.dataset.ask, load, { about: sheet.dataset.about || null, fresh: true });
+          return;
+        }
+        const done = e.target.closest("[data-task-done]");
+        if (done) {
+          done.disabled = true;
+          const { error } = await (await db()).rpc("log_task_done", { p_task: done.dataset.taskDone });
+          if (error) {
+            done.disabled = false;
+            return toast(error.message);
+          }
+          sheet.close();
+          toast("Done. The next one is scheduled.");
+          load();
+        }
+      });
 
       async function loadPulse() {
         const section = $("#pulse");

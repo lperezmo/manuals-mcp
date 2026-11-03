@@ -1,6 +1,7 @@
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import type { Db } from "./db.js";
 import type { Env } from "./env.js";
+import { primaryManual } from "./finder/guides.js";
 import { BUCKET } from "./finder/ingest.js";
 import { renderPages } from "./finder/vision.js";
 import { askJev, type Box } from "./photo-check.js";
@@ -109,15 +110,22 @@ export async function findDrawing(
   fetchImpl: typeof fetch = fetch,
 ): Promise<Drawing> {
   const item = await findItem(db, args.item);
-  const { data: manual, error } = await db
+  // The thing's primary guide (its owner's manual, else its first). Every column, so the kind comes along once it exists.
+  const { data: manuals, error } = await db
     .from("manuals")
-    .select("id, storage_path, page_count")
+    .select("*")
     .eq("item_id", item.id)
     .not("storage_path", "is", null)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .order("created_at", { ascending: true });
   if (error) throw new Error(error.message);
+  const manual = primaryManual(
+    (manuals ?? []) as {
+      id: string;
+      kind?: string | null;
+      storage_path: string;
+      page_count: number | null;
+    }[],
+  );
   if (!manual?.storage_path)
     throw new Error(`There's no manual PDF saved for the ${item.nickname}.`);
   const file = await db.storage.from(BUCKET).download(manual.storage_path);

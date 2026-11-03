@@ -3,7 +3,13 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>House Atlas · Manuals</title>
+    <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#faf8fc" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#15131c" media="(prefers-color-scheme: dark)" />
+    <title>House map · Manuals</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -14,7 +20,7 @@
     <script src="/theme.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
     <style>
-      /* House Atlas: grouping chips regroup the same house; a few words filter it by meaning. */
+      /* House map: grouping chips regroup the same house; a few words filter it by meaning. */
       .viewbar {
         display: grid;
         gap: 12px;
@@ -138,7 +144,7 @@
     </main>
 
     <script type="module">
-      import { $, boot, esc, relDay, toast, tool } from "/app.js";
+      import { $, boot, esc, openKid, relDay, toast, tool } from "/app.js";
 
       const main = $("#main");
       // Only late and soon get a pill; the rest need no word.
@@ -180,9 +186,14 @@
           .filter((g) => g.entries.length)
           .map(
             (g) => `<article class="card atlas-tile"><div class="atlas-head">${ring(g.late, g.soon, g.entries.length)}
-              <div><h3>${esc(g.label)}</h3><p class="small muted">${g.late ? `${g.late} late` : "Nothing late"}${g.soon ? ` · ${g.soon} due soon` : ""}</p></div></div>
+              <div style="flex:1;min-width:0"><h3>${esc(g.label)}</h3><p class="small muted">${g.late ? `${g.late} late` : "Nothing late"}${g.soon ? ` · ${g.soon} due soon` : ""}</p></div>
+              ${g.value?.startsWith("child:") ? `<button type="button" class="quiet small" data-kid="${esc(g.value.slice(6))}" aria-label="Edit ${esc(g.label)}: name, birthday, height and weight">Edit</button>` : ""}</div>
               <div class="entries">${g.entries.map(entryHtml).join("")}</div></article>`,
           );
+        // On "Who it's for", children are set up right here.
+        if (lens === "whose" && !data.view)
+          tiles.push(`<article class="card atlas-tile"><p class="small muted" style="margin:0">A child's car seat, crib or monitor sorts under their name. Their height and weight let car seat pages check the fit.</p>
+            <div class="row"><button type="button" class="quiet small" data-kid="">Add a child</button></div></article>`);
         return tiles.length
           ? tiles.join("")
           : `<p class="card muted">${data.view ? "Nothing matched. Try other words." : "Nothing to show here yet."}</p>`;
@@ -211,7 +222,7 @@
         const canSave = data.view && !data.view.saved_id;
         main.innerHTML = `
           <section class="stack">
-            <h1>House Atlas</h1>
+            <h1>House map</h1>
             <p class="muted">Everything in the house, grouped a few ways. Pick a grouping, or describe what you're looking for in your own words.</p>
           </section>
           <div class="filters" role="group" aria-label="Group by">${lensChips}</div>
@@ -232,6 +243,9 @@
       }
 
       function wire() {
+        for (const b of main.querySelectorAll("[data-kid]")) {
+          b.addEventListener("click", () => openKid(b.dataset.kid || null, { onChange: () => load(phrase) }));
+        }
         for (const b of main.querySelectorAll("[data-lens]")) {
           b.addEventListener("click", () => {
             lens = b.dataset.lens;
@@ -284,7 +298,7 @@
           if (words) args.view = words;
           const res = await tool("house_atlas", args);
           if (!res.data) {
-            main.innerHTML = `<section class="stack"><h1>House Atlas</h1><p class="card muted">${esc(res.summary)} <a href="/things?add=1">Add your first thing</a>.</p></section>`;
+            main.innerHTML = `<section class="stack"><h1>House map</h1><p class="card muted">${esc(res.summary)} <a href="/things?add=1">Add your first thing</a>.</p></section>`;
             return;
           }
           data = res.data;

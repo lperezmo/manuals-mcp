@@ -3,6 +3,12 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#faf8fc" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#15131c" media="(prefers-color-scheme: dark)" />
     <title>Your things · Manuals</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -12,7 +18,7 @@
     />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=add_a_photo,archive,auto_awesome,autorenew,build,center_focus_strong,check,cleaning_services,close,content_copy,delete,download,edit,event,expand_more,fact_check,flare,forum,health_and_safety,history,info,inventory_2,ios_share,keyboard,location_on,menu_book,more_horiz,new_releases,open_in_new,palette,photo_camera,picture_as_pdf,receipt_long,schedule,search,settings,share,task_alt,tune,unarchive,upload,zoom_in&display=block"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,500,0..1,0&icon_names=add,add_a_photo,archive,auto_awesome,autorenew,bolt,build,center_focus_strong,check,cleaning_services,close,content_copy,delete,download,edit,event,expand_more,fact_check,flare,forum,health_and_safety,history,info,inventory_2,ios_share,keyboard,library_add,location_on,menu_book,more_horiz,new_releases,open_in_new,palette,photo_camera,picture_as_pdf,receipt_long,restaurant_menu,schedule,search,settings,share,task_alt,tune,unarchive,upload,zoom_in&display=block"
     />
     <link rel="stylesheet" href="/theme.css" />
     <script src="/theme.js"></script>
@@ -25,7 +31,7 @@
     </main>
 
     <script type="module">
-      import { $, ago, api, boot, daysBetween, db, esc, forgetJob, howOften, ICONS, iconKey, iconSvg, itemIcon, loadItemPhotos, openChat, relDay, setItemPhoto, shareLink, shrink, TINTS, takePendingPhoto, tintKey, toast, today, tool, watchJob } from "/app.js";
+      import { $, ago, api, boot, daysBetween, db, esc, forgetJob, howOften, ICONS, iconKey, iconSvg, itemIcon, loadItemPhotos, openChat, openKid, relDay, setItemPhoto, shareLink, shrink, TINTS, takePendingPhoto, tintKey, toast, today, tool, watchJob } from "/app.js";
       import { JOB_MAX_MS } from "/jobs.js";
 
       const main = $("#main");
@@ -302,16 +308,35 @@
         ["parts", "Parts"],
         ["warranty", "Warranty"],
       ];
+      /** A guide's PDF link: the maker's link, else a signed link to the stored copy. Null for the example home's made-up ones. */
+      async function pdfFor(supa, manual) {
+        if (manual.source_url && !isExample(manual.source_url)) return manual.source_url;
+        if (!manual.storage_path) return null;
+        const { data } = await supa.storage.from("manuals").createSignedUrl(manual.storage_path, 3600);
+        return data?.signedUrl ?? null;
+      }
+
+      // A thing can have several guides: the owner's manual, a quick start, a recipe book.
+      const GUIDE_KINDS = [
+        ["owner", "Owner's manual"],
+        ["quick_start", "Quick start"],
+        ["recipes", "Recipe book"],
+        ["other", "Guide"],
+      ];
+      const guideLabel = (m) => GUIDE_KINDS.find(([k]) => k === m?.kind)?.[1] ?? "Guide";
+      /** The guides oldest first, with the primary one (the owner's manual, else the first) in front. */
+      function sortGuides(manuals) {
+        const list = [...(manuals ?? [])].sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""));
+        const primary = list.find((m) => m.kind === "owner") ?? list[0];
+        return primary ? [primary, ...list.filter((m) => m !== primary)] : [];
+      }
+
       /** The manual's PDF link and its pages by kind, for Open and Jump to. */
       async function manualPages(supa, manual) {
         const none = { pdf: null, groups: [] };
         if (!manual) return none;
         // Page numbers only help when they open the PDF there; without one, show nothing.
-        let pdf = manual.source_url && !isExample(manual.source_url) ? manual.source_url : null;
-        if (!pdf && manual.storage_path) {
-          const { data } = await supa.storage.from("manuals").createSignedUrl(manual.storage_path, 3600);
-          pdf = data?.signedUrl ?? null;
-        }
+        const pdf = await pdfFor(supa, manual);
         if (!pdf) return none;
         // Read on its own, so the page still works before pages have kinds.
         const { data: rows, error } = await supa
@@ -330,7 +355,7 @@
       const pdfAt = (pdf, n) => `${pdf.split("#")[0]}#page=${n}`;
 
       /** "Jump to a page": each kind of page with its first page as the big target. */
-      function jumpSheet(manual, pages) {
+      function jumpSheet(manual, pages, several = false) {
         if (!pages.groups.length) return "";
         const at = (n) => esc(pdfAt(pages.pdf, n));
         const rows = pages.groups
@@ -346,7 +371,7 @@
         return `<dialog class="sheet" id="jump-sheet" aria-labelledby="jump-h">
             <div class="sheet-grip" aria-hidden="true"></div>
             <h2 id="jump-h" style="margin:0">Jump to a page</h2>
-            <p class="small muted" style="margin:0 0 6px">${esc(manual.title || "The manual")}${manual.page_count ? ` · ${manual.page_count} pages` : ""}</p>
+            <p class="small muted" style="margin:0 0 6px">${esc(several ? guideLabel(manual) : manual.title || "The manual")}${manual.page_count ? ` · ${manual.page_count} pages` : ""}</p>
             ${rows}
             <a class="button quiet" href="${esc(pages.pdf)}" target="_blank" rel="noopener noreferrer" style="margin-top:8px">${ic("menu_book")}Open the whole PDF</a>
             <button type="button" class="link" data-close-sheet>Close</button>
@@ -367,10 +392,11 @@
           });
         };
         const supa = await db();
+        // Every column of manuals and facts, so a guide's kind and a fact's note come along once the database has them.
         const { data: item, error } = await supa
           .from("items")
           .select(
-            "id, nickname, brand, model, serial, category, kind, icon, tint, pinned, archived_at, uses_per_week, purchased_on, manuals(id, title, page_count, source_url, storage_path, status, status_detail, reading_since), manual_facts(id, kind, label, value, source_page, source, status), tasks(id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source, status, active), seat_modes(id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, source, status), item_readings(kind, value, measured_on)",
+            "id, nickname, brand, model, serial, category, kind, icon, tint, pinned, archived_at, uses_per_week, purchased_on, child_id, manuals(*), manual_facts(*), tasks(id, title, details, interval_unit, interval_value, next_due_on, last_done_on, source_page, source_manual_id, source, status, active), seat_modes(id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, min_age_months, fit_note, source_page, source, status), item_readings(kind, value, measured_on)",
           )
           .eq("id", id)
           .maybeSingle();
@@ -417,8 +443,12 @@
           .limit(1);
         const receipt = receipts?.[0] ?? null;
 
-        const manual = item.manuals?.[0];
-        const pages = await manualPages(supa, manual);
+        // The primary guide (the owner's manual, else the first) drives Jump to, the status and Read it again.
+        const guides = sortGuides(item.manuals);
+        const manual = guides[0];
+        const several = guides.length > 1;
+        const [pages, otherPdfs] = await Promise.all([manualPages(supa, manual), Promise.all(guides.slice(1).map((m) => pdfFor(supa, m)))]);
+        const pdfs = new Map([[manual?.id, pages.pdf], ...guides.slice(1).map((m, i) => [m.id, otherPdfs[i]])]);
         // Null where the database has no photos yet: the Photo row stays hidden.
         const photoMap = await loadItemPhotos();
         const hasPhoto = !!photoMap?.has(id);
@@ -426,8 +456,13 @@
         const cycles = readings.find((r) => r.kind === "cycles");
         const badge = (x) =>
           STATUS[x.status] ? `<span class="chip ${STATUS[x.status][1]} strong">${STATUS[x.status][0]}</span>` : "";
-        const source = (x) =>
-          `<span class="row small muted" style="gap:6px"><span class="dot src-${x.source}"></span>${SOURCES[x.source]}${x.source_page ? ` · p. ${x.source_page}` : ""}</span>`;
+        // With several guides, each line says which one it's from: "Read by Muse · Quick start p. 4".
+        const guideOf = (x) => (several ? guides.find((m) => m.id === (x.manual_id ?? x.source_manual_id)) : null);
+        const source = (x) => {
+          const g = guideOf(x);
+          const where = [g && guideLabel(g), x.source_page && `p. ${x.source_page}`].filter(Boolean).join(" ");
+          return `<span class="row small muted" style="gap:6px"><span class="dot src-${x.source}"></span>${SOURCES[x.source]}${where ? ` · ${esc(where)}` : ""}</span>`;
+        };
 
         const inWizard = !!unstash(FRESH_KEY(item.id));
         const unsure = [...item.manual_facts, ...item.tasks, ...item.seat_modes].filter((x) => x.status === "needs_review").length;
@@ -505,7 +540,7 @@
           </section>
 
           <div id="catchup-live" aria-live="polite"></div>
-          ${manual ? "" : `<section class="card" id="manual-section">
+          ${manual ? anotherGuideSection(item) : `<section class="card" id="manual-section">
                   ${inWizard ? `<div class="row" style="justify-content:space-between;align-items:center"><h2 id="manual-h" style="margin:0">Finding its manual</h2>${stepDots(3)}</div>` : '<h2 id="manual-h">Add its manual</h2>'}
                   <p class="muted" id="manual-lede"${inWizard ? " hidden" : ""}>${item.brand || item.model ? "Looking for it online first. Pick the right PDF and Muse reads it into tasks and facts, each with its page." : "Add the brand and model in the details above and Muse can look for it online, or upload the PDF yourself."}</p>
                   ${manualForm(!!(item.brand || item.model))}
@@ -531,6 +566,7 @@
           ${
             item.seat_modes.length
               ? `<section aria-labelledby="seat-h"><div class="section-head"><h2 id="seat-h">Car seat limits</h2></div>
+                  <div class="card seat-kid" id="seat-kid" style="margin-bottom:12px"><span class="small muted">Checking who rides in it…</span></div>
                   <div class="card">${item.seat_modes
                     .map(
                       (s) => `<div class="fact"><div><strong>${esc(s.mode.replace(/_/g, "-"))}</strong>
@@ -549,7 +585,8 @@
 
           <section class="card ref-card" aria-label="Warranty and manual">
             ${warrantySection(item, receipt, !receiptsError)}
-            ${manual ? manualRow(manual, pages) : ""}
+            ${manual ? (several ? guideRows(guides, pages, pdfs) : manualRow(manual, pages)) : ""}
+            ${manual && !item.archived_at ? `<div class="row"><button type="button" class="link small" data-add-guide aria-controls="manual-section">${ic("add")}Add another guide</button></div>` : ""}
           </section>
           <input id="receipt-photo" type="file" accept="image/*" capture="environment" class="sr-only">
           <input id="receipt-gallery" type="file" accept="image/*" class="sr-only">
@@ -564,7 +601,7 @@
               : ""
           }
           ${moreSheet(item, manual, pages, past)}
-          ${manual ? jumpSheet(manual, pages) : ""}`;
+          ${manual ? jumpSheet(manual, pages, several) : ""}`;
 
         // One way in: the thing's own chat, with a few starters when it's empty. Setting it up
         // (Muse asks with small forms) and the cycle count both go through here.
@@ -667,7 +704,44 @@
           });
         }
         $("#photo-clear")?.addEventListener("click", () => savePhoto(null, "Back to the icon."));
-        wireManualForm(item, () => detail(id));
+        wireManualForm(item, () => detail(id), { another: !!manual });
+        // "Add another guide" opens the add section; Close puts it away.
+        for (const b of main.querySelectorAll("[data-add-guide]")) {
+          b.addEventListener("click", () => {
+            const s = $("#manual-section");
+            if (!s) return;
+            s.hidden = false;
+            // After the more sheet has closed, so the page can scroll.
+            setTimeout(() => s.scrollIntoView({ block: "start", behavior: "smooth" }), 50);
+          });
+        }
+        $("[data-close-guide]")?.addEventListener("click", () => {
+          $("#manual-section").hidden = true;
+        });
+        // Change a guide's kind: the button turns into a short list, saved on pick.
+        for (const b of main.querySelectorAll("[data-guide-kind]")) {
+          b.addEventListener("click", () => {
+            const m = guides.find((g) => g.id === b.dataset.guideKind);
+            const slot = b.closest("[data-kind-slot]");
+            if (!m || !slot) return;
+            slot.innerHTML = `<select aria-label="What kind of guide is this?" class="small">
+                ${m.kind ? "" : '<option value="" selected>Not sure</option>'}
+                ${GUIDE_KINDS.map(([k, label]) => `<option value="${k}" ${m.kind === k ? "selected" : ""}>${esc(label)}</option>`).join("")}
+              </select>`;
+            const pick = slot.querySelector("select");
+            pick.focus();
+            pick.addEventListener("change", async () => {
+              pick.disabled = true;
+              const { error: e } = await supa.from("manuals").update({ kind: pick.value || null }).eq("id", m.id);
+              if (e) {
+                pick.disabled = false;
+                return toast(/kind/.test(e.message) ? "Guide kinds aren't set up here yet." : e.message);
+              }
+              toast(pick.value === "owner" ? "Saved. It's the main manual now." : "Saved.");
+              detail(id);
+            });
+          });
+        }
         if (ready) {
           // Shown once: closing it, or any of its buttons, ends the wizard.
           const done = () => {
@@ -687,6 +761,7 @@
           });
         }
         wireWarranty(item, receipt, !receiptsError, () => detail(id));
+        if (item.seat_modes.length) seatKid(item, () => detail(id));
         // The more menu and Jump to open as sheets from the bottom; a tap outside or on an item closes them.
         $("#more-btn").addEventListener("click", () => $("#more-sheet").showModal());
         $("#jump-btn")?.addEventListener("click", () => $("#jump-sheet").showModal());
@@ -929,7 +1004,90 @@
             <span class="ref-text"><strong>Manual</strong>${sub ? `<span class="small muted">${esc(sub)}</span>` : ""}</span>${action}</div>`;
       }
 
+      /**
+       * Several guides, one row each: its kind, pages, how the read went, Open, and Change for the kind.
+       * The first is the primary one, and only it has Jump to.
+       */
+      function guideRows(guides, pages, pdfs) {
+        return guides
+          .map((m, i) => {
+            const st = manualStatus(m);
+            const named = !m.kind || m.kind === "other" ? (m.title || "").replace(/\.pdf$/i, "").replace(/_+/g, " ") : "";
+            const sub = [named, m.page_count && `${m.page_count} pages`, st.detail].filter(Boolean).join(" · ");
+            const pdf = pdfs.get(m.id);
+            const action =
+              st.reread === "primary"
+                ? `<button type="button" class="small" data-reread="${esc(m.id)}">Read it again</button>`
+                : i === 0 && pages.groups.length
+                  ? `<button type="button" class="quiet small" id="jump-btn" aria-haspopup="dialog" aria-controls="jump-sheet">Jump to</button>`
+                  : pdf
+                    ? `<a class="button quiet small" href="${esc(pdf)}" target="_blank" rel="noopener noreferrer">Open</a>`
+                    : "";
+            return `<div class="ref-row"><span class="ref-icon violet" aria-hidden="true">${ic(m.kind === "recipes" ? "restaurant_menu" : m.kind === "quick_start" ? "bolt" : "menu_book")}</span>
+                <span class="ref-text"><strong>${esc(guideLabel(m))}</strong>${sub ? `<span class="small muted">${esc(sub)}</span>` : ""}<span class="small" data-kind-slot="${esc(m.id)}"><button type="button" class="link small" data-guide-kind="${esc(m.id)}" aria-label="Change what kind of guide this is">Change</button></span></span>${action}</div>`;
+          })
+          .join("");
+      }
+
+      /** "Add another guide": the same search, link, photo and upload paths as the first manual, opened from the card or the more sheet. */
+      function anotherGuideSection(item) {
+        if (item.archived_at) return "";
+        return `<section class="card" id="manual-section" hidden>
+            <div class="row" style="justify-content:space-between;align-items:center"><h2 id="manual-h" style="margin:0">Add another guide</h2><button type="button" class="quiet small" data-close-guide aria-label="Close">${ic("close")}</button></div>
+            <p class="muted" id="manual-lede">A quick start, a recipe book or another booklet that came with it. Muse reads it too, and skips what the manual already says.</p>
+            ${manualForm(!!(item.brand || item.model), { another: true })}
+          </section>`;
+      }
+
       /** Everything that isn't asking: the thing's ids, catch-up, the manual, sharing, its look and archiving. */
+      // --- Who rides in it --------------------------------------------------------
+      // A car seat's child, picked here, with car_seat_status's answer for their
+      // newest height and weight (the same check the assistants get).
+      async function seatKid(item, reload) {
+        const supa = await db();
+        const { data: kids, error } = await supa.from("children").select("id, nickname").order("created_at");
+        const el = $("#seat-kid");
+        if (!el) return;
+        if (error) {
+          el.remove();
+          return;
+        }
+        const kid = kids.find((k) => k.id === item.child_id);
+        let fit = "";
+        if (kid) {
+          try {
+            const res = await tool("car_seat_status", { seat: item.id, child: kid.id });
+            const latest = res.data?.latest;
+            fit = latest && !latest.weight && !latest.height ? `No height or weight saved for ${kid.nickname} yet.` : res.summary;
+          } catch (err) {
+            fit = err.message;
+          }
+        }
+        if (!el.isConnected) return;
+        el.innerHTML = `<div class="row">
+            <label class="kid-field" style="flex:1"><span class="small muted">Who rides in it</span>
+              <select id="seat-kid-pick">
+                <option value="">No one picked</option>
+                ${kids.map((k) => `<option value="${k.id}" ${k.id === item.child_id ? "selected" : ""}>${esc(k.nickname)}</option>`).join("")}
+                <option value="new">Add a child…</option>
+              </select></label>
+            ${kid ? `<button type="button" class="small" id="seat-kid-measure">Update height & weight</button>` : ""}
+          </div>
+          ${fit ? `<p class="small" style="margin:0">${esc(fit)}</p>` : ""}`;
+        $("#seat-kid-measure")?.addEventListener("click", () => openKid(kid.id, { onChange: reload }));
+        $("#seat-kid-pick").addEventListener("change", async (e) => {
+          const value = e.target.value;
+          if (value === "new") {
+            e.target.value = item.child_id ?? "";
+            return openKid(null, { seatId: item.id, onChange: reload });
+          }
+          const { error: err } = await supa.from("items").update({ child_id: value || null }).eq("id", item.id);
+          if (err) return toast(err.message);
+          toast(value ? "Saved. Muse checks the fit with their newest numbers." : "Saved.");
+          reload();
+        });
+      }
+
       function moreSheet(item, manual, pages, past) {
         const st = manual ? manualStatus(manual) : null;
         const id = [item.brand, item.model].filter(Boolean).join(" ");
@@ -943,6 +1101,7 @@
             ${item.archived_at ? "" : `<button type="button" class="sheet-item" id="catchup-btn" aria-controls="catchup">${ic("history")}${past && past.condition !== "new" ? "Catch it up again" : "Not new? Catch it up"}</button>`}
             ${pages.pdf ? `<a class="sheet-item" href="${esc(pages.pdf)}" target="_blank" rel="noopener noreferrer">${ic("menu_book")}<span>Open the manual</span><span class="small muted">PDF</span></a>` : ""}
             ${st?.reread === "quiet" ? `<button type="button" class="sheet-item" data-reread="${esc(manual.id)}">${ic("autorenew")}Read the manual again</button>` : ""}
+            ${manual && !item.archived_at ? `<button type="button" class="sheet-item" data-add-guide aria-controls="manual-section">${ic("library_add")}Add another guide</button>` : ""}
             <button type="button" class="sheet-item" id="share-btn" aria-controls="share">${ic("share")}Share this manual</button>
             <button type="button" class="sheet-item" data-open-look>${ic("palette")}Name, photo, icon or color</button>
             ${item.archived_at ? "" : `<button type="button" class="sheet-item danger" id="archive-item">${ic("archive")}Sold it or got rid of it? Archive</button>`}
@@ -1037,13 +1196,15 @@
         const of = (kind) => facts.filter((f) => f.kind === kind);
         const page = (f) => (f.source_page ? ` · p. ${f.source_page}` : "");
         const check = (f) => (f.status === "needs_review" ? ' <span class="chip gold strong">To check</span>' : "");
+        // Another guide says otherwise: shown while it's still to check.
+        const differs = (f) => (f.note && f.status === "needs_review" ? `<span class="small muted">${esc(f.note)}</span>` : "");
         const specs = of("spec");
         const codes = of("error_code");
         // Short, numeric specs first: the ones people look up.
         const ranked = [...specs.filter((f) => /\d/.test(f.value) && f.value.length <= 40), ...specs.filter((f) => !(/\d/.test(f.value) && f.value.length <= 40))];
         const rows = (glanceOpen ? specs : ranked.slice(0, 3))
           .map(
-            (f) => `<div class="gl-row"><div class="gl-text"><span class="small muted">${esc(f.label)}${page(f)}</span><strong>${esc(f.value)}</strong>${check(f)}</div>
+            (f) => `<div class="gl-row"><div class="gl-text"><span class="small muted">${esc(f.label)}${page(f)}</span><strong>${esc(f.value)}</strong>${check(f)}${differs(f)}</div>
               <button type="button" class="gl-copy" data-copy-fact="${f.id}" aria-label="Copy ${esc(f.label)}" title="Copy">${ic("content_copy")}</button></div>`,
           )
           .join("");
@@ -1061,7 +1222,7 @@
                 <div class="codes" role="group" aria-label="Error codes">${codes
                   .map((f) => `<button type="button" class="code" data-code="${f.id}" aria-pressed="${f.id === openCode}">${esc(f.label)}</button>`)
                   .join("")}</div>
-                ${open ? `<div class="stack line-body" style="margin-top:12px"><div><strong>${esc(open.label)}</strong>: ${esc(open.value)}</div><div class="row">${source(open)}${badge(open)}<button type="button" class="quiet small" data-fix="fact:${open.id}">${ic("edit")}Fix</button></div></div>` : ""}
+                ${open ? `<div class="stack line-body" style="margin-top:12px"><div><strong>${esc(open.label)}</strong>: ${esc(open.value)}</div>${differs(open)}<div class="row">${source(open)}${badge(open)}<button type="button" class="quiet small" data-fix="fact:${open.id}">${ic("edit")}Fix</button></div></div>` : ""}
               </div></section>`
           : "";
         const folded = ["part", "safety", "other"]
@@ -1077,7 +1238,7 @@
               <div class="lines">${list
                 .map(
                   (f) => `<details class="line"><summary><span class="line-title">${esc(f.label)}</span>${f.status === "needs_review" ? '<span class="chip gold strong">To check</span>' : ""}</summary>
-                    <div class="stack line-body"><div>${esc(f.value)}</div><div class="row">${source(f)}${badge(f)}<button type="button" class="quiet small" data-fix="fact:${f.id}">${ic("edit")}Fix</button></div></div></details>`,
+                    <div class="stack line-body"><div>${esc(f.value)}</div>${differs(f)}<div class="row">${source(f)}${badge(f)}<button type="button" class="quiet small" data-fix="fact:${f.id}">${ic("edit")}Fix</button></div></div></details>`,
                 )
                 .join("")}</div></details>`;
           })
@@ -1088,10 +1249,11 @@
       // --- Adding --------------------------------------------------------------
 
       // Searching is the default; a link or an upload is the fallback, opened when the search comes up empty.
-      function manualForm(searchable) {
+      // Another guide for a thing that has one: no search by itself (it would find the same manual), the PDF ways up front.
+      function manualForm(searchable, { another = false } = {}) {
         return `<div class="stack" id="found" aria-live="polite"></div>
-          ${searchable ? '<div class="row"><button type="button" class="quiet small hidden" id="find-manual">Search again</button></div>' : ""}
-          <details id="own-pdf"${searchable ? "" : " open"}>
+          ${searchable ? `<div class="row"><button type="button" class="quiet small${another ? "" : " hidden"}" id="find-manual">${another ? `${ic("search")}Search online` : "Search again"}</button></div>` : ""}
+          <details id="own-pdf"${searchable && !another ? "" : " open"}>
             <summary>Have the PDF or a link?</summary>
             <div class="stack" style="margin-top:10px">
               <form class="field" data-link><label class="sr-only" for="pdf-url">Link to the manual PDF</label>
@@ -1550,13 +1712,13 @@
         }
       }
 
-      function wireManualForm(item, after) {
+      function wireManualForm(item, after, { another = false } = {}) {
         const link = main.querySelector("[data-link]");
         if (!link) return;
         $("#find-manual")?.addEventListener("click", () => findOnline(item, after, true));
         wirePdfButtons($("#own-pdf"), item, after);
         if (params.get("find") === "1") history.replaceState(null, "", `/things?id=${item.id}`);
-        if (item.brand || item.model) findOnline(item, after);
+        if ((item.brand || item.model) && !another) findOnline(item, after);
         const progress = $("[data-progress]");
         link.addEventListener("submit", async (e) => {
           e.preventDefault();

@@ -1,5 +1,6 @@
 import type { Db } from "./db.js";
 import type { Env } from "./env.js";
+import { primaryManual } from "./finder/guides.js";
 import { formatPages } from "./finder/reader.js";
 import { logRun } from "./runs.js";
 import {
@@ -32,6 +33,10 @@ export interface Flagged {
   item_id: string;
   item: string;
   page: number | null;
+  /** The manual the line cites; null falls back to the thing's primary guide. */
+  manual_id?: string | null;
+  /** Another guide says otherwise (its value and page), so a person decides. */
+  note?: string | null;
   /** The line as saved, in the fields Muse may change. */
   line: Record<string, unknown>;
 }
@@ -46,6 +51,8 @@ export interface Check {
   reason: string;
   quote?: string;
   changes?: RevisionChanges;
+  /** Flagged because two guides disagree: shown, never saved without a yes. */
+  disagrees?: boolean;
 }
 
 export const RECHECK_INSTRUCTIONS = `You double-check one line that a first read pulled out of a product manual, against the manual's own pages. Another reader wasn't sure of it. Judge it only from the pages given; never from what's usual for products like this.
@@ -71,7 +78,7 @@ export function quoteFound(quote: string | undefined, pages: { content: string }
 /** A line as one sentence, for the owner and for the verdict list. */
 export function describeLine(f: Flagged): string {
   const l = f.line as Record<string, string | number | null>;
-  if (f.type === "fact") return `${l.label}: ${l.value}`;
+  if (f.type === "fact") return `${l.label}: ${l.value}${f.note ? ` (${f.note})` : ""}`;
   if (f.type === "task") return l.details ? `${l.title}: ${l.details}` : String(l.title);
   const range = (lo: unknown, hi: unknown, unit: string) =>
     hi ? `${lo ?? 0} to ${hi} ${unit}` : "";
@@ -106,21 +113,30 @@ export async function loadFlagged(db: Db, itemId?: string): Promise<Flagged[]> {
     }>;
   };
   const [facts, tasks, seats] = await Promise.all([
-    flagged("manual_facts", "id, kind, label, value, source_page"),
-    flagged("tasks", "id, title, details, interval_unit, interval_value, source_page"),
+    flagged("manual_facts", "id, kind, label, value, source_page, manual_id"),
+    flagged(
+      "tasks",
+      "id, title, details, interval_unit, interval_value, source_page, source_manual_id",
+    ),
     flagged(
       "seat_modes",
-      "id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, fit_note, source_page",
+      "id, mode, min_weight_kg, max_weight_kg, min_height_cm, max_height_cm, fit_note, source_page, manual_id",
     ),
   ]);
   for (const r of [facts, tasks, seats]) if (r.error) throw new Error(r.error.message);
+  const notes = await factNotes(
+    db,
+    (facts.data ?? []).map((f) => f.id as string),
+  );
   const rows = (type: Kind, data: Record<string, unknown>[] | null): Flagged[] =>
-    (data ?? []).map(({ id, items: owner, source_page, ...line }) => ({
+    (data ?? []).map(({ id, items: owner, source_page, manual_id, source_manual_id, ...line }) => ({
       id: id as string,
       type,
       item_id: itemIdOf(owner),
       item: nameOf(owner as Named),
       page: (source_page as number | null) ?? null,
+      manual_id: ((manual_id ?? source_manual_id) as string | null | undefined) ?? null,
+      ...(type === "fact" && notes.get(id as string) ? { note: notes.get(id as string) } : {}),
       line,
     }));
   return [
@@ -130,20 +146,46 @@ export async function loadFlagged(db: Db, itemId?: string): Promise<Flagged[]> {
   ];
 }
 
-/** The cited page and its neighbors from the thing's newest manual. */
-async function pagesFor(db: Db, itemId: string, page: number) {
-  const { data: manual } = await db
-    .from("manuals")
-    .select("id")
-    .eq("item_id", itemId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (!manual) return [];
+/**
+ * The notes on flagged facts (another guide says otherwise). Read on their
+ * own, so the check still runs on a database without the note column yet.
+ */
+async function factNotes(db: Db, ids: string[]): Promise<Map<string, string>> {
+  if (!ids.length) return new Map();
+  try {
+    const { data, error } = await db
+      .from("manual_facts")
+      .select("id, note")
+      .in("id", ids)
+      .not("note", "is", null);
+    if (error || !Array.isArray(data)) return new Map();
+    return new Map(
+      (data as { id: string; note: string | null }[]).flatMap((r) =>
+        r.note ? [[r.id, r.note] as [string, string]] : [],
+      ),
+    );
+  } catch {
+    return new Map();
+  }
+}
+
+/** The cited page and its neighbors, from the manual the line cites, else the thing's primary guide. */
+async function pagesFor(db: Db, itemId: string, page: number, manualId?: string | null) {
+  let id = manualId ?? null;
+  if (!id) {
+    // Every column, so the kind comes along once it exists: the owner's manual is the primary one.
+    const { data: manuals } = await db
+      .from("manuals")
+      .select("*")
+      .eq("item_id", itemId)
+      .order("created_at", { ascending: true });
+    id = primaryManual((manuals ?? []) as { id: string; kind?: string | null }[])?.id ?? null;
+  }
+  if (!id) return [];
   const { data } = await db
     .from("manual_pages")
     .select("page_number, content")
-    .eq("manual_id", manual.id)
+    .eq("manual_id", id)
     .gte("page_number", Math.max(1, page - 1))
     .lte("page_number", page + 1)
     .order("page_number");
@@ -163,7 +205,14 @@ export async function checkLine(
   usage: Usage,
   fetchImpl: typeof fetch = fetch,
 ): Promise<Check> {
-  const base = { id: f.id, type: f.type, item: f.item, page: f.page, what: describeLine(f) };
+  const base = {
+    id: f.id,
+    type: f.type,
+    item: f.item,
+    page: f.page,
+    what: describeLine(f),
+    ...(f.note ? { disagrees: true } : {}),
+  };
   const unsure = (reason: string): Check => ({ ...base, verdict: "unsure", reason });
   const reader = env.reader;
   if (!reader) return unsure("No reader is set up here.");
@@ -267,8 +316,8 @@ export async function recheckFlagged(
   const cache = new Map<string, Promise<{ page_number: number; content: string }[]>>();
   const checks = await pooled(flagged, AT_ONCE, async (f) => {
     if (f.page == null) return checkLine(env, f, [], usage, fetchImpl);
-    const key = `${f.item_id}:${f.page}`;
-    if (!cache.has(key)) cache.set(key, pagesFor(db, f.item_id, f.page));
+    const key = `${f.item_id}:${f.manual_id ?? ""}:${f.page}`;
+    if (!cache.has(key)) cache.set(key, pagesFor(db, f.item_id, f.page, f.manual_id));
     return checkLine(env, f, await (cache.get(key) as Promise<never>), usage, fetchImpl);
   });
   let runId: string | null = null;
@@ -294,6 +343,8 @@ export async function recheckFlagged(
 
 /** Which verdicts the automatic pass after a read may save without asking. */
 export function autoApplies(c: Check): boolean {
+  // Two guides disagree: its own page agreeing doesn't settle which one fits, so a person says.
+  if (c.disagrees) return false;
   if (c.verdict === "confirm") return true;
   // A changed car seat limit is a safety number: a person says yes to that.
   if (c.verdict === "fix" || c.verdict === "not_applicable") return c.type !== "seat_limit";

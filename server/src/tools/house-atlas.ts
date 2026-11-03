@@ -364,7 +364,7 @@ export function register(server: McpServer, env: Env) {
   server.registerTool(
     "house_atlas",
     {
-      title: "House atlas",
+      title: "House map",
       description: [
         "An overview map of the household: every thing (or, for effort and season, every upkeep task) grouped by one lens, with how many are late or due soon in each group.",
         "Lenses: room (kitchen, laundry, nursery, garage, car...), system (water, air and heat, power, safety, child gear), whose (anyone, adults, each child), effort (5 minutes, 15 minutes, an afternoon, call a pro) and season (any time, before winter, before summer, after storms).",

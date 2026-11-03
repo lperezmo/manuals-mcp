@@ -4,6 +4,7 @@ import type { Env } from "../env.js";
 import { recheckAfterRead } from "../recheck.js";
 import { BUDGET_USED, logRun, modelRunsTodayAll } from "../runs.js";
 import { itemLabel } from "../tools/context.js";
+import { type GuideKind, guessGuideKind, guideKindFromJev } from "./guides.js";
 import { saveKnowledge } from "./knowledge.js";
 import { pageKinds } from "./page-kinds.js";
 import { type PageText, pdfPages } from "./pdf-text.js";
@@ -260,6 +261,39 @@ export async function savePageKinds(
   return kinds.size;
 }
 
+/**
+ * What kind of guide this is (owner's manual, quick start, recipe book),
+ * from its title and first pages, with Jev asked only when the words don't
+ * say. A kind already set (by a person, or an earlier read) stays. Fails
+ * quietly, also on a database without the kind column yet.
+ */
+export async function saveGuideKind(
+  env: Env,
+  db: Db,
+  manualId: string,
+  pages: PageText[],
+  pageCount: number | null,
+  fetchImpl: typeof fetch = fetch,
+): Promise<GuideKind | null> {
+  try {
+    // Every column, so a database without "kind" yet still answers.
+    const { data: row, error } = await db.from("manuals").select("*").eq("id", manualId).single();
+    if (error || !row || !("kind" in row) || row.kind) return null;
+    const cover = pages
+      .slice(0, 2)
+      .map((p) => p.content)
+      .join("\n");
+    const kind =
+      guessGuideKind(row.title as string | null, cover) ??
+      (await guideKindFromJev(env, { title: row.title, cover, page_count: pageCount }, fetchImpl));
+    if (!kind) return null;
+    const { error: saveError } = await db.from("manuals").update({ kind }).eq("id", manualId);
+    return saveError ? null : kind;
+  } catch {
+    return null;
+  }
+}
+
 async function processPdf(args: {
   env: Env;
   db: Db;
@@ -343,7 +377,10 @@ async function processPdf(args: {
       .upsert(rows, { onConflict: "manual_id,page_number" });
     if (error) throw new Error(`Couldn't save pages: ${error.message}`);
   }
-  await savePageKinds(env, db, manualId, pages);
+  await Promise.all([
+    savePageKinds(env, db, manualId, pages),
+    saveGuideKind(env, db, manualId, pages, pageCount),
+  ]);
 
   const scanned = pages.length < Math.max(1, pageCount * 0.2);
   const transcribed = visionPages.size;

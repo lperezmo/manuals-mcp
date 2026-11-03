@@ -39,7 +39,7 @@ flowchart LR
 | `catch_up`              | Not new? Seeds the schedule from its history and adds catch-up steps.              |
 | `warranty_status`       | Whether a broken thing is likely still under warranty, from its receipt.           |
 | `house_atlas`           | The house by room, system, who it's for, effort or season, or a view you describe. |
-| `save_view`             | Keep a view ("baby safety", "before the first frost") as a chip on the Atlas page. |
+| `save_view`             | Keep a view ("baby safety", "before the first frost") as a chip on the Map page. |
 
 ## Run it
 

@@ -119,12 +119,15 @@ export const tool = (name, args = {}) => api("/api/tool", { name, args });
 const NAV = [
   ["/", "Home", "M4 11.5 12 5l8 6.5V19a1 1 0 0 1-1 1h-4.5v-5h-5v5H5a1 1 0 0 1-1-1z"],
   ["/things", "Things", "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"],
-  ["/atlas", "Atlas", "M9 4 3 6v14l6-2 6 2 6-2V4l-6 2zM9 4v14M15 6v14"],
+  ["/atlas", "Map", "M9 4 3 6v14l6-2 6 2 6-2V4l-6 2zM9 4v14M15 6v14"],
   ["/history", "History", "M12 7v5l3 2M3.5 12a8.5 8.5 0 1 0 2.5-6M3.5 4v4h4"],
   ["/connect", "Connect your AI", "M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"],
 ];
 
 // Reading preferences, kept in this browser; theme.js applies them on load.
+/** The logo: a book in an orbit with a wrench across it. Theme colours, so it follows light, dark and the palette. */
+const LOGO = `<svg class="brand-logo" viewBox="0 0 120 120" aria-hidden="true"><defs><mask id="brand-gap" maskUnits="userSpaceOnUse" x="0" y="0" width="120" height="120"><rect width="120" height="120" fill="#fff"></rect><g transform="translate(82 38) rotate(45)"><circle r="18" fill="#000"></circle><path d="M0 7 V62" stroke="#000" stroke-width="18" stroke-linecap="round"></path></g></mask></defs><g mask="url(#brand-gap)"><circle cx="60" cy="60" r="47" fill="none" style="stroke:var(--accent)" stroke-width="8" stroke-dasharray="200 95" stroke-linecap="round" transform="rotate(13 60 60)"></circle><path d="M60 44 C52 38 40 38 32 40 V76 C40 74 52 74 60 80 Z" style="fill:var(--ink)"></path><path d="M60 44 C68 38 80 38 88 40 V76 C80 74 68 74 60 80 Z" style="fill:var(--accent)"></path></g><g transform="translate(82 38) rotate(45)"><path transform="scale(1.2)" d="M-3.6 -11.45 A12 12 0 1 0 3.6 -11.45 L3.6 -3 A3.6 3.6 0 0 1 -3.6 -3 Z" style="fill:var(--coral)"></path><path d="M0 7 V62" style="stroke:var(--coral)" stroke-width="11" stroke-linecap="round"></path></g></svg>`;
+
 const PREFS = {
   "manuals-size": [
     "Text size",
@@ -180,7 +183,7 @@ function header(current, session) {
       `<a href="${href}"${href === current ? ' aria-current="page"' : ""}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"></path></svg><span>${label}</span></a>`,
   ).join("");
   if (!session) {
-    return `<a class="brand" href="/">manuals</a><span style="flex:1"></span><div class="theme-toggle"></div>`;
+    return `<a class="brand" href="/">${LOGO}manuals</a><span style="flex:1"></span><div class="theme-toggle"></div>`;
   }
   const email = session.user?.email ?? "";
   const initial = (email.trim()[0] || "?").toUpperCase();
@@ -195,7 +198,7 @@ function header(current, session) {
           .join("")}</div></div>`,
     )
     .join("");
-  return `<a class="brand" href="/">manuals</a>
+  return `<a class="brand" href="/">${LOGO}manuals</a>
     <nav class="nav" aria-label="Main">${links}</nav>
     <div class="account">
       <button type="button" class="avatar" id="account" aria-haspopup="true" aria-expanded="false" aria-controls="account-menu" aria-label="Account and settings">${esc(initial)}</button>
@@ -1398,6 +1401,232 @@ export function reportIssue({ runId, debug, about } = {}) {
   });
   dialog.showModal();
   $("#report-text", dialog).focus();
+}
+
+// --- A child: name, birthday, height and weight -----------------------------
+// One sheet for every place a child shows (Atlas, a car seat, Household). It
+// saves straight to the household's tables. Heights and weights are kept in cm
+// and kg and typed in the units picked here, remembered on this device.
+const KID_UNITS_KEY = "manuals-kid-units";
+const CM_PER_IN = 2.54;
+const KG_PER_LB = 0.45359237;
+function kidUnits() {
+  try {
+    const u = localStorage.getItem(KID_UNITS_KEY);
+    if (u === "metric" || u === "us") return u;
+  } catch {}
+  return /^en-US$/i.test(navigator.language) ? "us" : "metric";
+}
+const round1 = (n) => Math.round(n * 10) / 10;
+/** A saved height and weight in the picked units, e.g. "36.2 in · 30.9 lb". */
+export function kidSize(m, units = kidUnits()) {
+  if (!m) return "";
+  const us = units === "us";
+  const h =
+    m.height_cm == null
+      ? ""
+      : us
+        ? `${round1(Number(m.height_cm) / CM_PER_IN)} in`
+        : `${Number(m.height_cm)} cm`;
+  const w =
+    m.weight_kg == null
+      ? ""
+      : us
+        ? `${round1(Number(m.weight_kg) / KG_PER_LB)} lb`
+        : `${Number(m.weight_kg)} kg`;
+  return [h, w].filter(Boolean).join(" · ");
+}
+
+/**
+ * Opens the sheet for one child (or, with no id, for adding one). `seatId`
+ * puts a newly added child on that car seat; `onChange` runs after a save.
+ */
+export async function openKid(childId, { onChange, seatId } = {}) {
+  const supa = await db();
+  let kid = null;
+  let past = [];
+  if (childId) {
+    const [k, m] = await Promise.all([
+      supa.from("children").select("id, nickname, birth_date").eq("id", childId).maybeSingle(),
+      supa
+        .from("measurements")
+        .select("id, measured_on, height_cm, weight_kg")
+        .eq("child_id", childId)
+        .order("measured_on", { ascending: false })
+        .limit(12),
+    ]);
+    if (k.error || !k.data) return toast(k.error?.message ?? "That child isn't saved anymore.");
+    kid = k.data;
+    past = m.data ?? [];
+  }
+  let units = kidUnits();
+  const dialog = document.createElement("dialog");
+  dialog.className = "sheet";
+  dialog.setAttribute("aria-label", kid ? `About ${kid.nickname}` : "Add a child");
+  const unitLabel = () => (units === "us" ? ["in", "lb"] : ["cm", "kg"]);
+  /** What's typed in a field, in cm or kg: the kept exact value while the shown one is untouched. */
+  const exactMetric = (input, name) => {
+    if (!input.value) return null;
+    if (input.dataset.shown === input.value && input.dataset.metric)
+      return Number(input.dataset.metric);
+    const per = name === "height" ? CM_PER_IN : KG_PER_LB;
+    return units === "us" ? Number(input.value) * per : Number(input.value);
+  };
+  const pastRow = (m) =>
+    `<li><span>${esc(new Date(`${m.measured_on}T12:00:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }))}</span><span class="muted">${esc(kidSize(m, units))}</span><button type="button" class="link small" data-unmeasure="${m.id}" aria-label="Remove the ${esc(m.measured_on)} measurement">Remove</button></li>`;
+  dialog.innerHTML = `<div class="sheet-grip" aria-hidden="true"></div>
+    <form class="kid-form">
+      <h2 style="font-size:22px;margin:0">${kid ? esc(kid.nickname) : "Add a child"}</h2>
+      <label class="kid-field"><span class="small muted">Name or nickname</span>
+        <input name="nickname" required maxlength="60" autocomplete="off" value="${esc(kid?.nickname ?? "")}"></label>
+      <label class="kid-field"><span class="small muted">Birthday (for seats with a minimum age)</span>
+        <input name="birth_date" type="date" max="${today()}" value="${esc(kid?.birth_date ?? "")}"></label>
+      <div class="kid-field">
+        <div class="row" style="justify-content:space-between;align-items:center">
+          <strong>${past.length ? "New height and weight" : "Height and weight"}</strong>
+          <div class="kid-units" role="group" aria-label="Units">
+            <button type="button" class="quiet small" data-units="metric" aria-pressed="${units === "metric"}">cm · kg</button>
+            <button type="button" class="quiet small" data-units="us" aria-pressed="${units === "us"}">in · lb</button>
+          </div>
+        </div>
+        <div class="kid-pair">
+          <label class="kid-field"><span class="small muted">Height (<span data-u="0">${unitLabel()[0]}</span>)</span><input name="height" type="number" inputmode="decimal" step="0.1" min="0"></label>
+          <label class="kid-field"><span class="small muted">Weight (<span data-u="1">${unitLabel()[1]}</span>)</span><input name="weight" type="number" inputmode="decimal" step="0.1" min="0"></label>
+        </div>
+        <label class="kid-field"><span class="small muted">Measured on</span><input name="measured_on" type="date" max="${today()}" value="${today()}"></label>
+        <span class="small muted">Car seat pages compare the newest numbers with the seat's limits.</span>
+      </div>
+      ${past.length ? `<div class="kid-field"><strong>Saved before</strong><ul class="kid-past">${past.map(pastRow).join("")}</ul></div>` : ""}
+      <div class="row" style="gap:10px">
+        <button type="submit" style="flex:1">Save</button>
+        <button type="button" class="quiet" data-cancel style="flex:1">Cancel</button>
+      </div>
+      ${kid ? `<button type="button" class="link small danger" data-unkid>Remove ${esc(kid.nickname)}</button>` : ""}
+    </form>`;
+  document.body.append(dialog);
+  const close = () => {
+    dialog.close();
+    dialog.remove();
+  };
+  const form = $("form", dialog);
+  dialog.addEventListener("cancel", close);
+  dialog.addEventListener("click", async (e) => {
+    if (e.target === dialog) {
+      const r = dialog.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)
+        return close();
+    }
+    if (e.target.closest("[data-cancel]")) return close();
+    const pick = e.target.closest("[data-units]");
+    if (pick && pick.dataset.units !== units) {
+      // Switching units converts whatever is typed, always from the exact
+      // metric value, so switching back and forth never drifts.
+      const toUs = pick.dataset.units === "us";
+      for (const name of ["height", "weight"]) {
+        const input = form.elements[name];
+        const metric = exactMetric(input, name);
+        if (metric == null) continue;
+        const per = name === "height" ? CM_PER_IN : KG_PER_LB;
+        input.value = String(round1(toUs ? metric / per : metric));
+        input.dataset.metric = String(metric);
+        input.dataset.shown = input.value;
+      }
+      units = pick.dataset.units;
+      try {
+        localStorage.setItem(KID_UNITS_KEY, units);
+      } catch {}
+      for (const b of dialog.querySelectorAll("[data-units]"))
+        b.setAttribute("aria-pressed", String(b.dataset.units === units));
+      for (const s of dialog.querySelectorAll("[data-u]"))
+        s.textContent = unitLabel()[Number(s.dataset.u)];
+      const list = $(".kid-past", dialog);
+      if (list) list.innerHTML = past.map(pastRow).join("");
+      return;
+    }
+    const gone = e.target.closest("[data-unmeasure]");
+    if (gone) {
+      gone.disabled = true;
+      const { error } = await supa.from("measurements").delete().eq("id", gone.dataset.unmeasure);
+      if (error) {
+        gone.disabled = false;
+        return toast(error.message);
+      }
+      past = past.filter((m) => m.id !== gone.dataset.unmeasure);
+      gone.closest("li").remove();
+      onChange?.();
+      return;
+    }
+    if (e.target.closest("[data-unkid]")) {
+      if (!confirm(`Remove ${kid.nickname}? Their measurements go too; their car seats stay.`))
+        return;
+      const { error } = await supa.from("children").delete().eq("id", kid.id);
+      if (error) return toast(error.message);
+      close();
+      toast(`${kid.nickname} is removed.`);
+      onChange?.();
+    }
+  });
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = form.elements;
+    const nickname = f.nickname.value.trim();
+    const birth = f.birth_date.value || null;
+    const us = units === "us";
+    const exactH = exactMetric(f.height, "height");
+    const exactW = exactMetric(f.weight, "weight");
+    const height = exactH == null ? null : round1(exactH);
+    const weight = exactW == null ? null : Math.round(exactW * 100) / 100;
+    if (height != null && (height < 30 || height > 200))
+      return toast(
+        `That height looks off: between ${us ? "12 and 78 in" : "30 and 200 cm"}, please.`,
+      );
+    if (weight != null && (weight < 1 || weight > 100))
+      return toast(
+        `That weight looks off: between ${us ? "2.2 and 220 lb" : "1 and 100 kg"}, please.`,
+      );
+    const save = $("[type=submit]", dialog);
+    save.disabled = true;
+    try {
+      let id = kid?.id;
+      if (!kid) {
+        const { data, error } = await supa
+          .from("children")
+          .insert({ nickname, birth_date: birth })
+          .select("id")
+          .single();
+        if (error) throw error;
+        id = data.id;
+        if (seatId) {
+          const { error: e2 } = await supa.from("items").update({ child_id: id }).eq("id", seatId);
+          if (e2) throw e2;
+        }
+      } else if (nickname !== kid.nickname || birth !== (kid.birth_date ?? null)) {
+        const { error } = await supa
+          .from("children")
+          .update({ nickname, birth_date: birth })
+          .eq("id", id);
+        if (error) throw error;
+      }
+      if (height != null || weight != null) {
+        const { error } = await supa.from("measurements").insert({
+          child_id: id,
+          measured_on: f.measured_on.value || today(),
+          height_cm: height,
+          weight_kg: weight,
+          source: "app",
+        });
+        if (error) throw error;
+      }
+      close();
+      toast(kid ? "Saved." : `${nickname} is added.`);
+      onChange?.();
+    } catch (err) {
+      save.disabled = false;
+      toast(err.message);
+    }
+  });
+  dialog.showModal();
+  if (!kid) form.elements.nickname.focus();
 }
 
 /**

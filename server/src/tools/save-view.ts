@@ -17,7 +17,7 @@ export function register(server: McpServer, env: Env) {
     {
       title: "Save or remove an atlas view",
       description:
-        'Saves a view in the user\'s own words ("baby safety", "before the first frost") so it shows as a chip on the Atlas page and refreshes itself when things are added. Pass remove true to delete a saved view.',
+        'Saves a view in the user\'s own words ("baby safety", "before the first frost") so it shows as a chip on the Map page and refreshes itself when things are added. Pass remove true to delete a saved view.',
       inputSchema: z.object({
         phrase: z.string().trim().min(2).max(120).describe("The view, in the user's words."),
         remove: z.boolean().default(false).describe("Delete the saved view with this phrase."),
