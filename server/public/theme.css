@@ -3696,3 +3696,79 @@ button.sheet-x:focus-visible {
   display: inline-flex;
   align-items: center;
 }
+
+/* --- Home's way into Muse: a thin pill that opens a new chat ------------------ */
+.ask-pill {
+  display: flex;
+  align-items: center;
+  margin-top: 6px;
+  min-height: 48px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+.ask-pill:hover,
+.ask-pill:focus-within {
+  border-color: var(--accent);
+}
+.ask-pill button {
+  min-height: 46px;
+  background: transparent;
+  color: var(--ink2);
+  border-radius: 999px;
+}
+.ask-pill-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 8px 0 16px;
+  font-weight: 500;
+  text-align: left;
+}
+.ask-pill-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ask-pill-spark {
+  display: inline-flex;
+  color: var(--accent);
+}
+.ask-pill-mic {
+  flex: none;
+  width: 46px;
+  padding: 0;
+  margin-right: 1px;
+}
+.ask-pill-mic:hover {
+  color: var(--accent);
+}
+
+/* The chat box's mic: quiet until it's listening, then accent with a soft pulse. */
+.chat-mic {
+  flex: none;
+  width: 48px;
+  padding: 0;
+}
+.chat-mic.listening {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  animation: mic-pulse 1.4s ease-in-out infinite;
+}
+@keyframes mic-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--accent-soft);
+  }
+  50% {
+    box-shadow: 0 0 0 6px var(--accent-soft);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-mic.listening {
+    animation: none;
+  }
+}
