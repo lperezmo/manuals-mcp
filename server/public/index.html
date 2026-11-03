@@ -613,13 +613,15 @@
       };
       // The example home's manuals are made up, so there is no PDF to open.
       const isExample = (url) => /^https:\/\/example\.com\//.test(url);
+      // The grip, with a close X at the top right that stays put while the sheet scrolls.
+      const SHEET_TOP = `<div class="sheet-top"><div class="sheet-grip" aria-hidden="true"></div><button type="button" class="sheet-x" data-close-sheet aria-label="Close" title="Close"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>`;
       let openingTask = null;
 
       async function openTask(id, chip) {
         const sheet = $("#task-sheet");
         if (!sheet) return;
         openingTask = id;
-        sheet.innerHTML = '<div class="sheet-grip" aria-hidden="true"></div><p class="small muted" style="padding:8px 4px">Opening…</p>';
+        sheet.innerHTML = `${SHEET_TOP}<p class="small muted" style="padding:8px 4px">Opening…</p>`;
         if (!sheet.open) sheet.showModal();
         const supa = await db();
         const { data: t, error } = await supa
@@ -631,7 +633,7 @@
           .maybeSingle();
         if (openingTask !== id || !sheet.open) return;
         if (error || !t) {
-          sheet.innerHTML = `<div class="sheet-grip" aria-hidden="true"></div><p style="padding:8px 4px">${esc(error?.message ?? "That task isn't here anymore.")}</p><button type="button" class="link" data-close-sheet>Close</button>`;
+          sheet.innerHTML = `${SHEET_TOP}<p style="padding:8px 4px">${esc(error?.message ?? "That task isn't here anymore.")}</p><button type="button" class="link" data-close-sheet>Close</button>`;
           return;
         }
         const item = one(t.items);
@@ -675,7 +677,7 @@
         const late = t.next_due_on && t.next_due_on < today();
         sheet.dataset.about = item?.id ?? "";
         sheet.dataset.ask = `What does "${t.title}" mean for the ${item?.nickname ?? "thing"}, why does it matter, and how do I do it?`;
-        sheet.innerHTML = `<div class="sheet-grip" aria-hidden="true"></div>
+        sheet.innerHTML = `${SHEET_TOP}
           <div class="task-sheet">
             <span class="small muted">${esc(item?.nickname ?? "")}</span>
             <h2 class="task-sheet-title">${esc(t.title)}</h2>
