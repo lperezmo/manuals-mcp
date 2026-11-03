@@ -49,8 +49,9 @@
         toast,
         today,
         tool,
+        updateStarters,
       } from "/app.js";
-      import { homeStarters } from "/starters.js";
+      import { withAiStarters } from "/starters.js";
 
       const main = $("#main");
       const ITEM = "items!inner(id, nickname, brand, model, kind, category, icon, tint, archived_at)";
@@ -162,6 +163,8 @@
         );
 
         pulseCache = null;
+        // What's due may have changed (a job done), so ask Muse again; it answers from cache when nothing did.
+        startersAsk = null;
         render({
           items: items.data,
           due: due.data,
@@ -514,6 +517,20 @@
             <a class="back-home-foot" href="/" data-view="">Back to Home</a>
           </section>`;
       }
+      /** Muse's questions for a new chat, asked once per load (null keeps the templates). */
+      let aiStarters = null;
+      let startersAsk = null;
+      function askStarters() {
+        startersAsk ??= api("/api/starters", {})
+          // Asked too often this minute: keep what came last time.
+          .then((r) => (r?.slow_down ? aiStarters : Array.isArray(r?.starters) ? r.starters : null))
+          .catch(() => aiStarters)
+          .then((s) => {
+            aiStarters = s;
+            return s;
+          });
+        return startersAsk;
+      }
       /** The pulse, fetched once per load and shared by the Home tile and its page. */
       function getPulse() {
         pulseCache ??= api("/api/pulse", {})
@@ -585,7 +602,14 @@
         wireHero();
         // The pill opens a new chat, keyboard up, with a few starters from what's due.
         // Its mic opens the same chat already listening. Older chats are under Previous chats.
-        const ask = (listen) => openChat(undefined, load, { fresh: true, starters: homeStarters(due), listen });
+        // Muse's questions lead when they're in; until then the templates, swapped in place if
+        // Muse answers while the new chat is still empty.
+        if (!view) askStarters();
+        const ask = (listen) => {
+          const starters = withAiStarters(aiStarters, due);
+          openChat(undefined, load, { fresh: true, starters, listen });
+          if (!aiStarters) askStarters().then((s) => s && updateStarters(withAiStarters(s, due), starters));
+        };
         $("[data-ask-open]")?.addEventListener("click", () => ask(false));
         $("[data-ask-talk]")?.addEventListener("click", () => ask(true));
         for (const b of main.querySelectorAll("[data-done]")) {

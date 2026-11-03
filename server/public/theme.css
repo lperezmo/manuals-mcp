@@ -853,9 +853,24 @@ button.agenda-open:focus-visible {
   border-top: 1px solid var(--line);
   flex-wrap: nowrap;
 }
-.chat form.field input {
+.chat form.field input,
+.chat form.field textarea {
   flex: 1 1 0;
   min-width: 0;
+}
+/* The chat box wraps and grows with what's typed (up to about six lines, then
+   it scrolls); the buttons beside it stay at the bottom, by the last line. */
+.chat form.field {
+  align-items: flex-end;
+}
+.chat form.field textarea {
+  min-height: 48px;
+  max-height: 168px;
+  resize: none;
+  overflow-y: hidden;
+  line-height: 1.4;
+  padding: 12px 14px;
+  border-radius: 20px;
 }
 .chat-icon {
   flex: none;

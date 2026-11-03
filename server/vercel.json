@@ -22,6 +22,9 @@
     "api/receipt.ts": {
       "maxDuration": 60
     },
+    "api/starters.ts": {
+      "maxDuration": 60
+    },
     "api/find-manual.ts": {
       "maxDuration": 60
     },

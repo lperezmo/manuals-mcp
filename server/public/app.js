@@ -1,6 +1,7 @@
 // Shared by every page: Supabase sign-in, the header, calls to the server's
 // tools, and the Muse chat drawer. Pages import what they need.
 
+import { enterSends, growBox } from "/chatbox.js";
 import { createDictation, speechCtor } from "/dictate.js";
 import { couldntFinish, JOB_MAX_MS, readVerdict, withTimeout } from "/jobs.js";
 
@@ -732,6 +733,19 @@ export function typeAhead(input, onPick, { above = false } = {}) {
  * already in this chat (a setup button tapped again) just opens the chat.
  */
 /**
+ * New chips for the open chat in place of `was`, only while it's still empty: Home's
+ * Muse-written starters can land a moment after the chat opens with its
+ * templates. A chat with messages keeps what it has.
+ */
+export function updateStarters(starters, was) {
+  if (!drawer || drawer.classList.contains("hidden") || loadChat().length) return;
+  // Only the chips that chat opened with: a thing's own chat keeps its own.
+  if (!starters?.length || chatStarters !== was) return;
+  chatStarters = starters;
+  renderChat([]);
+}
+
+/**
  * Opens the chat drawer, sending `text` if given. `once` skips a text the open
  * chat already sent. `own` gives the text a chat of its own: the earlier chat
  * that started with it if there is one, else a new chat, so a setup doesn't
@@ -794,16 +808,26 @@ export function openChat(
         </details>
         <input id="chat-camera" type="file" accept="image/*" capture="environment" class="sr-only">
         <input id="chat-photo" type="file" accept="image/*" class="sr-only">
-        <input id="chat-input" autocomplete="off" placeholder="Ask or tell">
+        <textarea id="chat-input" rows="1" autocomplete="off" placeholder="Ask or tell"></textarea>
         ${canDictate() ? `<button type="button" class="quiet chat-mic" data-mic aria-pressed="false" aria-label="Talk instead of typing" title="Talk">${MIC_ICON}</button>` : ""}
         <button type="submit">Send</button>
       </form>`;
     document.body.append(drawer);
     wireMic();
+    // The box grows with what's typed; Enter sends with a keyboard, and is a new line on a phone.
+    const box = $("#chat-input", drawer);
+    const fine = matchMedia("(pointer: fine)");
+    box.addEventListener("input", () => growBox(box));
+    box.addEventListener("keydown", (e) => {
+      if (!enterSends(e, fine.matches)) return;
+      e.preventDefault();
+      box.form.requestSubmit();
+    });
     typeAhead(
       $("#chat-input", drawer),
       (text) => {
         $("#chat-input", drawer).value = "";
+        growBox($("#chat-input", drawer));
         send(text, onChange);
       },
       { above: true },
@@ -882,6 +906,7 @@ export function openChat(
         if (st.draft) {
           const input = $("#chat-input", drawer);
           input.value = st.text;
+          growBox(input);
           input.focus();
           input.setSelectionRange(st.text.length, st.text.length);
         } else send(st.text, chatChange ?? onChange);
@@ -934,6 +959,7 @@ export function openChat(
       // Sent: anything the mic hears after this would refill the box.
       dictation?.cancel();
       input.value = "";
+      growBox(input);
       pendingPhoto = null;
       showPendingPhoto();
       send(value, onChange, undefined, photo);
@@ -965,6 +991,7 @@ function wireMic() {
     read: () => input.value,
     onText: (text, final) => {
       input.value = text;
+      growBox(input);
       input.setSelectionRange?.(text.length, text.length);
       // Once a sentence is done, the saved answers under the box catch up with it.
       if (final) input.dispatchEvent(new Event("input", { bubbles: true }));
