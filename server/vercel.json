@@ -1,7 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "cd .. && bun install --frozen-lockfile",
-  "ignoreCommand": "[ \"$VERCEL_GIT_COMMIT_REF\" != \"main\" ]",
   "cleanUrls": true,
   "functions": {
     "api/ingest.ts": {
