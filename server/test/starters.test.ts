@@ -2,9 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 // The chips a new Muse chat from Home offers (plain JS, served as /starters.js).
 type Starter = { label: string; text: string; draft?: boolean };
-const { homeStarters } = (await import(
+const { homeStarters, withAiStarters } = (await import(
   String(new URL("../public/starters.js", import.meta.url))
-)) as { homeStarters: (due?: unknown[]) => Starter[] };
+)) as {
+  homeStarters: (due?: unknown[]) => Starter[];
+  withAiStarters: (ai: unknown, due?: unknown[]) => Starter[];
+};
 
 const task = (title: string, next_due_on: string, nickname?: string) => ({
   title,
@@ -40,5 +43,41 @@ describe("Home's chat starters", () => {
     const s = homeStarters([]);
     expect(s).toHaveLength(2);
     expect(s[0]?.label).toBe("What should I keep an eye on?");
+  });
+});
+
+describe("Muse's own starters", () => {
+  const due = [task("Clean the filter", "2026-11-02", "Dishwasher")];
+
+  test("lead the chips, then what's due and a job done", () => {
+    const s = withAiStarters(
+      [
+        {
+          label: "How do I clean my dishwasher filter?",
+          text: "How do I clean my dishwasher filter?",
+        },
+        { text: "How do I clean my dishwasher filter?" },
+        { text: "  " },
+        { text: "Can the smoke alarm battery wait?" },
+        { text: "What does my furnace warranty cover?" },
+        { text: "One too many?" },
+      ],
+      due,
+    );
+    expect(s.map((x) => x.text)).toEqual([
+      "How do I clean my dishwasher filter?",
+      "Can the smoke alarm battery wait?",
+      "What does my furnace warranty cover?",
+      "What's due this week?",
+      "I just ",
+    ]);
+    expect(s[4]?.draft).toBe(true);
+  });
+
+  test("none usable means the templates", () => {
+    expect(withAiStarters(null, due)).toEqual(homeStarters(due));
+    expect(withAiStarters([{ text: "" }], due)[0]?.text).toBe(
+      "When did I last clean the filter on the Dishwasher?",
+    );
   });
 });

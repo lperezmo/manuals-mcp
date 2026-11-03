@@ -1,6 +1,7 @@
 // The chips a new Muse chat from Home offers, so it never opens blank: a
-// question or two about what's due soonest, then the general ones. Kept apart
-// from the page code so the tests can check the wording.
+// question or two about what's due soonest, then the general ones. When Muse
+// has written questions for what's coming up (/api/starters), those lead
+// instead. Kept apart from the page code so the tests can check the wording.
 
 const first = (x) => (Array.isArray(x) ? x[0] : x);
 
@@ -44,4 +45,28 @@ export function homeStarters(due = []) {
   );
   starters.push({ label: "I just did something", text: "I just ", draft: true });
   return starters;
+}
+
+/** How many of Muse's own questions lead the chips. */
+export const MAX_AI = 3;
+
+/**
+ * Muse's questions for what's coming up, then the two general chips (what's
+ * due, and telling Muse about a job done). Without any usable ones from Muse,
+ * the plain templates from `homeStarters`.
+ */
+export function withAiStarters(ai, due = []) {
+  const plain = homeStarters(due);
+  const seen = new Set();
+  const asked = [];
+  for (const s of Array.isArray(ai) ? ai : []) {
+    const text = typeof s?.text === "string" ? s.text.trim() : "";
+    if (!text || seen.has(text.toLowerCase())) continue;
+    seen.add(text.toLowerCase());
+    asked.push({ label: text, text });
+    if (asked.length >= MAX_AI) break;
+  }
+  if (!asked.length) return plain;
+  // The last two chips of the templates are always the general ones.
+  return [...asked, ...plain.slice(-2)];
 }

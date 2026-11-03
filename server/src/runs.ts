@@ -1,14 +1,24 @@
 import type { Db } from "./db.js";
 
 // The model_runs log: one row per manual read, chat turn, search, label photo, catch-up plan,
-// instant answer (the fast lane, no Muse) or Pulse refresh that asked Jev, written as the user
+// instant answer (the fast lane, no Muse), Pulse refresh that asked Jev or set of chat starters, written as the user
 // so it lands in their household.
 // Logging never breaks the real work.
 
 const MAX_RAW_CHARS = 20_000;
 
 export interface ModelRun {
-  kind: "read" | "chat" | "search" | "snap" | "plan" | "fast" | "pulse" | "image" | "recheck";
+  kind:
+    | "read"
+    | "chat"
+    | "search"
+    | "snap"
+    | "plan"
+    | "fast"
+    | "pulse"
+    | "image"
+    | "recheck"
+    | "starters";
   ok: boolean;
   model?: string | null;
   error?: string | null;

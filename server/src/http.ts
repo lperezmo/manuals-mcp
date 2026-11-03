@@ -76,6 +76,7 @@ import {
 import { BUDGET_USED, logRun, modelRunsTodayAll, runsToday, type Spent } from "./runs.js";
 import { outlinePart } from "./segment.js";
 import { MAX_IMAGE_BYTES, modelGuess, radioSticker, readLabel } from "./snap.js";
+import { buildStarters } from "./starters.js";
 import { ITEM_COLUMNS, itemLabel } from "./tools/context.js";
 import { groupTasks } from "./upkeep.js";
 
@@ -357,6 +358,47 @@ export function pulseHandler(
       return Response.json({ pulse });
     } catch {
       return Response.json({ pulse: null });
+    }
+  };
+}
+
+/**
+ * The questions a new chat from Home offers, written by Muse for what's
+ * coming up (Jev ranks it). Any failure answers null and Home keeps its
+ * templates.
+ */
+export function startersHandler(
+  env: Env,
+  verify: Verify = supabaseVerifier(env),
+  fetchImpl: typeof fetch = fetch,
+) {
+  return async (req: Request) => {
+    if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
+    const auth = await verify(bearer(req));
+    if (!auth) return Response.json({ error: "Sign in first." }, { status: 401 });
+    if (!env.reader) return Response.json({ starters: null });
+    const { userId } = userFrom(auth);
+    if (!fastAllowed(`starters:${userId}`))
+      return Response.json({ starters: null, slow_down: true });
+    const db = userDb(env, auth.token);
+    try {
+      const result = await buildStarters(env, db, userId, fetchImpl, {
+        usedToday: () => runsToday(db, "starters"),
+      });
+      if (result?.muse) {
+        await logRun(db, {
+          kind: "starters",
+          ok: result.starters.length > 0,
+          model: env.chatModel ?? env.reader.model,
+          ms: result.muse.ms,
+          tokens_in: result.muse.spent.tokens_in,
+          tokens_out: result.muse.spent.tokens_out,
+          raw_output: JSON.stringify({ picks: result.muse.picks, starters: result.starters }),
+        });
+      }
+      return Response.json({ starters: result?.starters.length ? result.starters : null });
+    } catch {
+      return Response.json({ starters: null });
     }
   };
 }

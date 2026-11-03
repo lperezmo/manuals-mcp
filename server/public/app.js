@@ -733,6 +733,19 @@ export function typeAhead(input, onPick, { above = false } = {}) {
  * already in this chat (a setup button tapped again) just opens the chat.
  */
 /**
+ * New chips for the open chat in place of `was`, only while it's still empty: Home's
+ * Muse-written starters can land a moment after the chat opens with its
+ * templates. A chat with messages keeps what it has.
+ */
+export function updateStarters(starters, was) {
+  if (!drawer || drawer.classList.contains("hidden") || loadChat().length) return;
+  // Only the chips that chat opened with: a thing's own chat keeps its own.
+  if (!starters?.length || chatStarters !== was) return;
+  chatStarters = starters;
+  renderChat([]);
+}
+
+/**
  * Opens the chat drawer, sending `text` if given. `once` skips a text the open
  * chat already sent. `own` gives the text a chat of its own: the earlier chat
  * that started with it if there is one, else a new chat, so a setup doesn't
