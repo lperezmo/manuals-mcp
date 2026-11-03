@@ -3497,3 +3497,25 @@ dialog.sheet::backdrop {
   align-items: flex-end;
   gap: 10px;
 }
+
+/* Connect page: the AI-connector side of the app goes by manuals mcp. */
+.mcp-name {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: "Fraunces", Georgia, serif;
+  font-weight: 600;
+  font-size: 22px;
+  color: var(--ink);
+}
+.mcp-tag {
+  font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--coral-soft);
+  color: var(--coral);
+}
