@@ -52,7 +52,14 @@ export interface Env {
    * Text stays on READER_* (Baseten); images use the Meta key. `cap` is the
    * most image calls ever, counted in model_runs, kept under the free credits.
    */
-  image?: { baseUrl: string; model: string; apiKey: string; cap: number };
+  image?: {
+    baseUrl: string;
+    model: string;
+    apiKey: string;
+    cap: number;
+    /** Meta's segmentation model, tried first: it outlines the part on the untouched photo. */
+    segmentModel: string;
+  };
 }
 
 function positive(value: string | undefined, fallback: number): number {
@@ -141,6 +148,7 @@ export function readEnv(source: Record<string, string | undefined> = process.env
           model: source.META_IMAGE_MODEL || "muse-image-1.0",
           apiKey: source.META_READER_API_KEY,
           cap: positive(source.IMAGE_CAP, 140),
+          segmentModel: source.META_SEGMENT_MODEL || "sam-3.1",
         }
       : undefined,
   };

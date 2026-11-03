@@ -74,6 +74,7 @@ import {
   toolsFor,
 } from "./router.js";
 import { BUDGET_USED, logRun, modelRunsTodayAll, runsToday, type Spent } from "./runs.js";
+import { outlinePart } from "./segment.js";
 import { MAX_IMAGE_BYTES, modelGuess, radioSticker, readLabel } from "./snap.js";
 import { ITEM_COLUMNS, itemLabel } from "./tools/context.js";
 import { groupTasks } from "./upkeep.js";
@@ -638,9 +639,11 @@ export function chatHandler(
 }
 
 /**
- * Circles a part on a chat photo with Meta's image model, inside the shared
- * cap. Every call is logged as an "image" run; only ones that came back with
- * a picture count toward the cap.
+ * Marks a part on a chat photo, inside the shared cap. Jev boxes it and SAM
+ * 3.1 outlines it first (about a second, a quarter of a cent, the photo left
+ * as it is); when that can't place it, Meta's image model circles it. Every
+ * model call is logged as an "image" run; only ones that came back with a
+ * picture count toward the cap.
  */
 async function markFor(
   env: Env,
@@ -654,6 +657,27 @@ async function markFor(
   const started = Date.now();
   try {
     if ((await imagesUsed(db)) >= image.cap) return { error: CAP_REACHED };
+    const outlined = await outlinePart(env, photo, instruction, fetchImpl).catch(async (err) => {
+      await logRun(db, {
+        kind: "image",
+        ok: false,
+        model: image.segmentModel,
+        error: (err as Error).message,
+        ms: Date.now() - started,
+        raw_output: JSON.stringify({ instruction }),
+      });
+      return null;
+    });
+    if (outlined) {
+      await logRun(db, {
+        kind: "image",
+        ok: true,
+        model: outlined.model,
+        ms: outlined.ms,
+        raw_output: JSON.stringify({ instruction }),
+      });
+      return { image: outlined.image };
+    }
     const out = await markPhoto(env, photo, instruction, fetchImpl);
     await logRun(db, {
       kind: "image",

@@ -52,18 +52,20 @@
         { name: "Jev on TypeSafe", match: (m) => m.startsWith("jev"), in: 0.042, out: 0, credit: 5 },
       ];
       const usd = (n) => (n < 0.01 && n > 0 ? "<$0.01" : `$${n.toFixed(2)}`);
-      // Meta's image model is billed per picture (about a cent each, per Meta's model page)
-      // and stops at the server's IMAGE_CAP, 140 unless it's set otherwise.
+      // Meta bills per picture: Muse Image about a cent, SAM 3.1 a quarter of a cent
+      // (Meta's pricing page). Both stop at the server's IMAGE_CAP, 140 unless set otherwise.
       const IMAGE_CAP = 140;
       const IMAGE_PRICE = 0.01;
+      const SAM_PRICE = 0.0025;
       let images = 0;
+      let imageCost = 0;
       function imageCard() {
         const text = spend.filter((r) => r.model.startsWith("muse-spark"));
         const calls = text.reduce((n, r) => n + Number(r.runs), 0);
         const left = Math.max(0, IMAGE_CAP - images);
         const pct = Math.min(100, (100 * images) / IMAGE_CAP);
         return `<div class="card credit">
-          <div class="row" style="justify-content:space-between;align-items:baseline"><strong class="small">Images on Meta</strong><span class="small muted">${num(images)} of ${IMAGE_CAP} used · about ${usd(images * IMAGE_PRICE)}</span></div>
+          <div class="row" style="justify-content:space-between;align-items:baseline"><strong class="small">Images on Meta</strong><span class="small muted">${num(images)} of ${IMAGE_CAP} used · about ${usd(imageCost)}</span></div>
           <strong class="credit-left">${num(left)} left</strong>
           <div class="credit-bar" role="meter" aria-label="Images on Meta used" aria-valuemin="0" aria-valuemax="${IMAGE_CAP}" aria-valuenow="${images}"><span style="width:${pct.toFixed(1)}%"></span></div>
           <span class="small muted">Circled photos in the chat${calls ? ` · plus ${num(calls)} Muse text calls on Meta from local testing` : ""}</span>
@@ -100,7 +102,10 @@
         if (r.kind === "search") return `Searched for the ${names.get(r.item_id) ?? "thing's"} manual`;
         if (r.kind === "fast") return `Instant answer about the ${names.get(r.item_id) ?? "thing"}, no Muse`;
         if (r.kind === "pulse") return "Pulse: picked what's worth doing now, no Muse";
-        if (r.kind === "image") return "Circled a part on a chat photo";
+        if (r.kind === "image")
+          return r.model?.startsWith("sam-")
+            ? "Outlined a part on a chat photo (Jev found it, SAM traced it)"
+            : "Circled a part on a chat photo";
         return r.tools_used?.length ? `Chat: ${r.tools_used.join(", ")}` : "Chat, no tools";
       }
 
@@ -228,9 +233,13 @@
         // No spend function yet (the migration isn't in) just leaves the credits at zero.
         spend = spent.data ?? [];
         // The same count the server's cap uses: image calls that came back with a picture.
-        images = spend
-          .filter((r) => r.model.startsWith("muse-image"))
-          .reduce((n, r) => n + Number(r.ok_runs ?? r.runs), 0);
+        const pictures = (prefix) =>
+          spend
+            .filter((r) => r.model.startsWith(prefix))
+            .reduce((n, r) => n + Number(r.ok_runs ?? r.runs), 0);
+        const [muse, sam] = [pictures("muse-image"), pictures("sam-")];
+        images = muse + sam;
+        imageCost = muse * IMAGE_PRICE + sam * SAM_PRICE;
         if (result.error) throw new Error(result.error.message);
         runs = result.data;
         names = new Map((items.data ?? []).map((i) => [i.id, i.nickname]));
