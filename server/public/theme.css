@@ -3552,3 +3552,147 @@ button.sheet-x:focus-visible {
   background: var(--coral-soft);
   color: var(--coral);
 }
+
+/* --- Home tiles and the sub-pages they open --------------------------------- */
+.home-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 6px;
+}
+@media (min-width: 720px) {
+  .home-tiles {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.home-tile {
+  aspect-ratio: 1 / 1;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 20px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  text-decoration: none;
+  min-width: 0;
+}
+.home-tile:hover {
+  border-color: var(--accent);
+}
+.home-tile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.home-tile-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.home-tile-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.home-tile-badge {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--on-accent);
+}
+.home-tile-badge[hidden] {
+  display: none;
+}
+.home-tile-icon.coral {
+  background: var(--coral-soft);
+  color: var(--coral);
+}
+.home-tile-badge.coral {
+  background: var(--coral);
+}
+.home-tile-icon.accent {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.home-tile-badge.accent {
+  background: var(--accent);
+}
+.home-tile-icon.teal {
+  background: var(--teal-soft);
+  color: var(--teal);
+}
+.home-tile-icon.gold {
+  background: var(--gold-soft);
+  color: var(--gold);
+}
+.home-tile-badge.gold {
+  background: var(--gold);
+}
+.home-tile-icon.slate {
+  background: var(--slate-soft);
+  color: var(--slate);
+}
+.home-tile-icon.sage {
+  background: var(--sage-soft);
+  color: var(--sage);
+}
+.home-tile-text {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.home-tile-title {
+  font-family: "Fraunces", Georgia, serif;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+.back-home {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding: 0 16px 0 8px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-weight: 700;
+  text-decoration: none;
+}
+.back-home:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.subhome-head {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.subhome-head p {
+  margin: 0;
+}
+.back-home-foot {
+  justify-self: center;
+  margin-top: 8px;
+  font-weight: 600;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}

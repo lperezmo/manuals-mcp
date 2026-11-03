@@ -158,6 +158,7 @@
           }),
         );
 
+        pulseCache = null;
         render({
           items: items.data,
           due: due.data,
@@ -388,6 +389,172 @@
         }
       }
 
+      // --- Home and its sub-pages -------------------------------------------------
+      // Home is the add-a-manual card, the Muse bar and one square tile per
+      // section. A tile opens that section as its own page (/?view=now), with a
+      // Home button on top and a Back to Home link at the bottom. Moving between
+      // them re-renders from the last load, so the phone's back button works too.
+      const VIEWS = {
+        now: { title: "Worth doing now", intro: "The few things Muse thinks matter today. Safety first." },
+        coming: { title: "Coming up", intro: "Everything due in the next 30 days." },
+        things: { title: "Your things", intro: "Every thing in the house with a manual." },
+        check: { title: "To check", intro: "Muse wasn't sure it read these right. Check each against its page." },
+        changes: { title: "Recent changes", intro: "The latest edits to what Muse read." },
+      };
+      let last = null;
+      let pulseCache = null;
+      const currentView = () => {
+        const v = new URLSearchParams(location.search).get("view");
+        return v && Object.hasOwn(VIEWS, v) ? v : null;
+      };
+      const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+      const TILE_ICON = {
+        now: '<path d="M13 3L5 14h6l-1 7 8-11h-6z"></path>',
+        coming: '<rect x="4" y="5" width="16" height="15" rx="2"></rect><path d="M4 10h16M9 3v4M15 3v4"></path>',
+        things: '<rect x="4" y="4" width="7" height="7" rx="1.5"></rect><rect x="13" y="4" width="7" height="7" rx="1.5"></rect><rect x="4" y="13" width="7" height="7" rx="1.5"></rect><rect x="13" y="13" width="7" height="7" rx="1.5"></rect>',
+        check: '<circle cx="11" cy="11" r="6"></circle><path d="M20 20l-4.5-4.5"></path>',
+        changes: '<path d="M4 12a8 8 0 1 0 2.5-5.8"></path><path d="M4 4v4h4M12 8v4l3 2"></path>',
+        household: '<path d="M4 11l8-6 8 6v9H4z"></path><path d="M10 20v-5h4v5"></path>',
+      };
+      function tile({ key, href, tone, title, sub, badge }) {
+        const view = Object.hasOwn(VIEWS, key) ? ` data-view="${key}"` : "";
+        return `<a class="home-tile" href="${href}"${view} data-tile="${key}">
+          <span class="home-tile-top">
+            <span class="home-tile-icon ${tone}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${TILE_ICON[key]}</svg></span>
+            <span class="home-tile-badge ${tone}"${badge ? "" : " hidden"}>${badge ?? ""}</span>
+          </span>
+          <span class="home-tile-text"><strong class="home-tile-title">${esc(title)}</strong><span class="small muted" data-tile-sub>${esc(sub)}</span></span>
+        </a>`;
+      }
+      function homeTiles({ items, due, review, revisions, kids }) {
+        const date = new Date().toLocaleDateString(undefined, {
+          weekday: "long",
+          month: "short",
+          day: "numeric",
+        });
+        const now = today();
+        const late = due.filter((t) => t.next_due_on < now).length;
+        const week = due.filter((t) => daysBetween(now, t.next_due_on) < 7).length;
+        const tiles = [
+          { key: "now", href: "/?view=now", tone: "coral", title: "Worth doing now", sub: "Checking the house…" },
+          {
+            key: "coming",
+            href: "/?view=coming",
+            tone: "accent",
+            title: "Coming up",
+            sub: late ? `${late} late` : week ? `${week} this week` : due.length ? `${due.length} this month` : "Nothing this month",
+            badge: late || null,
+          },
+          { key: "things", href: "/?view=things", tone: "teal", title: "Your things", sub: plural(items.length, "thing") },
+          {
+            key: "check",
+            href: "/?view=check",
+            tone: "gold",
+            title: "To check",
+            sub: review.length ? "Muse wasn't sure" : "All checked",
+            badge: review.length || null,
+          },
+          {
+            key: "changes",
+            href: "/?view=changes",
+            tone: "slate",
+            title: "Recent changes",
+            sub: revisions.length ? `Latest ${ago(revisions[0].created_at).toLowerCase()}` : "Nothing yet",
+          },
+          {
+            key: "household",
+            href: "/household",
+            tone: "sage",
+            title: "Household",
+            sub: kids.length ? plural(kids.length, "kid") : "Who lives here",
+          },
+        ];
+        return `<section class="stack">
+            <h1 class="sr-only">Home</h1>
+            <p class="muted" style="font-weight:600">${esc(date)}</p>
+            ${hero()}
+            <form class="field" id="ask" style="margin-top:6px">
+              <label class="sr-only" for="ask-input">Ask or tell</label>
+              <input id="ask-input" autocomplete="off" placeholder="Ask or tell Muse">
+              <button type="submit">Go</button>
+            </form>
+            <nav class="home-tiles" aria-label="Home sections">${tiles.map(tile).join("")}</nav>
+          </section>`;
+      }
+      function subHome(view, { items, due, review, revisions, kids }) {
+        const { title, intro } = VIEWS[view];
+        let body = "";
+        if (view === "now") body = '<div id="pulse"><div id="pulse-body"><p class="small muted">Checking the house…</p></div></div>';
+        if (view === "coming") body = `<div class="stack" id="coming">${agenda(due)}</div>`;
+        if (view === "things")
+          body = items.length
+            ? `<div class="grid">${items.map((i) => thingCard(i, kids)).join("")}</div>`
+            : '<p class="card muted">No things yet. Add a manual from Home.</p>';
+        if (view === "check")
+          body = review.length
+            ? `<div class="row" style="gap:10px;align-items:center"><button type="button" class="small" id="check-flagged">Check them with Muse</button><span class="small muted">A second read checks each against its page and asks before saving. Or tap one yourself.</span></div>
+              <div class="rv-grid" role="group" aria-label="To check">${review.map(reviewTile).join("")}</div>
+              <div id="review-open"></div>`
+            : '<p class="card muted">Nothing to check. Muse was sure about everything it read.</p>';
+        if (view === "changes")
+          body = revisions.length
+            ? `<div class="card flat stack">${revisions.map(change).join("")}</div><a href="/history">All of them</a>`
+            : '<p class="card muted">No changes yet.</p>';
+        return `<section class="stack subhome">
+            <a class="back-home" href="/" data-view="">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>Home
+            </a>
+            <div class="subhome-head"><h1>${esc(title)}</h1><p class="muted">${esc(intro)}</p></div>
+            ${body}
+            <a class="back-home-foot" href="/" data-view="">Back to Home</a>
+          </section>`;
+      }
+      /** The pulse, fetched once per load and shared by the Home tile and its page. */
+      function getPulse() {
+        pulseCache ??= api("/api/pulse", {})
+          .then((r) => r?.pulse ?? null)
+          .catch(() => null);
+        return pulseCache;
+      }
+      async function fillPulseTile() {
+        const pulse = await getPulse();
+        const t = main.querySelector('[data-tile="now"]');
+        if (!t) return;
+        const n = pulse?.cards?.length ?? 0;
+        const safety = pulse?.cards?.filter((c) => c.chip === "safety").length ?? 0;
+        $("[data-tile-sub]", t).textContent = !pulse
+          ? "Coming up has it all"
+          : !n
+            ? "Nothing needs you"
+            : safety
+              ? plural(safety, "safety check")
+              : plural(n, "thing");
+        const badge = $(".home-tile-badge", t);
+        badge.textContent = n ? String(n) : "";
+        badge.hidden = !n;
+      }
+      function go(view) {
+        const url = new URL(location.href);
+        if (view) url.searchParams.set("view", view);
+        else url.searchParams.delete("view");
+        history.pushState({ fromHome: !!view || history.state?.fromHome }, "", url);
+        if (last) render(last);
+        window.scrollTo(0, 0);
+      }
+      // Tiles and back links move between Home and its pages without a reload.
+      main.addEventListener("click", (e) => {
+        const link = e.target.closest("a[data-view]");
+        if (!link || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+        e.preventDefault();
+        const view = link.dataset.view;
+        // Back from a page opened from Home is the browser's own back, so Home keeps its place.
+        if (!view && history.state?.fromHome && currentView()) return history.back();
+        go(view || null);
+      });
+      window.addEventListener("popstate", () => {
+        if (last) render(last);
+      });
+
       function render({ items, due, review, revisions, kids }) {
         if (!items.length) {
           main.innerHTML = `<section class="stack">
@@ -403,66 +570,20 @@
           });
           return;
         }
-        const date = new Date().toLocaleDateString(undefined, {
-          weekday: "long",
-          month: "short",
-          day: "numeric",
-        });
-        main.innerHTML = `
-          <section class="stack">
-            <h1 class="sr-only">Home</h1>
-            <p class="muted" style="font-weight:600">${esc(date)}</p>
-            ${hero()}
-            <form class="field" id="ask" style="margin-top:6px">
-              <label class="sr-only" for="ask-input">Ask or tell</label>
-              <input id="ask-input" autocomplete="off" placeholder="Ask or tell Muse">
-              <button type="submit">Go</button>
-            </form>
-          </section>
-
-          <section aria-labelledby="pulse-h" id="pulse">
-            <div class="section-head"><h2 id="pulse-h">Worth doing now</h2></div>
-            <div id="pulse-body"><p class="small muted">Checking the house…</p></div>
-          </section>
-
-          <section aria-labelledby="week-h">
-            <div class="section-head"><h2 id="week-h">Coming up</h2></div>
-            <div class="stack" id="coming">${agenda(due)}</div>
-          </section>
-
-          ${
-            review.length
-              ? `<details class="card flat review-fold">
-                  <summary><span class="chip gold strong">${review.length}</span> <strong>Muse wasn't sure about ${review.length === 1 ? "one entry" : `${review.length} entries`}</strong></summary>
-                  <div class="row" style="margin:10px 0;gap:10px;align-items:center"><button type="button" class="small" id="check-flagged">Check them with Muse</button><span class="small muted">A second read checks each against its page and asks before saving. Or tap one yourself.</span></div>
-                  <div class="rv-grid" role="group" aria-label="To check">${review.map(reviewTile).join("")}</div>
-                  <div id="review-open"></div>
-                </details>`
-              : ""
-          }
-
-          <section aria-labelledby="things-h">
-            <div class="section-head"><h2 id="things-h">Your things</h2></div>
-            <div class="grid">${items.map((i) => thingCard(i, kids)).join("")}</div>
-          </section>
-
-          ${
-            revisions.length
-              ? `<section class="card flat" aria-labelledby="changes-h">
-                  <div class="section-head" style="margin:0"><h2 id="changes-h" style="font-size:22px">Recent changes</h2><a href="/history">All of them</a></div>
-                  ${revisions.map(change).join("")}
-                </section>`
-              : ""
-          }
+        last = { items, due, review, revisions, kids };
+        const view = currentView();
+        main.innerHTML = `${view ? subHome(view, last) : homeTiles(last)}
           <dialog class="sheet" id="task-sheet" aria-label="About this task"></dialog>`;
+        if (view === "now") loadPulse();
+        if (!view) fillPulseTile();
 
         wireHero();
-        loadPulse();
-        typeAhead($("#ask-input"), (text) => {
-          $("#ask-input").value = "";
-          openChat(text, load, { fresh: true });
-        });
-        $("#ask").addEventListener("submit", (e) => {
+        if ($("#ask-input"))
+          typeAhead($("#ask-input"), (text) => {
+            $("#ask-input").value = "";
+            openChat(text, load, { fresh: true });
+          });
+        $("#ask")?.addEventListener("submit", (e) => {
           e.preventDefault();
           const text = $("#ask-input").value.trim();
           $("#ask-input").value = "";
@@ -735,12 +856,10 @@
         const section = $("#pulse");
         const body = $("#pulse-body");
         if (!section || !body) return;
-        let pulse = null;
-        try {
-          ({ pulse } = await api("/api/pulse", {}));
-        } catch {}
-        if (!pulse || !body.isConnected) {
-          section.remove();
+        const pulse = await getPulse();
+        if (!body.isConnected) return;
+        if (!pulse) {
+          body.innerHTML = '<p class="small muted">Muse can\'t check the house right now. <a href="/?view=coming" data-view="coming">Coming up</a> has everything due.</p>';
           return;
         }
         if (!pulse.cards.length) {
@@ -776,6 +895,7 @@
               return toast(error.message);
             }
             b.closest("[data-pulse]")?.remove();
+            pulse.cards = pulse.cards.filter((c) => c.key !== b.dataset.pulseLater);
             if (!body.querySelector("[data-pulse]"))
               body.innerHTML = '<p class="small muted">Nothing else needs you today.</p>';
             toast(days === 1 ? "Hidden until tomorrow." : `Hidden for ${days} days.`);
