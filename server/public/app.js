@@ -620,6 +620,44 @@ function deleteChats(id) {
 
 let drawer;
 
+/**
+ * While Muse works on an answer: three bouncing dots, a sliding bar, and a line
+ * that says what it's likely doing and for how long, so a slow answer doesn't
+ * look stuck. The clock keeps running across re-renders of the log.
+ */
+const BUSY_BUBBLE =
+  '<div class="msg muse muted msg-busy" role="status"><span class="busy-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="busy-text">Reading your manuals…</span><span class="busy-bar" aria-hidden="true"></span></div>';
+let busySince = 0;
+let busyTimer = 0;
+
+function busyLine(seconds) {
+  const phrase =
+    seconds < 6
+      ? "Reading your manuals…"
+      : seconds < 15
+        ? "Checking the pages…"
+        : seconds < 35
+          ? "Looking closely at the details…"
+          : "Still on it, almost there…";
+  return seconds < 4 ? phrase : `${phrase} ${seconds} s`;
+}
+
+function tickBusy(busy) {
+  if (!busy) {
+    busySince = 0;
+    clearInterval(busyTimer);
+    busyTimer = 0;
+    return;
+  }
+  if (!busySince) busySince = Date.now();
+  const paint = () => {
+    const el = drawer && $(".msg-busy .busy-text", drawer);
+    if (el) el.textContent = busyLine(Math.floor((Date.now() - busySince) / 1000));
+  };
+  paint();
+  if (!busyTimer) busyTimer = setInterval(paint, 1000);
+}
+
 function renderChat(messages, busy) {
   const log = $(".chat-log", drawer);
   log.innerHTML =
@@ -647,7 +685,8 @@ function renderChat(messages, busy) {
             : "";
         return `<div class="msg ${m.role === "user" ? "user" : "muse"}${m.pending ? " muted" : ""}">${tools}${photo}${esc(m.content)}${card}${more}</div>`;
       })
-      .join("") + (busy ? '<div class="msg muse muted">Reading…</div>' : "");
+      .join("") + (busy ? BUSY_BUBBLE : "");
+  tickBusy(busy);
   if (!messages.length && !busy) {
     log.innerHTML = chatStarters.length
       ? `<p class="muted small" style="margin:0">Ask anything, or start with:</p><div class="chat-starters">${chatStarters
