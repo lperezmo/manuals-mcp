@@ -620,6 +620,64 @@ function deleteChats(id) {
 
 let drawer;
 
+/** Bold, italics and code inside one line of already escaped text. */
+function inlineMd(line) {
+  return line
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*(.+?)\*\*|__(.+?)__/g, (_, a, b) => `<strong>${a ?? b}</strong>`)
+    .replace(/(^|[^*\w])\*(?!\s)([^*]+?)\*(?!\w)/g, "$1<em>$2</em>")
+    .replace(/(^|[^_\w])_(?!\s)([^_]+?)_(?!\w)/g, "$1<em>$2</em>");
+}
+
+/**
+ * Muse's answer as HTML: paragraphs, bullet and numbered lists, small headings,
+ * bold, italics and code. The text is escaped first, so only these tags appear.
+ */
+export function markdown(text) {
+  const out = [];
+  let list = null;
+  let para = [];
+  const flushPara = () => {
+    if (para.length) out.push(`<p>${para.map(inlineMd).join("<br>")}</p>`);
+    para = [];
+  };
+  const flushList = () => {
+    if (list)
+      out.push(
+        `<${list.tag}>${list.items.map((i) => `<li>${inlineMd(i)}</li>`).join("")}</${list.tag}>`,
+      );
+    list = null;
+  };
+  for (const raw of esc(text ?? "").split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    const bullet = line.match(/^\s*[-*•]\s+(.*)$/);
+    const numbered = line.match(/^\s*\d+[.)]\s+(.*)$/);
+    const heading = line.match(/^\s*#{1,6}\s+(.*)$/);
+    if (bullet || numbered) {
+      flushPara();
+      const tag = bullet ? "ul" : "ol";
+      if (list?.tag !== tag) flushList();
+      list ??= { tag, items: [] };
+      list.items.push((bullet ?? numbered)[1]);
+    } else if (heading) {
+      flushPara();
+      flushList();
+      out.push(`<p class="md-h">${inlineMd(heading[1])}</p>`);
+    } else if (!line.trim()) {
+      flushPara();
+      flushList();
+    } else if (list && /^\s{2,}\S/.test(raw)) {
+      list.items[list.items.length - 1] += ` ${line.trim()}`;
+    } else {
+      flushList();
+      para.push(line);
+    }
+  }
+  flushPara();
+  flushList();
+  return out.join("");
+}
+
 /**
  * While Muse works on an answer: three bouncing dots, a sliding bar, and a line
  * that says what it's likely doing and for how long, so a slow answer doesn't
@@ -683,7 +741,9 @@ function renderChat(messages, busy) {
           m.fast && i === messages.length - 1 && !busy
             ? '<div class="row" style="margin-top:8px"><button type="button" class="quiet small" data-more>Tell me more</button></div>'
             : "";
-        return `<div class="msg ${m.role === "user" ? "user" : "muse"}${m.pending ? " muted" : ""}">${tools}${photo}${esc(m.content)}${card}${more}</div>`;
+        const body =
+          m.role === "user" ? esc(m.content) : `<div class="md">${markdown(m.content)}</div>`;
+        return `<div class="msg ${m.role === "user" ? "user" : "muse"}${m.pending ? " muted" : ""}">${tools}${photo}${body}${card}${more}</div>`;
       })
       .join("") + (busy ? BUSY_BUBBLE : "");
   tickBusy(busy);

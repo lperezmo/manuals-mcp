@@ -845,6 +845,34 @@ button.agenda-open:focus-visible {
 .msg.muse {
   background: var(--soft);
 }
+.msg .md {
+  white-space: normal;
+}
+.md p,
+.md ul,
+.md ol {
+  margin: 0 0 8px;
+}
+.md > :last-child {
+  margin-bottom: 0;
+}
+.md ul,
+.md ol {
+  padding-left: 20px;
+}
+.md li + li {
+  margin-top: 4px;
+}
+.md .md-h {
+  font-weight: 700;
+}
+.md code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+  background: var(--card);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
 .msg-busy {
   position: relative;
   overflow: hidden;
