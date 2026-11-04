@@ -46,7 +46,14 @@
           <ol class="steps">
             <li>Copy the link below.</li>
             <li>In the Muse app, paste the link and say you want to connect to it.</li>
-            <li>Tap <strong>Connect</strong> on the card Muse shows, then sign in with the same email you use here.</li>
+            <li>Tap <strong>Connect</strong> on the card Muse shows. When it asks for a <strong>Client ID</strong>, paste this one and tap <strong>Add</strong>:
+              <div class="field" style="margin-top:8px">
+                <label class="sr-only" for="muse-client">Muse client ID</label>
+                <input id="muse-client" class="code" readonly value="07f5cd4d-c4ff-46c8-994d-aafceea62b57" />
+                <button id="copy-client" type="button">Copy ID</button>
+              </div>
+            </li>
+            <li>Sign in with the same email you use here.</li>
             <li>Muse checks each tool before it uses it. If one seems missing later, ask it to review the Manuals tools again.</li>
           </ol>
           <p class="small muted" style="margin:0">
@@ -137,14 +144,19 @@
         saved = localStorage.getItem("manuals-connect") || saved;
       } catch {}
       pick(saved);
-      $("#copy").addEventListener("click", async (e) => {
-        try {
-          await navigator.clipboard.writeText($("#url").value);
-          e.target.textContent = "Copied";
-        } catch {
-          $("#url").select();
-        }
-      });
+      for (const [button, field] of [
+        ["#copy", "#url"],
+        ["#copy-client", "#muse-client"],
+      ]) {
+        $(button).addEventListener("click", async (e) => {
+          try {
+            await navigator.clipboard.writeText($(field).value);
+            e.target.textContent = "Copied";
+          } catch {
+            $(field).select();
+          }
+        });
+      }
     </script>
   </body>
 </html>
