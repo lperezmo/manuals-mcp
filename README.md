@@ -11,6 +11,16 @@ stays in the history. What you say yourself always wins.
 
 Built for the Meta Global AI Developer Hackathon (indie track).
 
+## Try it
+
+Open **https://manuals-mcp.vercel.app**, tap **Have a password? (demo account)** and sign in with:
+
+- Email: `judge@manuals.demo`
+- Password: `MetaHackaton2026`
+
+It opens a demo household with a dishwasher, a washer and two car seats already read, so you can ask
+Muse questions, snap a label to add something new, or open the Map.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-dark.svg">
   <img alt="Manuals architecture: the website and any MCP client (Muse app, Claude, ChatGPT) call the same tools; Muse Spark reads labels, manuals and chats, web search finds the manual, Jev ranks and checks, SAM 3.1 circles parts, and everything is saved in Supabase." src="docs/architecture-light.svg">
