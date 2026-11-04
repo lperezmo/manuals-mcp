@@ -3,6 +3,7 @@ node_modules/
 # Local only: plans and CI stay out of the public repo for now
 docs/*
 !docs/licenses/
+!docs/architecture-*.svg
 .github/
 plans/
 *.plan.html

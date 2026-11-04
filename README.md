@@ -11,6 +11,14 @@ stays in the history. What you say yourself always wins.
 
 Built for the Meta Global AI Developer Hackathon (indie track).
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/architecture-dark.svg">
+  <img alt="Manuals architecture: the website and any MCP client (Muse app, Claude, ChatGPT) call the same tools; Muse Spark reads labels, manuals and chats, web search finds the manual, Jev ranks and checks, SAM 3.1 circles parts, and everything is saved in Supabase." src="docs/architecture-light.svg">
+</picture>
+
+<details>
+<summary>Text version</summary>
+
 ```mermaid
 flowchart LR
   you["You"] --> site["Website\nphoto, chat, map"]
@@ -25,6 +33,8 @@ flowchart LR
   tools -- "rank, check, fast answers" --> jev["Jev\nTypeSafe"]
   tools -- "mark a part" --> mark["Jev box + SAM 3.1\nMuse Image fallback"]
 ```
+
+</details>
 
 ## Tools
 
