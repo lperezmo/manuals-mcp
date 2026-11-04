@@ -13,13 +13,17 @@ Built for the Meta Global AI Developer Hackathon (indie track).
 
 ```mermaid
 flowchart LR
-  you["You"] --> site["Website\nMuse chat"]
-  you --> ai["Claude, ChatGPT\nany MCP client"]
-  site --> tools["14 tools"]
-  ai -- "/mcp" --> tools
-  tools --> db[("Supabase\nPostgres + RLS")]
-  tools -- "add_item" --> muse["Muse Spark\nreads manuals"]
+  you["You"] --> site["Website\nphoto, chat, map"]
+  you --> ai["Muse app, Claude, ChatGPT\nany MCP client"]
+  site -- "chat: 17 tools" --> tools["Tools"]
+  ai -- "/mcp: 15 tools" --> tools
+  tools --> db[("Supabase\nPostgres + RLS + Storage")]
+  site -- "label photo" --> muse
+  tools -- "find a manual" --> web["Web search\nSearXNG + Tavily"]
+  web --> muse["Muse Spark\nreads labels, manuals, chats"]
   muse --> db
+  tools -- "rank, check, fast answers" --> jev["Jev\nTypeSafe"]
+  tools -- "mark a part" --> mark["Jev box + SAM 3.1\nMuse Image fallback"]
 ```
 
 ## Tools
@@ -33,6 +37,7 @@ flowchart LR
 | `upcoming`              | Tasks due soon, plus facts a person should check.                                  |
 | `pulse`                 | The few upcoming things worth doing now: safety first, at most three. Jev decides. |
 | `revise_fact`           | Correct or confirm a fact, task or car seat limit, with a reason.                  |
+| `check_flagged`         | Reads the page again for every entry it wasn't sure about and proposes a verdict.  |
 | `log_done`              | "I just cleaned the filter" moves the next due date.                               |
 | `record_measurement`    | A child's height and weight, or a thing's cycle count or hours.                    |
 | `car_seat_status`       | Which mode fits now, room left before its limits, and when to measure again.       |
