@@ -40,6 +40,94 @@ export function addDays(day, n) {
   return new Date(Date.parse(day) + n * 86400000).toISOString().slice(0, 10);
 }
 
+/**
+ * "Take a photo" opens the back camera. capture="environment" is only a hint,
+ * and Samsung's camera app ignores it and reopens whichever lens was last used
+ * (often the selfie one). On phones we open our own camera on the rear lens
+ * instead, then hand the shot to the same input as if the camera app had taken
+ * it, so every page's change handler works unchanged. Anything that goes wrong
+ * falls back to the native picker.
+ */
+let nativeCapture = false;
+
+function openRearCamera(input) {
+  const shade = document.createElement("div");
+  shade.style.cssText =
+    "position:fixed;inset:0;z-index:9999;background:#000;display:flex;align-items:center;justify-content:center";
+  shade.innerHTML = `
+    <video autoplay playsinline muted style="width:100%;height:100%;object-fit:cover"></video>
+    <button type="button" data-close aria-label="Close camera"
+      style="position:absolute;top:max(16px,env(safe-area-inset-top));right:16px;width:48px;height:48px;border-radius:50%;border:0;background:rgba(0,0,0,.5);color:#fff;font-size:28px;line-height:1">&times;</button>
+    <button type="button" data-shoot aria-label="Take the photo"
+      style="position:absolute;bottom:max(32px,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);width:76px;height:76px;border-radius:50%;border:5px solid #fff;background:rgba(255,255,255,.35)"></button>`;
+  document.body.append(shade);
+  const video = shade.querySelector("video");
+  let stream;
+  const close = () => {
+    for (const t of stream?.getTracks() ?? []) t.stop();
+    shade.remove();
+  };
+  const fallback = () => {
+    close();
+    nativeCapture = true;
+    input.click();
+    nativeCapture = false;
+  };
+  shade.querySelector("[data-close]").addEventListener("click", close);
+  shade.querySelector("[data-shoot]").addEventListener("click", () => {
+    if (!video.videoWidth) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0);
+    canvas.toBlob(
+      (blob) => {
+        close();
+        if (!blob) return;
+        const dt = new DataTransfer();
+        dt.items.add(new File([blob], `photo-${Date.now()}.jpg`, { type: "image/jpeg" }));
+        input.files = dt.files;
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      },
+      "image/jpeg",
+      0.92,
+    );
+  });
+  navigator.mediaDevices
+    .getUserMedia({
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1920 },
+        height: { ideal: 1440 },
+      },
+      audio: false,
+    })
+    .then((s) => {
+      stream = s;
+      if (!shade.isConnected) return close();
+      video.srcObject = s;
+    })
+    .catch(fallback);
+}
+
+if (
+  typeof document !== "undefined" &&
+  navigator.mediaDevices?.getUserMedia &&
+  window.matchMedia?.("(pointer: coarse)").matches
+) {
+  document.addEventListener(
+    "click",
+    (e) => {
+      const input = e.target;
+      if (nativeCapture || !(input instanceof HTMLInputElement)) return;
+      if (input.type !== "file" || !input.hasAttribute("capture")) return;
+      e.preventDefault();
+      openRearCamera(input);
+    },
+    true,
+  );
+}
+
 export function daysBetween(from, to) {
   return Math.round((Date.parse(to) - Date.parse(from)) / 86400000);
 }
