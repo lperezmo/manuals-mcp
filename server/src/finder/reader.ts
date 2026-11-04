@@ -115,7 +115,9 @@ export async function distill(
         },
       ],
     }),
-    signal: AbortSignal.timeout(50_000),
+    // Muse takes 30 to 60 s on a long manual and sometimes more; /api/ingest
+    // allows 300 s, so give it room rather than failing the first try.
+    signal: AbortSignal.timeout(150_000),
   });
   if (!res.ok) {
     trace.raw_output = (await res.text().catch(() => "")).slice(0, 2_000) || null;
