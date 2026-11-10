@@ -409,7 +409,12 @@ export function signIn(root, onDone) {
       options: { shouldCreateUser: true },
     });
     // The database turns away emails that aren't on the allowed list.
-    if (error) return msg(/database error/i.test(error.message) ? "New accounts are closed for now." : `Couldn't send the code: ${error.message}`);
+    if (error)
+      return msg(
+        /database error/i.test(error.message)
+          ? "New accounts are closed for now."
+          : `Couldn't send the code: ${error.message}`,
+      );
     $("#email-form", root).classList.add("hidden");
     $("#code-form", root).classList.remove("hidden");
     $("#code", root).focus();
