@@ -25,7 +25,7 @@
     <!--
       Supabase Auth (the OAuth 2.1 server) sends people here with
       ?authorization_id=... when an AI app asks to connect. They sign in with
-      an emailed code, see which app is asking, and approve or deny.
+      Google or an emailed code, see which app is asking, and approve or deny.
     -->
     <main class="wrap narrow">
       <div class="top">
@@ -40,7 +40,8 @@
 
       <section id="signin" class="card hidden">
         <h1>Sign in to connect</h1>
-        <p class="muted">We'll email you a 6-digit code. No password.</p>
+        <div class="row"><button id="google" type="button">Continue with Google</button></div>
+        <p class="muted">Or get a 6-digit code by email. No password.</p>
         <form id="email-form" class="field">
           <input id="email" type="email" autocomplete="email" required placeholder="you@example.com" aria-label="Email" />
           <button type="submit">Send code</button>
@@ -83,6 +84,10 @@
         show("message");
       };
 
+      // The database turns away emails that aren't on the allowed list.
+      const closedOr = (message, what) =>
+        /database error|accounts are closed/i.test(message) ? "New accounts are closed for now." : `${what}: ${message}`;
+
       const authorizationId = new URLSearchParams(location.search).get("authorization_id");
       let client;
 
@@ -92,6 +97,11 @@
         client = supabase.createClient(config.supabaseUrl, config.supabasePublishableKey);
         const { data } = await client.auth.getSession();
         if (data.session) return loadDetails();
+        // Google sends people back here with ?error_description=... when it's refused.
+        const refused =
+          new URLSearchParams(location.search).get("error_description") ||
+          new URLSearchParams(location.hash.slice(1)).get("error_description");
+        if (refused) return fail(closedOr(refused, "Couldn't sign in with Google"));
         show("signin");
       }
 
@@ -114,11 +124,17 @@
           options: { shouldCreateUser: true },
         });
         button.disabled = false;
-        // The database turns away emails that aren't on the allowed list.
-        if (error) return fail(/database error|accounts are closed/i.test(error.message) ? "New accounts are closed for now." : `Couldn't send the code: ${error.message}`);
+        if (error) return fail(closedOr(error.message, "Couldn't send the code"));
         $("email-form").classList.add("hidden");
         $("code-form").classList.remove("hidden");
         $("code").focus();
+      });
+
+      $("google").addEventListener("click", async () => {
+        // Back to this same request once Google is done.
+        const redirectTo = `${location.origin}${location.pathname}?authorization_id=${encodeURIComponent(authorizationId)}`;
+        const { error } = await client.auth.signInWithOAuth({ provider: "google", options: { redirectTo } });
+        if (error) fail(`Couldn't open Google: ${error.message}`);
       });
 
       $("code-form").addEventListener("submit", async (e) => {

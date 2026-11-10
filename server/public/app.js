@@ -376,12 +376,33 @@ export async function boot(current, { open = false } = {}) {
   return data.session;
 }
 
-/** Sign in with an emailed code. */
+/** The database turns away emails that aren't on the allowed list. */
+function closedOr(message, what) {
+  return /database error|accounts are closed/i.test(message)
+    ? "New accounts are closed for now."
+    : `${what}: ${message}`;
+}
+
+/** The error a sign-in redirect came back with, taken off the address bar. */
+function returnedError() {
+  const from = (text) => new URLSearchParams(text).get("error_description");
+  const message = from(location.search) || from(location.hash.slice(1));
+  if (!message) return null;
+  const url = new URL(location.href);
+  for (const key of ["error", "error_code", "error_description"]) url.searchParams.delete(key);
+  url.hash = "";
+  history.replaceState(null, "", url);
+  return message;
+}
+
+/** Sign in with Google or an emailed code. */
 export function signIn(root, onDone) {
   root.innerHTML = `
     <section class="card" style="max-width:560px">
       <h1>Every manual in the house, one question away.</h1>
-      <p class="muted">Sign in to see your things. We'll email you a 6-digit code.</p>
+      <p class="muted">Sign in to see your things.</p>
+      <div class="row"><button type="button" id="google">Continue with Google</button></div>
+      <p class="small muted" style="margin:0">Or get a 6-digit code by email.</p>
       <form id="email-form" class="field">
         <label class="sr-only" for="email">Email</label>
         <input id="email" type="email" autocomplete="email" required placeholder="you@example.com">
@@ -397,6 +418,17 @@ export function signIn(root, onDone) {
   const msg = (t) => {
     $("#sign-msg", root).textContent = t;
   };
+  // Google sends people back here with ?error_description=... when it's refused.
+  const refused = returnedError();
+  if (refused) msg(closedOr(refused, "Couldn't sign in with Google"));
+  $("#google", root).addEventListener("click", async () => {
+    const supa = await db();
+    const { error } = await supa.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: location.href },
+    });
+    if (error) msg(`Couldn't open Google: ${error.message}`);
+  });
   const done = async (error) => {
     if (error) return msg(error.message);
     onDone();
@@ -408,13 +440,7 @@ export function signIn(root, onDone) {
       email: $("#email", root).value.trim(),
       options: { shouldCreateUser: true },
     });
-    // The database turns away emails that aren't on the allowed list.
-    if (error)
-      return msg(
-        /database error|accounts are closed/i.test(error.message)
-          ? "New accounts are closed for now."
-          : `Couldn't send the code: ${error.message}`,
-      );
+    if (error) return msg(closedOr(error.message, "Couldn't send the code"));
     $("#email-form", root).classList.add("hidden");
     $("#code-form", root).classList.remove("hidden");
     $("#code", root).focus();
