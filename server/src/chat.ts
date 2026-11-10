@@ -330,7 +330,12 @@ export async function runChat(
       }),
       signal: AbortSignal.timeout(45_000),
     });
-    if (!res.ok) throw new Error(`The chat model answered ${res.status}.`);
+    if (!res.ok) {
+      // The provider's own words say why (a retired model, a bad key, a full
+      // quota); the status alone doesn't.
+      const detail = (await res.text().catch(() => "")).replace(/\s+/g, " ").trim().slice(0, 300);
+      throw new Error(`The chat model answered ${res.status}${detail ? `: ${detail}` : "."}`);
+    }
     const body = (await res.json()) as {
       choices?: { message?: { content?: string | null; tool_calls?: ToolCall[] } }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number };
