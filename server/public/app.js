@@ -376,7 +376,7 @@ export async function boot(current, { open = false } = {}) {
   return data.session;
 }
 
-/** Sign in with an emailed code, or a password (the judges' demo account). */
+/** Sign in with an emailed code. */
 export function signIn(root, onDone) {
   root.innerHTML = `
     <section class="card" style="max-width:560px">
@@ -392,19 +392,6 @@ export function signIn(root, onDone) {
         <input id="code" inputmode="numeric" autocomplete="one-time-code" required placeholder="Code from the email">
         <button type="submit">Sign in</button>
       </form>
-      <details>
-        <summary class="small">Have a password? (demo account)</summary>
-        <form id="pw-form" class="stack" style="margin-top:10px">
-          <label class="sr-only" for="pw-email">Email</label>
-          <input id="pw-email" type="email" autocomplete="username" required placeholder="Email">
-          <label class="sr-only" for="pw">Password</label>
-          <div class="row">
-            <input id="pw" type="password" autocomplete="current-password" required placeholder="Password" style="flex:1">
-            <button type="button" class="quiet small" id="pw-show" aria-controls="pw" aria-pressed="false">Show</button>
-          </div>
-          <button type="submit">Sign in</button>
-        </form>
-      </details>
       <p id="sign-msg" class="small muted" role="status"></p>
     </section>`;
   const msg = (t) => {
@@ -434,23 +421,6 @@ export function signIn(root, onDone) {
       email: $("#email", root).value.trim(),
       token: $("#code", root).value.trim(),
       type: "email",
-    });
-    done(error);
-  });
-  $("#pw-show", root).addEventListener("click", (e) => {
-    const pw = $("#pw", root);
-    const show = pw.type === "password";
-    pw.type = show ? "text" : "password";
-    e.currentTarget.textContent = show ? "Hide" : "Show";
-    e.currentTarget.setAttribute("aria-pressed", String(show));
-    pw.focus();
-  });
-  $("#pw-form", root).addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const supa = await db();
-    const { error } = await supa.auth.signInWithPassword({
-      email: $("#pw-email", root).value.trim(),
-      password: $("#pw", root).value,
     });
     done(error);
   });
