@@ -44,6 +44,30 @@
     {
       "source": "/.well-known/oauth-protected-resource/:path*",
       "destination": "/api/oauth-protected-resource"
+    },
+    {
+      "source": "/api/config",
+      "destination": "/api/quick?route=config"
+    },
+    {
+      "source": "/api/pulse",
+      "destination": "/api/quick?route=pulse"
+    },
+    {
+      "source": "/api/page-check",
+      "destination": "/api/quick?route=page-check"
+    },
+    {
+      "source": "/api/report",
+      "destination": "/api/quick?route=report"
+    },
+    {
+      "source": "/api/suggest",
+      "destination": "/api/quick?route=suggest"
+    },
+    {
+      "source": "/api/upkeep-groups",
+      "destination": "/api/quick?route=upkeep-groups"
     }
   ]
 }
