@@ -408,7 +408,8 @@ export function signIn(root, onDone) {
       email: $("#email", root).value.trim(),
       options: { shouldCreateUser: true },
     });
-    if (error) return msg(`Couldn't send the code: ${error.message}`);
+    // The database turns away emails that aren't on the allowed list.
+    if (error) return msg(/database error/i.test(error.message) ? "New accounts are closed for now." : `Couldn't send the code: ${error.message}`);
     $("#email-form", root).classList.add("hidden");
     $("#code-form", root).classList.remove("hidden");
     $("#code", root).focus();

@@ -3,6 +3,7 @@
 
 \set ON_ERROR_STOP on
 
+insert into public.allowed_emails (email) values ('carla@example.com'), ('dev@example.com'), ('eve@example.com');
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-0000000000c1', 'carla@example.com'),
   ('00000000-0000-0000-0000-0000000000d1', 'dev@example.com'),
