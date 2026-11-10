@@ -89,19 +89,6 @@
         </div>
       </section>
 
-      <section class="card stack hidden" id="judge-note" style="max-width:720px">
-        <h2 style="margin:0">On the shared judge account?</h2>
-        <p style="margin:0">
-          Normally you sign in here with your email, then sign in to the connector in Claude,
-          ChatGPT or Muse with that same email, and it reaches the same things.
-        </p>
-        <p style="margin:0">
-          The judge account has no inbox for the sign-in code, so connect it this way: stay signed
-          in here, in the same browser the app opens for sign-in, then add the connector. It skips
-          the code and asks you to allow it.
-        </p>
-      </section>
-
       <section class="card flat" style="max-width:720px">
         <h2>Try asking</h2>
         <div class="chips">
@@ -118,16 +105,9 @@
       </section>
     </main>
     <script type="module">
-      import { $, boot, db } from "/app.js";
+      import { $, boot } from "/app.js";
 
-      // The shared judge account can't get an emailed code: say how it connects.
-      boot("/connect", { open: true }).then(async (session) => {
-        if (!session) return;
-        const supa = await db();
-        const { data: hid } = await supa.rpc("ensure_household");
-        const { data: home } = hid ? await supa.from("households").select("is_demo").eq("id", hid).maybeSingle() : { data: null };
-        if (home?.is_demo) $("#judge-note").classList.remove("hidden");
-      });
+      boot("/connect", { open: true });
       $("#url").value = `${location.origin}/mcp`;
 
       function pick(name) {
