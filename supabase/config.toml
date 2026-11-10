@@ -19,8 +19,8 @@ enable_signup = true
 
 [auth.email]
 enable_signup = true
-# The app and the consent page sign in with a 6-digit code, so the magic link
-# email template needs {{ .Token }} in it.
+# The hosted app signs in with Google only. Locally, the emailed code still
+# works for making a test account.
 otp_length = 6
 
 [auth.oauth_server]

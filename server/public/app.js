@@ -395,24 +395,13 @@ function returnedError() {
   return message;
 }
 
-/** Sign in with Google or an emailed code. */
-export function signIn(root, onDone) {
+/** Sign in with Google. It comes back to this page, which loads signed in. */
+export function signIn(root) {
   root.innerHTML = `
     <section class="card" style="max-width:560px">
       <h1>Every manual in the house, one question away.</h1>
       <p class="muted">Sign in to see your things.</p>
       <div class="row"><button type="button" id="google">Continue with Google</button></div>
-      <p class="small muted" style="margin:0">Or get a 6-digit code by email.</p>
-      <form id="email-form" class="field">
-        <label class="sr-only" for="email">Email</label>
-        <input id="email" type="email" autocomplete="email" required placeholder="you@example.com">
-        <button type="submit">Send code</button>
-      </form>
-      <form id="code-form" class="field hidden">
-        <label class="sr-only" for="code">Code from the email</label>
-        <input id="code" inputmode="numeric" autocomplete="one-time-code" required placeholder="Code from the email">
-        <button type="submit">Sign in</button>
-      </form>
       <p id="sign-msg" class="small muted" role="status"></p>
     </section>`;
   const msg = (t) => {
@@ -428,33 +417,6 @@ export function signIn(root, onDone) {
       options: { redirectTo: location.href },
     });
     if (error) msg(`Couldn't open Google: ${error.message}`);
-  });
-  const done = async (error) => {
-    if (error) return msg(error.message);
-    onDone();
-  };
-  $("#email-form", root).addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const supa = await db();
-    const { error } = await supa.auth.signInWithOtp({
-      email: $("#email", root).value.trim(),
-      options: { shouldCreateUser: true },
-    });
-    if (error) return msg(closedOr(error.message, "Couldn't send the code"));
-    $("#email-form", root).classList.add("hidden");
-    $("#code-form", root).classList.remove("hidden");
-    $("#code", root).focus();
-    msg("Check your email for the code.");
-  });
-  $("#code-form", root).addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const supa = await db();
-    const { error } = await supa.auth.verifyOtp({
-      email: $("#email", root).value.trim(),
-      token: $("#code", root).value.trim(),
-      type: "email",
-    });
-    done(error);
   });
 }
 

@@ -928,7 +928,7 @@
       async function start() {
         const session = await boot("/");
         if (!session) {
-          signIn(main, () => location.reload());
+          signIn(main);
           return;
         }
         await load();

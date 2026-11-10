@@ -96,7 +96,7 @@
         if (!invite && !thing) return note("This page opens from an invite or share link.");
         if (!session) {
           main.innerHTML = `<p class="muted">Sign in first, then you can ${invite ? "join the home you were invited to" : "add the shared manual to your home"}.</p><div id="sign"></div>`;
-          signIn($("#sign"), () => location.reload());
+          signIn($("#sign"));
           return;
         }
         const supa = await db();
