@@ -138,6 +138,62 @@ describe("website chat", () => {
     ]);
   });
 
+  test("wraps up without tools once a message has read its share of tokens", async () => {
+    const { verify, mint } = await testAuth();
+    const token = await mint();
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes("/rpc/ensure_household"))
+        return Response.json("11111111-1111-1111-1111-111111111111");
+      if (url.includes("/rpc/model_runs_today_all")) return Response.json(1);
+      if (url.includes("/rest/v1/model_runs")) {
+        if (init?.method === "POST") return new Response(null, { status: 201 });
+        return new Response(null, { status: 200, headers: { "content-range": "*/0" } });
+      }
+      return Response.json([]);
+    }) as typeof fetch;
+
+    // A model that would look things up forever, each round reading 60,000 tokens.
+    const sent: any[] = [];
+    const model = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      sent.push(body);
+      if (!body.tools) {
+        return Response.json({
+          choices: [{ message: { content: "I checked two things; say keep going for the rest." } }],
+          usage: { prompt_tokens: 60_000, completion_tokens: 30 },
+        });
+      }
+      return Response.json({
+        choices: [
+          {
+            message: {
+              content: null,
+              tool_calls: [
+                {
+                  id: `call_${sent.length}`,
+                  type: "function",
+                  function: { name: "list_items", arguments: "{}" },
+                },
+              ],
+            },
+          },
+        ],
+        usage: { prompt_tokens: 60_000, completion_tokens: 20 },
+      });
+    }) as unknown as typeof fetch;
+
+    const res = await chatHandler(env, verify, model)(ask("Check everything", token));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { reply: string; tools_used: string[] };
+    expect(body.reply).toBe("I checked two things; say keep going for the rest.");
+    // Two rounds reach the 100,000 budget; the third call has no tools to use.
+    expect(body.tools_used).toEqual(["list_items", "list_items"]);
+    expect(sent).toHaveLength(3);
+    expect(sent[2].tools).toBeUndefined();
+    expect(sent[2].messages.at(-1).content).toContain("all the tool use this message gets");
+  });
+
   test("stops at the household's daily chat limit", async () => {
     const { verify, mint } = await testAuth();
     const token = await mint();

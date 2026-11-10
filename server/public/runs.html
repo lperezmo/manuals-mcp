@@ -48,6 +48,9 @@
       // What each credit costs per million tokens, and how much the hackathon gave us.
       // Estimated from the tokens in the log: the providers' own billing is the real number.
       const CREDITS = [
+        // Chat and reading moved to Meta's own API in November 2026, when Baseten switched its Muse off.
+        // Standard-mode rates from Meta's pricing page; the free credit was about $150.
+        { name: "Muse on Meta", match: (m) => m.startsWith("muse-spark"), in: 1.25, out: 4.25, credit: 150 },
         { name: "Muse on Baseten", match: (m) => m.startsWith("meta-models/"), in: 1.25, out: 4.25, credit: 100 },
         { name: "Jev on TypeSafe", match: (m) => m.startsWith("jev"), in: 0.042, out: 0, credit: 5 },
       ];
@@ -60,15 +63,13 @@
       let images = 0;
       let imageCost = 0;
       function imageCard() {
-        const text = spend.filter((r) => r.model.startsWith("muse-spark"));
-        const calls = text.reduce((n, r) => n + Number(r.runs), 0);
         const left = Math.max(0, IMAGE_CAP - images);
         const pct = Math.min(100, (100 * images) / IMAGE_CAP);
         return `<div class="card credit">
           <div class="row" style="justify-content:space-between;align-items:baseline"><strong class="small">Images on Meta</strong><span class="small muted">${num(images)} of ${IMAGE_CAP} used · about ${usd(imageCost)}</span></div>
           <strong class="credit-left">${num(left)} left</strong>
           <div class="credit-bar" role="meter" aria-label="Images on Meta used" aria-valuemin="0" aria-valuemax="${IMAGE_CAP}" aria-valuenow="${images}"><span style="width:${pct.toFixed(1)}%"></span></div>
-          <span class="small muted">Circled photos in the chat${calls ? ` · plus ${num(calls)} Muse text calls on Meta from local testing` : ""}</span>
+          <span class="small muted">Circled photos in the chat</span>
         </div>`;
       }
       function creditCard(c) {

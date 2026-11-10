@@ -17,6 +17,12 @@ import * as updateItem from "./tools/update-item.js";
 export const MAX_STEPS = 40;
 /** Wall-clock for one message's tool rounds, under api/chat's 300 s maxDuration. */
 export const CHAT_BUDGET_MS = 240_000;
+/**
+ * Most input tokens one message's tool rounds may add up to. Every round sends
+ * the whole exchange again, so a long run of lookups grows fast: one message
+ * with 22 tool calls once read 297,000 tokens. Usual messages stay under 55,000.
+ */
+export const CHAT_TOKEN_BUDGET = 100_000;
 const MAX_HISTORY = 20;
 const MAX_MESSAGE_CHARS = 2_000;
 const MAX_TOOL_RESULT_CHARS = 12_000;
@@ -305,14 +311,16 @@ export async function runChat(
   let intro = "";
 
   const startedAt = Date.now();
+  // Input tokens this message has used so far, across its rounds.
+  let spent = 0;
   for (let step = 0; step < MAX_STEPS; step++) {
-    // Out of time: one last call without tools, so Muse says what it did and what's left.
-    const last = Date.now() - startedAt > CHAT_BUDGET_MS;
+    // Out of time or tokens: one last call without tools, so Muse says what it did and what's left.
+    const last = Date.now() - startedAt > CHAT_BUDGET_MS || spent >= CHAT_TOKEN_BUDGET;
     if (last) {
       messages.push({
         role: "system",
         content:
-          "Time's up for tools on this message. In two or three short sentences, tell the user what you finished and what's left, and that saying keep going picks it up.",
+          "That's all the tool use this message gets. In two or three short sentences, tell the user what you finished and what's left, and that saying keep going picks it up.",
       } as Message);
     }
     const res = await fetchImpl(`${reader.baseUrl}/chat/completions`, {
@@ -340,6 +348,7 @@ export async function runChat(
       choices?: { message?: { content?: string | null; tool_calls?: ToolCall[] } }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
+    spent += body.usage?.prompt_tokens ?? 0;
     if (usage) {
       usage.tokens_in += body.usage?.prompt_tokens ?? 0;
       usage.tokens_out += body.usage?.completion_tokens ?? 0;
