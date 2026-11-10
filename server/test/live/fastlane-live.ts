@@ -3,8 +3,8 @@
 // Run it with `JEV_API_KEY=... bun run server/test/live/fastlane-live.ts`, or
 // let the jev-fastlane-live workflow run it with the repo secret.
 //
-// It asks real questions over the demo household (the washer, dishwasher and
-// car seat that load_demo_household fills) and checks which ones the fast lane
+// It asks real questions over the example home (the washer, dishwasher and
+// car seat that supabase/tests/example_home.sql fills) and checks which ones the fast lane
 // answers by itself and which go to Muse. Safety and car seat questions must
 // never be answered instantly; those count double in the summary.
 // It never prints the key or request headers.
@@ -99,7 +99,7 @@ const task = (
   next_due_on: day(due),
 });
 
-// The demo household, as loadSnapshot would read it.
+// The example home, as loadSnapshot would read it.
 const rows: SnapshotRow[] = [
   fact(
     "washer",

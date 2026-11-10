@@ -38,9 +38,8 @@
         const supa = await db();
         const { data: hid, error: e1 } = await supa.rpc("ensure_household");
         if (e1) throw new Error(e1.message);
-        const [{ data: people, error: e2 }, { data: home }, { data: invites, error: e3 }, { data: notes }, { data: kids }] = await Promise.all([
+        const [{ data: people, error: e2 }, { data: invites, error: e3 }, { data: notes }, { data: kids }] = await Promise.all([
           supa.rpc("household_people"),
-          supa.from("households").select("is_demo").eq("id", hid).maybeSingle(),
           supa
             .from("household_invites")
             .select("code, expires_at")
@@ -66,9 +65,7 @@
           </div>`;
         const inviteRow = (i) => `<div class="field"><label class="sr-only" for="inv-${i.code}">Invite link</label><input id="inv-${i.code}" readonly value="${esc(link(i.code))}"><button type="button" data-send="${i.code}">Share</button></div>
           <div class="row small muted" style="margin-top:-6px">Works until ${until(i.expires_at)} · <button type="button" class="link" data-cancel="${i.code}">Cancel it</button></div>`;
-        const inviting = home?.is_demo
-          ? "<p class=\"muted\">The example home can't take invites. Sign in with your own email to invite your family.</p>"
-          : `<p class="muted" style="margin:0">Send a link to a partner, a parent or a roommate. Each link works once, for a week.</p>
+        const inviting = `<p class="muted" style="margin:0">Send a link to a partner, a parent or a roommate. Each link works once, for a week.</p>
             ${invites.map(inviteRow).join("")}
             <div class="row"><button type="button" id="invite" ${invites.length ? 'class="quiet"' : ""}>${invites.length ? "Make another link" : "Make an invite link"}</button></div>`;
 

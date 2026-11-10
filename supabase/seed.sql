@@ -1,4 +1,4 @@
 -- Local seed. Accounts get a household automatically when they sign up.
--- Signed in, call `select public.load_demo_household();` to fill yours with
--- the fictional demo household.
+-- For a filled example home, run supabase/tests/example_home.sql and then
+-- `select public.fill_example_home('<household id>');`.
 select 1;

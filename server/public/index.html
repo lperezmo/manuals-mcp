@@ -582,14 +582,8 @@
           main.innerHTML = `<section class="stack">
             <h1>An empty house, for now.</h1>
             ${hero()}
-            <p class="muted">Just looking around? <button type="button" class="link" id="demo">Load the example home</button></p>
           </section>`;
           wireHero();
-          $("#demo").addEventListener("click", async () => {
-            const { error } = await (await db()).rpc("load_demo_household");
-            if (error) return toast(error.message);
-            load();
-          });
           return;
         }
         last = { items, due, review, revisions, kids };

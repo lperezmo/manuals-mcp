@@ -1,4 +1,4 @@
--- Household invites and copying a shared thing. Run after the migrations
+-- Household invites and copying a shared thing. Run after the migrations and example_home.sql
 -- (on a fresh database with stub_supabase.sql); any failure raises.
 
 \set ON_ERROR_STOP on
@@ -13,7 +13,7 @@ set role authenticated;
 
 -- Carla fills her home and makes an invite and a share link.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-0000000000c1","role":"authenticated"}', false);
-select public.load_demo_household();
+select public.load_example_home();
 update public.manual_facts set value = 'Fixed by Carla', source = 'user', status = 'revised'
 where label = (select label from public.manual_facts order by label limit 1);
 insert into public.household_invites (code) values ('invite-c1');

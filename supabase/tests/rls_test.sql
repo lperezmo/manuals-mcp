@@ -1,5 +1,5 @@
 -- Checks that households can't see each other and that the schedule math
--- works. Run after stub_supabase.sql and the migrations; any failure raises.
+-- works. Run after stub_supabase.sql, the migrations and example_home.sql; any failure raises.
 
 \set ON_ERROR_STOP on
 
@@ -20,9 +20,9 @@ $$;
 
 set role authenticated;
 
--- User A loads the demo household.
+-- User A loads the example home.
 select set_config('request.jwt.claims', '{"sub":"00000000-0000-0000-0000-00000000000a","role":"authenticated"}', false);
-select public.load_demo_household();
+select public.load_example_home();
 
 do $$
 declare
@@ -47,9 +47,9 @@ begin
 end;
 $$;
 
--- The demo household: pages are searchable, review items and history exist,
+-- The example home: pages are searchable, review items and history exist,
 -- and loading it twice adds nothing.
-select public.load_demo_household();
+select public.load_example_home();
 
 do $$
 declare
@@ -101,7 +101,7 @@ begin
   end;
 
   begin
-    perform public.fill_demo_household(a_household);
+    perform public.fill_example_home(a_household);
     raise exception 'user B filled A''s household';
   exception when insufficient_privilege then
     null;
@@ -296,45 +296,10 @@ declare
 begin
   select count(*) into n from public.model_runs;
   assert n = 0, 'user B should not see A''s runs';
-  begin
-    perform public.reset_demo_households();
-    raise exception 'users should not be able to reset demo households';
-  exception when insufficient_privilege then
-    null;
-  end;
 end;
 $$;
 
 reset role;
-
--- Demo reset: user A's household goes back to the demo data.
-do $$
-declare
-  hid uuid;
-  before_items integer;
-  n integer;
-begin
-  select household_id into hid from public.household_members
-  where user_id = '00000000-0000-0000-0000-00000000000a';
-  update public.households set is_demo = true where id = hid;
-  select count(*) into before_items from public.items where household_id = hid;
-
-  insert into public.items (household_id, nickname) values (hid, 'Judge added this');
-  delete from public.tasks where household_id = hid;
-  perform public.reset_demo_households();
-
-  select count(*) into n from public.items where household_id = hid;
-  assert n = before_items, 'reset should restore the demo items';
-  select count(*) into n from public.items where household_id = hid and nickname = 'Judge added this';
-  assert n = 0, 'reset should clear what judges added';
-  select count(*) into n from public.tasks where household_id = hid;
-  assert n > 0, 'reset should restore the tasks';
-  select count(*) into n from public.model_runs where household_id = hid;
-  assert n = 1, 'reset should keep the model runs';
-  select count(*) into n from public.household_notes where household_id = hid;
-  assert n = 0, 'reset should clear what judges told Muse';
-end;
-$$;
 
 -- Back history: user A saves a washer's past and a catch-up step, logs a
 -- plan run, and user B sees none of it.
