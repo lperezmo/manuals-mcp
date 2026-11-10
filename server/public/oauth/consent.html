@@ -114,7 +114,8 @@
           options: { shouldCreateUser: true },
         });
         button.disabled = false;
-        if (error) return fail(`Couldn't send the code: ${error.message}`);
+        // The database turns away emails that aren't on the allowed list.
+        if (error) return fail(/database error|accounts are closed/i.test(error.message) ? "New accounts are closed for now." : `Couldn't send the code: ${error.message}`);
         $("email-form").classList.add("hidden");
         $("code-form").classList.remove("hidden");
         $("code").focus();

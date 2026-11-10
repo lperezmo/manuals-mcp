@@ -3,9 +3,20 @@
 
 \set ON_ERROR_STOP on
 
+insert into public.allowed_emails (email) values ('a@example.com'), ('b@example.com');
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-00000000000a', 'a@example.com'),
   ('00000000-0000-0000-0000-00000000000b', 'b@example.com');
+
+-- New accounts are closed: an email that isn't on the list can't sign up.
+do $$
+begin
+  insert into auth.users (id, email) values ('00000000-0000-0000-0000-00000000000c', 'stranger@example.com');
+  raise exception 'a stranger should not be able to sign up';
+exception when others then
+  if sqlerrm <> 'New accounts are closed' then raise; end if;
+end;
+$$;
 
 set role authenticated;
 
