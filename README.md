@@ -88,7 +88,7 @@ bun run check                        # lint, typecheck, tests
 Database tests run against plain Postgres with a small Supabase stub:
 
 ```sh
-psql -f supabase/tests/stub_supabase.sql $(printf -- '-f %s ' supabase/migrations/*.sql) -f supabase/tests/rls_test.sql -f supabase/tests/sharing_test.sql -f supabase/tests/atlas_test.sql
+psql -f supabase/tests/stub_supabase.sql $(printf -- '-f %s ' supabase/migrations/*.sql) -f supabase/tests/example_home.sql -f supabase/tests/rls_test.sql -f supabase/tests/sharing_test.sql -f supabase/tests/atlas_test.sql
 ```
 
 ## Notes
